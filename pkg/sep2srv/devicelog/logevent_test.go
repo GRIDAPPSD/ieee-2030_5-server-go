@@ -252,7 +252,7 @@ func TestLogEventStore_FileAndTargetComeFromTheSameResolverAsRequestLines(t *tes
 		if actor != lfdiA || edev != "dev1" {
 			t.Errorf("resolver asked about actor %s edev %s; want %s and dev1", actor, edev, lfdiA)
 		}
-		return Resolution{Registered: false, Target: lfdiB}
+		return Resolution{Known: true, Registered: false, Target: lfdiB}
 	}
 	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), resolve)
 	if err := s.Create(context.Background(), "dev1", "abc", sampleEvent()); err != nil {

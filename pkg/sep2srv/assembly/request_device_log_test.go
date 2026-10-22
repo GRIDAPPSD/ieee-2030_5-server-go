@@ -78,6 +78,40 @@ func readLogLines(t *testing.T, path string) (raw string, lines []map[string]any
 	return string(b), lines
 }
 
+// warmDeviceLog sends GET path as lfdi until the device's own file exists. A
+// device's first lines go to the shared file while its registration lookup
+// runs, so this is the point from which its lines reach its own file.
+func warmDeviceLog(t *testing.T, srv *httptest.Server, dir, lfdi, path string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if status, _ := gateRequest(t, srv, http.MethodGet, path, lfdi, ""); status != http.StatusOK {
+			t.Fatalf("warm-up GET %s status = %d, want 200", path, status)
+		}
+		time.Sleep(5 * time.Millisecond)
+		if _, err := os.Stat(filepath.Join(dir, lfdi+".jsonl")); err == nil {
+			// The target lookup started with the registration lookup; one more
+			// request after a pause finds both cached.
+			time.Sleep(50 * time.Millisecond)
+			gateRequest(t, srv, http.MethodGet, path, lfdi, "")
+			return
+		}
+	}
+	t.Fatalf("%s never got its own file; the registration lookup did not complete", lfdi)
+}
+
+// linesFor returns the lines of file whose path is path.
+func linesFor(t *testing.T, file, path string) (raw string, out []map[string]any) {
+	t.Helper()
+	raw, all := readLogLines(t, file)
+	for _, l := range all {
+		if l["path"] == path {
+			out = append(out, l)
+		}
+	}
+	return raw, out
+}
+
 func logDirNames(t *testing.T, dir string) []string {
 	t.Helper()
 	ents, err := os.ReadDir(dir)
@@ -109,13 +143,14 @@ func putDERStatus(t *testing.T, srv *httptest.Server, asLFDI, query string) int 
 func TestDeviceLogRecordsOwnRequestWithoutQueryOrHeaders(t *testing.T) {
 	t.Parallel()
 	srv, dir, closeLog := logServer(t, gateTestPolicy())
+	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 	if status := putDERStatus(t, srv, victimLFDI, "?token=query-secret-value"); status != http.StatusNoContent {
 		t.Fatalf("PUT ders status = %d, want 204", status)
 	}
 	closeLog()
 
-	raw, lines := readLogLines(t, filepath.Join(dir, victimLFDI+".jsonl"))
+	raw, lines := linesFor(t, filepath.Join(dir, victimLFDI+".jsonl"), "/edev/"+victimID+"/der/"+victimID+"/ders")
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines, want 1: %s", len(lines), raw)
 	}
@@ -145,21 +180,24 @@ func TestDeviceLogRecordsOwnRequestWithoutQueryOrHeaders(t *testing.T) {
 			t.Errorf("line carries %q: %s", leaked, raw)
 		}
 	}
-	if names := logDirNames(t, dir); len(names) != 1 {
-		t.Errorf("directory holds %v, want only the actor's file", names)
+	for _, name := range logDirNames(t, dir) {
+		if name != victimLFDI+".jsonl" && name != devicelog.UnregisteredFile+".jsonl" {
+			t.Errorf("directory holds %s, want only the actor's file and the shared file", name)
+		}
 	}
 }
 
 func TestDeviceLogAggregatorRequestLandsInAggregatorFileNamingManagedDevice(t *testing.T) {
 	t.Parallel()
 	srv, dir, closeLog := logServer(t, gateTestPolicy())
+	warmDeviceLog(t, srv, dir, managerLFDI, "/edev/"+victimID)
 
 	if status := putDERStatus(t, srv, managerLFDI, ""); status != http.StatusNoContent {
 		t.Fatalf("manager PUT ders status = %d, want 204", status)
 	}
 	closeLog()
 
-	_, lines := readLogLines(t, filepath.Join(dir, managerLFDI+".jsonl"))
+	_, lines := linesFor(t, filepath.Join(dir, managerLFDI+".jsonl"), "/edev/"+victimID+"/der/"+victimID+"/ders")
 	if len(lines) != 1 {
 		t.Fatalf("aggregator file has %d lines, want 1", len(lines))
 	}
@@ -209,9 +247,13 @@ func TestDeviceLogSkipsRefusedAndAnonymousRequests(t *testing.T) {
 	}
 	closeLog()
 
-	_, lines := readLogLines(t, filepath.Join(dir, victimLFDI+".jsonl"))
-	if len(lines) != 1 {
-		t.Errorf("got %d lines, want only the served request's", len(lines))
+	total := 0
+	for _, name := range logDirNames(t, dir) {
+		_, lines := readLogLines(t, filepath.Join(dir, name))
+		total += len(lines)
+	}
+	if total != 1 {
+		t.Errorf("got %d lines across %v, want only the served request's", total, logDirNames(t, dir))
 	}
 }
 
@@ -257,7 +299,7 @@ func (s stalledManagers) ManagedBy(ctx context.Context, lfdi string) ([]string, 
 func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
 	t.Parallel()
 	stalled := stalledManagers{entered: make(chan struct{}, 1), release: make(chan struct{})}
-	srv, dir, closeLog, w := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {
+	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {
 		stalled.EndDeviceManagementStore = real
 		return stalled
 	}, nil)
@@ -287,15 +329,15 @@ func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
 		t.Errorf("request took %v while the management store was stalled; want it unaffected", elapsed)
 	}
 
-	// The lookup gave up, so the line stays in the actor's own file and is
-	// counted, not filed as unregistered.
+	// The lookup is still running, so the line is filed without waiting:
+	// the actor has no file yet, which makes it the shared file's line.
 	closeLog()
-	_, lines := readLogLines(t, filepath.Join(dir, recordlessLFDI+".jsonl"))
+	_, lines := readLogLines(t, filepath.Join(dir, devicelog.UnregisteredFile+".jsonl"))
 	if len(lines) != 1 || lines[0]["actor"] != recordlessLFDI {
-		t.Errorf("lines = %v, want one line for %s in its own file", lines, recordlessLFDI)
+		t.Errorf("lines = %v, want one shared-file line for %s", lines, recordlessLFDI)
 	}
-	if w.Unresolved() != 1 {
-		t.Errorf("Unresolved = %d, want 1", w.Unresolved())
+	if names := logDirNames(t, dir); len(names) != 1 {
+		t.Errorf("directory holds %v, want only the shared file", names)
 	}
 	release()
 }
@@ -307,9 +349,9 @@ func (erroringDevices) GetByLFDI(context.Context, string) (sep2.EndDevice, error
 	return sep2.EndDevice{}, errors.New("backend down")
 }
 
-func TestDeviceLogStoreErrorKeepsRegisteredDeviceInItsOwnFile(t *testing.T) {
+func TestDeviceLogStoreErrorNeverCreatesADeviceFile(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog, w := logServerWith(t, gateTestPolicy(), nil, func(real store.EndDeviceStore) store.EndDeviceStore {
+	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), nil, func(real store.EndDeviceStore) store.EndDeviceStore {
 		return erroringDevices{real}
 	})
 	if status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", victimLFDI, ""); status != http.StatusOK {
@@ -317,10 +359,70 @@ func TestDeviceLogStoreErrorKeepsRegisteredDeviceInItsOwnFile(t *testing.T) {
 	}
 	closeLog()
 
-	if names := logDirNames(t, dir); len(names) != 1 || names[0] != victimLFDI+".jsonl" {
-		t.Fatalf("directory holds %v, want only the registered device's own file", names)
+	if names := logDirNames(t, dir); len(names) != 1 || names[0] != devicelog.UnregisteredFile+".jsonl" {
+		t.Fatalf("directory holds %v, want only the shared file while the store cannot say who is registered", names)
 	}
-	if w.Unresolved() != 1 {
-		t.Errorf("Unresolved = %d, want 1", w.Unresolved())
+}
+
+func TestDeviceLogStoreErrorKeepsAnExistingDeviceFile(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), nil, func(real store.EndDeviceStore) store.EndDeviceStore {
+		return erroringDevices{real}
+	})
+	if err := os.WriteFile(filepath.Join(dir, victimLFDI+".jsonl"), nil, 0o640); err != nil {
+		t.Fatal(err)
 	}
+	if status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", victimLFDI, ""); status != http.StatusOK {
+		t.Fatalf("GET /dcap status = %d, want 200", status)
+	}
+	closeLog()
+
+	_, lines := readLogLines(t, filepath.Join(dir, victimLFDI+".jsonl"))
+	if len(lines) != 1 || lines[0]["actor"] != victimLFDI {
+		t.Errorf("lines = %v, want the line in the device's existing file", lines)
+	}
+}
+
+func TestDeviceLogHandlerPanicWritesA500LineAndStillPanics(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: 1_000_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := gateTestPolicy()
+	policy.Wrap = func(next http.Handler) http.Handler { return next }
+	policy.Identity = func(context.Context) (string, string, bool) { return victimLFDI, "", true }
+	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{DeviceLog: w}, panicStores(), policy, "serverSFDI", "serverLFDI", nil)
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the handler's panic did not reach the caller; recovery would behave differently")
+			}
+		}()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/edev/1", nil))
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := w.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, lines := readLogLines(t, filepath.Join(dir, devicelog.UnregisteredFile+".jsonl"))
+	if len(lines) != 1 || lines[0]["status"] != float64(http.StatusInternalServerError) || lines[0]["path"] != "/edev/1" {
+		t.Errorf("lines = %v; want one /edev/1 line with status 500", lines)
+	}
+}
+
+// panicDevices panics on Get, which the ownership gate calls on every
+// /edev/{id} request.
+type panicDevices struct{ store.EndDeviceStore }
+
+func (panicDevices) Get(context.Context, string) (sep2.EndDevice, error) { panic("handler boom") }
+
+func panicStores() *assembly.Stores {
+	stores := testStores()
+	stores.EndDevices = panicDevices{stores.EndDevices}
+	return stores
 }

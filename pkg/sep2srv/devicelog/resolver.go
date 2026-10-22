@@ -2,38 +2,34 @@ package devicelog
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Defaults for NewResolver.
 const (
-	// DefaultCacheTTL is how long a positive answer (registered, or a
-	// resolved target) is reused. No store notifies the resolver of a change,
-	// so a removed device or a deleted management pair reaches the log only
-	// when its entry expires, within one TTL.
+	// DefaultCacheTTL is how long a positive registration answer is reused.
+	// No store notifies the resolver of a change, so a deleted device or a
+	// dropped management pair reaches the log only when its entry expires.
 	DefaultCacheTTL = 30 * time.Second
 	// DefaultErrorTTL is how long a negative answer (not registered, no such
 	// EndDevice) or a failed lookup is reused. It is short so a device that
-	// has just registered gets its own file within this interval, and a
-	// stalled store costs one wait per key per interval, not one per line.
+	// has just registered gets its own file within this interval.
 	DefaultErrorTTL = time.Second
-	// DefaultLookupTimeout is the longest the writer waits for one lookup.
+	// DefaultTargetTTL is how long a resolved target is reused. An EndDevice
+	// id can be deleted and recreated for another LFDI through a path no
+	// protocol request sees (a fixture, the admin plane), and nothing tells
+	// the resolver, so the target is the one answer kept short: a reused id
+	// can show its old device for at most this long.
+	DefaultTargetTTL = time.Second
+	// DefaultLookupTimeout is the context deadline given to one lookup.
 	DefaultLookupTimeout = 250 * time.Millisecond
 	// DefaultMaxInFlight bounds lookups still running against the stores.
 	DefaultMaxInFlight = 16
 
 	maxCacheEntries = 4096
-)
-
-var (
-	// ErrLookupTimeout means a lookup did not answer within the timeout.
-	ErrLookupTimeout = errors.New("device log: lookup timed out")
-	// ErrLookupBusy means too many earlier lookups are still running, so none
-	// was started.
-	ErrLookupBusy = errors.New("device log: too many lookups in flight")
 )
 
 // ResolverConfig configures NewResolver.
@@ -46,10 +42,11 @@ type ResolverConfig struct {
 	// with a nil error when it does not resolve.
 	Target func(ctx context.Context, edev string) (string, error)
 
-	// CacheTTL, ErrorTTL, LookupTimeout and MaxInFlight take the Default
-	// values when zero.
+	// CacheTTL, ErrorTTL, TargetTTL, LookupTimeout and MaxInFlight take the
+	// Default values when zero.
 	CacheTTL      time.Duration
 	ErrorTTL      time.Duration
+	TargetTTL     time.Duration
 	LookupTimeout time.Duration
 	MaxInFlight   int
 }
@@ -60,28 +57,45 @@ type cacheEntry[T any] struct {
 	expires time.Time
 }
 
-// CachingResolver implements the Writer's lookup with a hard bound: each store call
-// runs in its own goroutine and the caller waits at most LookupTimeout for
-// it, so a store that ignores its context cannot stall the writer. At most
-// MaxInFlight calls run at once; past that a lookup fails at once with
-// ErrLookupBusy. Answers are cached per actor and per EndDevice id.
+// cache is one keyed answer store with the set of keys being looked up.
+type cache[T comparable] struct {
+	entries  map[string]cacheEntry[T]
+	inflight map[string]struct{}
+}
+
+func newCache[T comparable]() cache[T] {
+	return cache[T]{entries: make(map[string]cacheEntry[T]), inflight: make(map[string]struct{})}
+}
+
+// CachingResolver implements the Writer's lookup without ever waiting on a
+// store. Resolve reads the cache; on a miss it starts one background lookup
+// for that key, shared by every line that misses meanwhile, and answers
+// "not known" now. At most MaxInFlight lookups run at once; past that a miss
+// starts none. A lookup that ignores its context holds its slot and its key
+// until it returns, so a wedged store costs a fixed number of goroutines.
 type CachingResolver struct {
 	cfg ResolverConfig
 	sem chan struct{}
 	now func() time.Time
+	wg  sync.WaitGroup
+
+	refused atomic.Uint64
 
 	mu      sync.Mutex
-	actors  map[string]cacheEntry[bool]
-	targets map[string]cacheEntry[string]
+	actors  cache[bool]
+	targets cache[string]
 }
 
-// NewResolver builds a bounded, caching Resolver from cfg.
+// NewResolver builds a CachingResolver from cfg.
 func NewResolver(cfg ResolverConfig) *CachingResolver {
 	if cfg.CacheTTL <= 0 {
 		cfg.CacheTTL = DefaultCacheTTL
 	}
 	if cfg.ErrorTTL <= 0 {
 		cfg.ErrorTTL = DefaultErrorTTL
+	}
+	if cfg.TargetTTL <= 0 {
+		cfg.TargetTTL = DefaultTargetTTL
 	}
 	if cfg.LookupTimeout <= 0 {
 		cfg.LookupTimeout = DefaultLookupTimeout
@@ -93,82 +107,79 @@ func NewResolver(cfg ResolverConfig) *CachingResolver {
 		cfg:     cfg,
 		sem:     make(chan struct{}, cfg.MaxInFlight),
 		now:     time.Now,
-		actors:  make(map[string]cacheEntry[bool]),
-		targets: make(map[string]cacheEntry[string]),
+		actors:  newCache[bool](),
+		targets: newCache[string](),
 	}
 }
 
-// Resolve is the Writer's Resolver.
+// Refused counts misses that started no lookup because MaxInFlight lookups
+// were already running.
+func (r *CachingResolver) Refused() uint64 { return r.refused.Load() }
+
+// Resolve is the Writer's Resolver. It never waits on a store.
 func (r *CachingResolver) Resolve(actor, edev string) Resolution {
-	registered, regErr := cached(r, r.actors, actor, r.cfg.Registered)
-	var target string
-	var tErr error
+	reg, regErr, regHit := lookup(r, &r.actors, actor, r.cfg.Registered, r.cfg.CacheTTL)
+	res := Resolution{Known: regHit && regErr == nil, Registered: reg, Err: regErr}
 	if edev != "" && r.cfg.Target != nil {
-		target, tErr = cached(r, r.targets, edev, r.cfg.Target)
+		if t, tErr, tHit := lookup(r, &r.targets, edev, r.cfg.Target, r.cfg.TargetTTL); tHit && tErr == nil {
+			res.Target = t
+		}
 	}
-	return Resolution{Registered: registered, Target: target, Err: errors.Join(regErr, tErr)}
+	return res
 }
 
-func cached[T comparable](r *CachingResolver, m map[string]cacheEntry[T], key string, f func(context.Context, string) (T, error)) (T, error) {
+// lookup returns the cached answer for key and whether there was a fresh
+// one. A miss starts a background lookup unless one is already running for
+// the key or the in-flight limit is reached.
+func lookup[T comparable](r *CachingResolver, c *cache[T], key string, f func(context.Context, string) (T, error), posTTL time.Duration) (val T, err error, hit bool) {
+	var zero T
 	if f == nil {
-		var zero T
-		return zero, nil
-	}
-	now := r.now()
-	r.mu.Lock()
-	e, ok := m[key]
-	r.mu.Unlock()
-	if ok && now.Before(e.expires) {
-		return e.val, e.err
-	}
-	val, err := bounded(r, key, f)
-	ttl := r.cfg.CacheTTL
-	var zero T
-	if err != nil || val == zero {
-		ttl = r.cfg.ErrorTTL
+		return zero, nil, false
 	}
 	r.mu.Lock()
-	if len(m) >= maxCacheEntries {
-		clear(m)
+	defer r.mu.Unlock()
+	if e, ok := c.entries[key]; ok && r.now().Before(e.expires) {
+		return e.val, e.err, true
 	}
-	m[key] = cacheEntry[T]{val: val, err: err, expires: now.Add(ttl)}
-	r.mu.Unlock()
-	return val, err
-}
-
-// bounded runs f and waits at most LookupTimeout for it. The in-flight slot
-// is held until f really returns, so abandoned calls stay counted.
-func bounded[T any](r *CachingResolver, key string, f func(context.Context, string) (T, error)) (T, error) {
-	var zero T
+	if _, running := c.inflight[key]; running {
+		return zero, nil, false
+	}
 	select {
 	case r.sem <- struct{}{}:
 	default:
-		return zero, ErrLookupBusy
+		r.refused.Add(1)
+		return zero, nil, false
 	}
-	type result struct {
-		val T
-		err error
-	}
-	done := make(chan result, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.LookupTimeout)
+	c.inflight[key] = struct{}{}
+	r.wg.Add(1)
 	go func() {
-		defer func() { <-r.sem; cancel() }()
-		defer func() {
-			// A store panic must not take the server down from a goroutine
-			// no request owns.
-			if p := recover(); p != nil {
-				done <- result{err: fmt.Errorf("device log: lookup panicked: %v", p)}
-			}
-		}()
-		v, err := f(ctx, key)
-		done <- result{v, err}
+		defer r.wg.Done()
+		defer func() { <-r.sem }()
+		ctx, cancel := context.WithTimeout(context.Background(), r.cfg.LookupTimeout)
+		defer cancel()
+		val, err := safely(ctx, key, f)
+		ttl := posTTL
+		if err != nil || val == zero {
+			ttl = r.cfg.ErrorTTL
+		}
+		r.mu.Lock()
+		if len(c.entries) >= maxCacheEntries {
+			clear(c.entries)
+		}
+		c.entries[key] = cacheEntry[T]{val: val, err: err, expires: r.now().Add(ttl)}
+		delete(c.inflight, key)
+		r.mu.Unlock()
 	}()
-	timer := time.NewTimer(r.cfg.LookupTimeout)
-	defer timer.Stop()
-	select {
-	case res := <-done:
-		return res.val, res.err
-	case <-timer.C:
-		return zero, ErrLookupTimeout
-	}
+	return zero, nil, false
+}
+
+// safely runs f and turns a store panic into an error, so it cannot take the
+// server down from a goroutine no request owns.
+func safely[T any](ctx context.Context, key string, f func(context.Context, string) (T, error)) (val T, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("device log: lookup panicked: %v", p)
+		}
+	}()
+	return f(ctx, key)
 }

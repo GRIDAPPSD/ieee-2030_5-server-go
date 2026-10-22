@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -557,8 +558,8 @@ func TestDropsAreLoggedPerDevice(t *testing.T) {
 func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
 	dir := t.TempDir()
 	w := newTestWriter(t, dir, Config{})
-	registered := func(_, _ string) Resolution { return Resolution{Registered: true, Target: lfdiB} }
-	unregistered := func(_, _ string) Resolution { return Resolution{} }
+	registered := func(_, _ string) Resolution { return Resolution{Known: true, Registered: true, Target: lfdiB} }
+	unregistered := func(_, _ string) Resolution { return Resolution{Known: true} }
 	if err := w.AppendResolved(lfdiA, "7", registered, Entry{Kind: "request", Fields: map[string]any{"edev": "7"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -589,29 +590,49 @@ func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
 	}
 }
 
-func TestAppendResolvedLookupErrorKeepsLineInOwnFileCountedAndLogged(t *testing.T) {
+// An unknown answer must never create a device file: a store failure with
+// 200 certificates would otherwise make 200 files.
+func TestAppendResolvedUnknownCreatesNoFileAndFollowsExistingOnes(t *testing.T) {
 	dir := t.TempDir()
 	var logs bytes.Buffer
 	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
 	failing := func(_, _ string) Resolution { return Resolution{Err: errors.New("store down")} }
-	for i := 0; i < 3; i++ {
-		if err := w.AppendResolved(lfdiA, "7", failing, Entry{Kind: "request"}); err != nil {
+
+	// lfdiA already has a file; every other actor does not.
+	if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendResolved(lfdiA, "7", failing, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	const strangers = 200
+	for i := 0; i < strangers; i++ {
+		actor := fmt.Sprintf("%040X", i+1)
+		if err := w.AppendResolved(actor, "", failing, Entry{Kind: "request"}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	pending := func(_, _ string) Resolution { return Resolution{} }
+	if err := w.AppendResolved(lfdiB, "", pending, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
 	closeWriter(t, w)
 
-	if got := listDir(t, dir); len(got) != 1 || got[0] != lfdiA+".jsonl" {
-		t.Fatalf("directory holds %v; want only the device's own file", got)
+	names := listDir(t, dir)
+	if len(names) != 2 {
+		t.Fatalf("directory holds %d files %v; want the existing device file and the shared file only", len(names), names)
 	}
-	if lines := readLines(t, filepath.Join(dir, lfdiA+".jsonl")); len(lines) != 3 {
-		t.Errorf("own file has %d lines; want 3", len(lines))
+	if lines := readLines(t, filepath.Join(dir, lfdiA+".jsonl")); len(lines) != 2 {
+		t.Errorf("existing device file has %d lines; want its own two", len(lines))
 	}
-	if w.Unresolved() != 3 {
-		t.Errorf("Unresolved = %d; want 3", w.Unresolved())
+	if lines := readLines(t, filepath.Join(dir, UnregisteredFile+".jsonl")); len(lines) != strangers+1 {
+		t.Errorf("shared file has %d lines; want %d", len(lines), strangers+1)
 	}
-	if got := strings.Count(logs.String(), "lookup failed"); got != 1 {
-		t.Errorf("log has %d lookup-failed lines; want the first occurrence only: %q", got, logs.String())
+	if got := w.Unresolved(); got != strangers+1 {
+		t.Errorf("Unresolved = %d; want %d failed lookups counted (a pending one is not a failure)", got, strangers+1)
+	}
+	if got := strings.Count(logs.String(), "lookup failed"); got != strangers+1 {
+		t.Errorf("log has %d lookup-failed lines for %d devices; want one per device", got, strangers+1)
 	}
 }
 

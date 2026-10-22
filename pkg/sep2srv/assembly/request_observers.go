@@ -77,6 +77,15 @@ func (o requestObservers) wrap(next http.Handler) http.Handler {
 		}
 		rec := statuswriter.New(w)
 		start := o.now()
+		// A handler that panics still made a request: write its line as a
+		// 500 and re-panic, so the server's recovery behaves as before.
+		defer func() {
+			if p := recover(); p != nil {
+				rec.Status = http.StatusInternalServerError
+				o.logRequest(r, lfdi, rec, o.now().Sub(start))
+				panic(p)
+			}
+		}()
 		next.ServeHTTP(rec, r)
 		o.logRequest(r, lfdi, rec, o.now().Sub(start))
 	})

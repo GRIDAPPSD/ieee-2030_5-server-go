@@ -68,23 +68,28 @@ type Config struct {
 	onDequeue func()
 }
 
-// Resolution is a Resolver's answer for one request line.
+// Resolution is a Resolver's answer for one request line, taken from what is
+// already known: it never waits on a store.
 type Resolution struct {
+	// Known reports that the actor's registration was answered. When false
+	// the lookup is still running, or failed (Err), or was refused for
+	// capacity.
+	Known bool
 	// Registered reports whether the actor has an EndDevice record or a
-	// management pair. Meaningful only when Err is nil.
+	// management pair. Meaningful only when Known.
 	Registered bool
 	// Target is the canonical LFDI of the EndDevice the path names, or ""
-	// when it does not resolve.
+	// when it is not known to resolve.
 	Target string
-	// Err is non-nil when a lookup failed or timed out, so Registered is not
-	// known. The line then stays in the actor's own file, without a target
-	// it could not establish, and is counted.
+	// Err is the failure of the actor's lookup when that is what made Known
+	// false. The line is then filed by the existence of the actor's own
+	// file and counted.
 	Err error
 }
 
-// Resolver answers AppendResolved lines in the writer goroutine. It must
-// return promptly even when the store behind it stalls: the writer waits for
-// it, so NewResolver is the intended implementation.
+// Resolver answers AppendResolved lines in the writer goroutine. It must not
+// wait on a store: NewResolver's does a cache read, and starts at most one
+// background lookup per missing key.
 type Resolver func(actor, edev string) Resolution
 
 // Entry is one line to record. Kind is required. Fields are merged into the
@@ -289,16 +294,22 @@ func (w *Writer) encode(actor string, e Entry) ([]byte, error) {
 	return body, nil
 }
 
-// resolvePending runs the Resolver for p and encodes the line. A line whose
-// registration could not be established stays in the actor's own file, is
-// counted, and logs its first occurrence per device.
+// resolvePending asks the Resolver about p and encodes the line. The file is
+// decided from the answer alone, so the writer never waits on a store and a
+// store failure cannot create files:
+//   - registered: the actor's own file, with the target;
+//   - not registered: the shared file;
+//   - not known: the actor's own file only when it already exists, else the
+//     shared file, with no target.
+//
+// A failed lookup is counted and its first occurrence per device logged.
 func (w *Writer) resolvePending(p *pendingLine) item {
-	res := Resolution{Registered: true}
+	res := Resolution{Known: true, Registered: true}
 	if p.resolve != nil {
 		res = p.resolve(p.actor, p.edev)
 	}
 	e := p.entry
-	if res.Target != "" {
+	if res.Target != "" && res.Known {
 		fields := make(map[string]any, len(e.Fields)+1)
 		for k, v := range e.Fields {
 			fields[k] = v
@@ -308,11 +319,16 @@ func (w *Writer) resolvePending(p *pendingLine) item {
 	}
 	key := p.actor
 	switch {
-	case res.Err != nil:
-		w.unknown.Add(1)
-		w.note(p.actor, "lookup failed, line kept in the device's own file", res.Err)
-	case !res.Registered:
+	case res.Known && !res.Registered:
 		key = UnregisteredFile
+	case !res.Known:
+		if res.Err != nil {
+			w.unknown.Add(1)
+			w.note(p.actor, "lookup failed, line filed by its device file's existence", res.Err)
+		}
+		if !w.ownFileExists(p.actor) {
+			key = UnregisteredFile
+		}
 	}
 	body, err := w.encode(p.actor, e)
 	if err != nil {
@@ -323,6 +339,16 @@ func (w *Writer) resolvePending(p *pendingLine) item {
 	return item{lfdi: key, body: body}
 }
 
+// ownFileExists reports whether the actor's current file is open or on disk.
+func (w *Writer) ownFileExists(actor string) bool {
+	if _, ok := w.files[actor]; ok {
+		return true
+	}
+	cur, _ := w.paths(actor)
+	_, err := os.Lstat(cur)
+	return err == nil
+}
+
 // Dropped counts lines refused because the queue was full or the line was
 // too large.
 func (w *Writer) Dropped() uint64 { return w.dropped.Load() }
@@ -330,8 +356,8 @@ func (w *Writer) Dropped() uint64 { return w.dropped.Load() }
 // Failed counts lines lost to a file error.
 func (w *Writer) Failed() uint64 { return w.failed.Load() }
 
-// Unresolved counts request lines whose registration could not be
-// established; each stayed in its device's own file.
+// Unresolved counts request lines whose registration lookup failed; each was
+// filed by whether its device's own file already existed.
 func (w *Writer) Unresolved() uint64 { return w.unknown.Load() }
 
 // Close stops accepting lines, writes what is queued, and closes every file.

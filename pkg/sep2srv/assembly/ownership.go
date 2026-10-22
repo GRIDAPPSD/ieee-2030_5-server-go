@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"log"
 	"maps"
 	"net/http"
@@ -37,7 +38,7 @@ type ownershipGate struct {
 	devicesAbsent  bool
 	managers       store.EndDeviceManagementStore
 	managersAbsent bool
-	identity       func(ctx context.Context) (lfdi, sfdi string, ok bool)
+	identity       identity.Func
 	identityAbsent bool
 	denials        *denialLog
 
@@ -57,7 +58,7 @@ var ownershipExempt = map[string]bool{
 	"GET /edev": true,
 }
 
-func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, managers store.EndDeviceManagementStore, identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) *ownershipGate {
+func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, managers store.EndDeviceManagementStore, identity identity.Func) *ownershipGate {
 	g := &ownershipGate{
 		next:           next,
 		devices:        devices,

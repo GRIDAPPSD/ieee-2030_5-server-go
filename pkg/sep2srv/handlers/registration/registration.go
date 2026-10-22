@@ -5,9 +5,9 @@
 package registration
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -19,7 +19,7 @@ import (
 // IdentityFunc extracts the authenticated device identity from the request
 // context. Returns the LFDI, SFDI, and ok=true when identity is present.
 // Replaces the direct auth.GetIdentity call in the original registration.go.
-type IdentityFunc func(ctx context.Context) (lfdi, sfdi string, ok bool)
+type IdentityFunc = identity.Func
 
 // HandleGetRegistration returns a handler for GET /edev/{id}/rg.
 //

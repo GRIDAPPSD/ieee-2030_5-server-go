@@ -33,6 +33,7 @@ func deviceLogServer(t *testing.T) (*httptest.Server, func() [][]byte) {
 	)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
+	warmDeviceLog(t, srv, dir, testLFDI, "/edev/d1")
 
 	lines := func() [][]byte {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -49,7 +50,9 @@ func deviceLogServer(t *testing.T) (*httptest.Server, func() [][]byte) {
 		}
 		var out [][]byte
 		for _, l := range bytes.Split(raw, []byte{'\n'}) {
-			if len(l) > 0 {
+			// The request observer writes a request line for the same POST
+			// into the same file; these tests are about the LogEvent line.
+			if bytes.Contains(l, []byte(`"kind":"logevent"`)) {
 				out = append(out, l)
 			}
 		}

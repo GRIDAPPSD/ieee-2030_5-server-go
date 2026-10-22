@@ -7,7 +7,6 @@ package obs
 // them order-independent and immune to series accumulated by sibling tests.
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -205,48 +204,5 @@ func TestFunctionSetBoundsUnknownPath(t *testing.T) {
 	after := testutil.ToFloat64(httpRequests.WithLabelValues("other", http.MethodGet, "200"))
 	if after-before != 1 {
 		t.Errorf("unknown-path function_set=other delta = %v, want 1", after-before)
-	}
-}
-
-// TestStatusRecorderPreservesOptionalInterfaces asserts the wrapper restores
-// http.Flusher / http.Hijacker / io.ReaderFrom from the embedded writer
-// (Dutch M1). A response writer that implements Flusher must remain a Flusher
-// through the wrapper, else streaming handlers silently break.
-func TestStatusRecorderPreservesOptionalInterfaces(t *testing.T) {
-	// httptest.ResponseRecorder implements http.Flusher; assert it survives
-	// the wrapper as a type assertion.
-	rec := httptest.NewRecorder()
-	sr := &statusRecorder{ResponseWriter: rec, status: http.StatusOK}
-
-	if _, ok := interface{}(sr).(http.Flusher); !ok {
-		t.Fatal("statusRecorder does not satisfy http.Flusher")
-	}
-	if _, ok := interface{}(sr).(http.Hijacker); !ok {
-		t.Fatal("statusRecorder does not satisfy http.Hijacker")
-	}
-	if _, ok := interface{}(sr).(io.ReaderFrom); !ok {
-		t.Fatal("statusRecorder does not satisfy io.ReaderFrom")
-	}
-
-	// Flush must delegate to the embedded recorder (recorder.Flushed flips).
-	sr.Flush()
-	if !rec.Flushed {
-		t.Error("statusRecorder.Flush did not delegate to the embedded Flusher")
-	}
-
-	// ReadFrom against a recorder copies the source into the body and marks
-	// the status as written (implicit 200 bookkeeping).
-	n, err := sr.ReadFrom(strings.NewReader("stream-bytes"))
-	if err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-	if n != int64(len("stream-bytes")) {
-		t.Errorf("ReadFrom n = %d, want %d", n, len("stream-bytes"))
-	}
-	if !sr.wroteHeader {
-		t.Error("ReadFrom did not mark the response as written")
-	}
-	if rec.Body.String() != "stream-bytes" {
-		t.Errorf("ReadFrom body = %q, want %q", rec.Body.String(), "stream-bytes")
 	}
 }

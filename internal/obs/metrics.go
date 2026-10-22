@@ -11,9 +11,6 @@
 package obs
 
 import (
-	"bufio"
-	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +19,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/statuswriter"
 )
 
 const namespace = "sep2"
@@ -158,13 +157,13 @@ func Handler() http.Handler {
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fs := functionSet(r.URL.Path)
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := statuswriter.New(w)
 
 		start := time.Now()
 		next.ServeHTTP(rec, r)
 		elapsed := time.Since(start).Seconds()
 
-		httpRequests.WithLabelValues(fs, r.Method, strconv.Itoa(rec.status)).Inc()
+		httpRequests.WithLabelValues(fs, r.Method, strconv.Itoa(rec.Status)).Inc()
 		httpDuration.WithLabelValues(fs, r.Method).Observe(elapsed)
 	})
 }
@@ -240,67 +239,4 @@ func functionSet(path string) string {
 		return "other"
 	}
 	return p
-}
-
-// statusRecorder captures the response status code so the request counter
-// can label by it. Defaults to 200 when WriteHeader is never called (Go's
-// implicit 200 on first Write).
-type statusRecorder struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if !s.wroteHeader {
-		s.status = code
-		s.wroteHeader = true
-	}
-	s.ResponseWriter.WriteHeader(code)
-}
-
-func (s *statusRecorder) Write(b []byte) (int, error) {
-	s.wroteHeader = true
-	return s.ResponseWriter.Write(b)
-}
-
-// The wrappers below restore the optional http interfaces that the embedded
-// http.ResponseWriter may implement. Embedding alone does NOT promote them
-// for a type assertion: a caller doing `w.(http.Flusher)` against the
-// statusRecorder fails even when the underlying writer is a Flusher, which
-// would silently break streaming/SSE responses (and hand a chunk-buffering
-// 500 to any handler that relies on Flush). Each passthrough delegates only
-// when the embedded writer actually implements the interface.
-
-// Flush implements http.Flusher when the embedded writer does, so streaming
-// handlers (e.g. SSE) can force a chunk to the client.
-func (s *statusRecorder) Flush() {
-	if f, ok := s.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-// Hijack implements http.Hijacker when the embedded writer does, so
-// connection-upgrade handlers (WebSocket, raw TCP) keep working through the
-// wrapper.
-func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := s.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, http.ErrNotSupported
-}
-
-// ReadFrom implements io.ReaderFrom when the embedded writer does, preserving
-// the zero-copy sendfile fast path for large file responses. The status is
-// marked written because a successful ReadFrom emits the body (implicit 200
-// if WriteHeader was never called), matching the Write path's bookkeeping.
-func (s *statusRecorder) ReadFrom(src io.Reader) (int64, error) {
-	if rf, ok := s.ResponseWriter.(io.ReaderFrom); ok {
-		s.wroteHeader = true
-		return rf.ReadFrom(src)
-	}
-	// Fallback: copy through Write so the contract still holds when the
-	// embedded writer is not a ReaderFrom.
-	s.wroteHeader = true
-	return io.Copy(struct{ io.Writer }{s.ResponseWriter}, src)
 }

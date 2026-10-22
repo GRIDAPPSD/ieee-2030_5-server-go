@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -395,6 +396,20 @@ func TestAppendAfterCloseIsRefused(t *testing.T) {
 	closeWriter(t, w)
 }
 
+func TestEveryAppendPathCountsALineRefusedAfterClose(t *testing.T) {
+	w := newTestWriter(t, t.TempDir(), Config{})
+	closeWriter(t, w)
+	if err := w.Append(lfdiA, Entry{Kind: "request"}); !errors.Is(err, ErrClosed) {
+		t.Errorf("Append = %v; want ErrClosed", err)
+	}
+	if err := w.AppendResolved(lfdiA, "7", nil, Entry{Kind: "request"}); !errors.Is(err, ErrClosed) {
+		t.Errorf("AppendResolved = %v; want ErrClosed", err)
+	}
+	if got := w.Dropped(); got != 2 {
+		t.Errorf("Dropped = %d after two refused lines; want 2", got)
+	}
+}
+
 func TestNewRefusesBadConfig(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "afile")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
@@ -537,5 +552,172 @@ func TestDropsAreLoggedPerDevice(t *testing.T) {
 	}
 	if n := strings.Count(out, lfdiA+" queue full"); n != 1 {
 		t.Errorf("device A's queue-full drop logged %d times; want once (rate limited)", n)
+	}
+}
+
+func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{})
+	registered := func(_, _ string) Resolution { return Resolution{Known: true, Registered: true, Target: lfdiB} }
+	unregistered := func(_, _ string) Resolution { return Resolution{Known: true} }
+	if err := w.AppendResolved(lfdiA, "7", registered, Entry{Kind: "request", Fields: map[string]any{"edev": "7"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendResolved(lfdiB, "", unregistered, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendResolved("../x", "", nil, Entry{Kind: "request"}); !errors.Is(err, ErrInvalidLFDI) {
+		t.Errorf("AppendResolved(non-canonical) = %v; want ErrInvalidLFDI", err)
+	}
+	closeWriter(t, w)
+
+	if got := listDir(t, dir); len(got) != 2 {
+		t.Fatalf("directory holds %v; want the actor file and the shared file", got)
+	}
+	own := readRaw(t, filepath.Join(dir, lfdiA+".jsonl"))
+	if own["actor"] != lfdiA || own["target"] != lfdiB || own["edev"] != "7" {
+		t.Errorf("own line = %v; want actor %s target %s edev 7", own, lfdiA, lfdiB)
+	}
+	shared := readRaw(t, filepath.Join(dir, UnregisteredFile+".jsonl"))
+	if shared["actor"] != lfdiB {
+		t.Errorf("shared line actor = %v; want %s", shared["actor"], lfdiB)
+	}
+	if _, has := shared["target"]; has {
+		t.Errorf("unresolved line carries a target: %v", shared)
+	}
+	if w.Unsettled() != 0 {
+		t.Errorf("Unresolved = %d after clean answers; want 0", w.Unsettled())
+	}
+}
+
+// An unknown answer must never create a device file: a store failure with
+// 200 certificates would otherwise make 200 files.
+func TestAppendResolvedUnknownCreatesNoFileAndFollowsExistingOnes(t *testing.T) {
+	dir := t.TempDir()
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+	failing := func(_, _ string) Resolution { return Resolution{Err: errors.New("store down")} }
+
+	// lfdiA already has a file; every other actor does not.
+	if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendResolved(lfdiA, "7", failing, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	const strangers = 200
+	for i := 0; i < strangers; i++ {
+		actor := fmt.Sprintf("%040X", i+1)
+		if err := w.AppendResolved(actor, "", failing, Entry{Kind: "request"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending := func(_, _ string) Resolution { return Resolution{} }
+	if err := w.AppendResolved(lfdiB, "", pending, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	closeWriter(t, w)
+
+	names := listDir(t, dir)
+	if len(names) != 2 {
+		t.Fatalf("directory holds %d files %v; want the existing device file and the shared file only", len(names), names)
+	}
+	if lines := readLines(t, filepath.Join(dir, lfdiA+".jsonl")); len(lines) != 2 {
+		t.Errorf("existing device file has %d lines; want its own two", len(lines))
+	}
+	if lines := readLines(t, filepath.Join(dir, UnregisteredFile+".jsonl")); len(lines) != strangers+1 {
+		t.Errorf("shared file has %d lines; want %d", len(lines), strangers+1)
+	}
+	if got := w.Unsettled(); got != strangers+1 {
+		t.Errorf("Unresolved = %d; want %d failed lookups counted (a pending one is not a failure)", got, strangers+1)
+	}
+	if got := strings.Count(logs.String(), "lookup failed"); got != strangers+1 {
+		t.Errorf("log has %d lookup-failed lines for %d devices; want one per device", got, strangers+1)
+	}
+}
+
+func TestAppendResolvedCarriesTimeOfTheRequest(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{Now: func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) }})
+	at := time.Date(2026, 10, 21, 12, 0, 0, 123, time.UTC)
+	if err := w.AppendResolved(lfdiA, "", nil, Entry{Kind: "request", At: at}); err != nil {
+		t.Fatal(err)
+	}
+	closeWriter(t, w)
+	got := readRaw(t, filepath.Join(dir, lfdiA+".jsonl"))
+	if got["t"] != at.Format(time.RFC3339Nano) {
+		t.Errorf("t = %v; want the request time %s", got["t"], at.Format(time.RFC3339Nano))
+	}
+}
+
+func TestCloseDeadlineReportsQueuedLines(t *testing.T) {
+	dir := t.TempDir()
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	w := newTestWriter(t, dir, Config{QueueSize: 8, onDequeue: func() {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}})
+	if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	for i := 0; i < 3; i++ {
+		if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := w.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "3 queued lines not written") {
+		t.Errorf("Close = %v; want the deadline error naming 3 queued lines", err)
+	}
+	close(release)
+	closeWriter(t, w)
+}
+
+func readRaw(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(b), &m); err != nil {
+		t.Fatalf("%s is not one JSON object: %v: %s", path, err, b)
+	}
+	return m
+}
+
+// The writer goroutine repeats the size check before it allocates a line, so
+// a body that got past encode (it cannot today) is counted, logged and not
+// written. The Writer is closed first so the test may call write itself.
+func TestWriteRefusesAnOversizeBodyBeforeAllocating(t *testing.T) {
+	dir := t.TempDir()
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+	closeWriter(t, w)
+
+	huge := append([]byte(`{"kind":"request","pad":"`), bytes.Repeat([]byte("x"), MaxLineBytes)...)
+	huge = append(huge, `"}`...)
+	w.write(item{lfdi: lfdiA, body: huge})
+
+	if w.Dropped() != 1 {
+		t.Errorf("Dropped = %d; want 1", w.Dropped())
+	}
+	if got := listDir(t, dir); len(got) != 0 {
+		t.Errorf("directory holds %v; an oversize body must create no file", got)
+	}
+	if !strings.Contains(logs.String(), "line too large, dropped") {
+		t.Errorf("no too-large log line: %q", logs.String())
+	}
+	ok := []byte(`{"kind":"request"}`)
+	w.write(item{lfdi: lfdiA, body: ok})
+	if w.Dropped() != 1 || len(listDir(t, dir)) != 1 {
+		t.Errorf("control: a normal body must still be written (dropped %d, files %v)", w.Dropped(), listDir(t, dir))
 	}
 }

@@ -514,6 +514,14 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// admin Devices payload reads it.
 	comms := activity.New()
 	embedCfg.Router.Activity = comms
+	// Registered before the protocol listener's stop below, so the drain
+	// runs first and the writer closes with no request still producing.
+	deviceLog, closeDeviceLog, err := startDeviceLog(cfg)
+	if err != nil {
+		return err
+	}
+	defer closeDeviceLog()
+	embedCfg.Router.DeviceLog = deviceLog
 	embedCfg.Addr = cfg.Addr
 	embedCfg.CertFile = cfg.CertFile
 	embedCfg.KeyFile = cfg.KeyFile

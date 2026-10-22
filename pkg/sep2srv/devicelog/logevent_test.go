@@ -62,7 +62,7 @@ func TestLogEventStore_CreateWritesOneLineWithTheDocumentsFields(t *testing.T) {
 	dir := t.TempDir()
 	w := newTestWriter(t, dir, Config{})
 	inner := memory.NewScopedStore[sep2.LogEvent]()
-	s := NewLogEventStore(inner, w, fixedIdentity(strings.ToLower(lfdiA), true))
+	s := NewLogEventStore(inner, w, fixedIdentity(strings.ToLower(lfdiA), true), nil)
 
 	ev := sampleEvent()
 	if err := s.Create(context.Background(), "dev1", "abc", ev); err != nil {
@@ -103,7 +103,7 @@ func TestLogEventStore_CreateWritesOneLineWithTheDocumentsFields(t *testing.T) {
 func TestLogEventStore_DetailsWithLineBreakStaysOneObjectPerLine(t *testing.T) {
 	dir := t.TempDir()
 	w := newTestWriter(t, dir, Config{})
-	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true))
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), nil)
 
 	ev := sampleEvent()
 	ev.Details = "first\nsecond\r{\"seq\":99,\"kind\":\"forged\"}"
@@ -138,7 +138,7 @@ func TestLogEventStore_DetailsWithLineBreakStaysOneObjectPerLine(t *testing.T) {
 func TestLogEventStore_RefusedCreateWritesNothing(t *testing.T) {
 	dir := t.TempDir()
 	w := newTestWriter(t, dir, Config{})
-	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true))
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), nil)
 	ev := sampleEvent()
 	if err := s.Create(context.Background(), "dev1", "abc", ev); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -162,7 +162,7 @@ func TestLogEventStore_NoUsableIdentityWritesNothing(t *testing.T) {
 			dir := t.TempDir()
 			w := newTestWriter(t, dir, Config{})
 			inner := memory.NewScopedStore[sep2.LogEvent]()
-			s := NewLogEventStore(inner, w, id)
+			s := NewLogEventStore(inner, w, id, nil)
 			if err := s.Create(context.Background(), "dev1", "abc", sampleEvent()); err != nil {
 				t.Fatalf("Create: %v", err)
 			}
@@ -187,7 +187,7 @@ func TestLogEventStore_NoUsableIdentityWritesNothing(t *testing.T) {
 func TestLogEventStore_FileIsKeyedByIdentityNotByPath(t *testing.T) {
 	dir := t.TempDir()
 	w := newTestWriter(t, dir, Config{})
-	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true))
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), nil)
 	// The path id names a different device; the file stays the caller's.
 	if err := s.Create(context.Background(), lfdiB, "abc", sampleEvent()); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -202,7 +202,7 @@ func TestLogEventStore_FileIsKeyedByIdentityNotByPath(t *testing.T) {
 
 func TestNewLogEventStore_NilWriterReturnsInner(t *testing.T) {
 	inner := memory.NewScopedStore[sep2.LogEvent]()
-	if got := NewLogEventStore(inner, nil, fixedIdentity(lfdiA, true)); got != store.ScopedStore[sep2.LogEvent](inner) {
+	if got := NewLogEventStore(inner, nil, fixedIdentity(lfdiA, true), nil); got != store.ScopedStore[sep2.LogEvent](inner) {
 		t.Errorf("nil writer must return the inner store unchanged, got %T", got)
 	}
 }
@@ -211,7 +211,7 @@ func TestLogEventStore_FullQueueNeverFailsTheCreate(t *testing.T) {
 	dir := t.TempDir()
 	stall := make(chan struct{})
 	w := newTestWriter(t, dir, Config{QueueSize: 1, onDequeue: func() { <-stall }})
-	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true))
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), nil)
 	for i := range 5 {
 		id := string(rune('a' + i))
 		if err := s.Create(context.Background(), "dev1", id, sampleEvent()); err != nil {
@@ -229,7 +229,7 @@ func TestLogEventStore_CreateAfterCloseIsCounted(t *testing.T) {
 	dir := t.TempDir()
 	var logs bytes.Buffer
 	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
-	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true))
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), nil)
 	closeWriter(t, w)
 	if err := s.Create(context.Background(), "dev1", "abc", sampleEvent()); err != nil {
 		t.Fatalf("Create after Close must still succeed: %v", err)
@@ -239,5 +239,31 @@ func TestLogEventStore_CreateAfterCloseIsCounted(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "writer closed") {
 		t.Errorf("first drop not logged: %q", logs.String())
+	}
+}
+
+// The LogEvent line and a request line choose their file through the same
+// AppendResolved, so a certificate the resolver files as unregistered gets
+// its LogEvent line in the shared file too, with the resolved target.
+func TestLogEventStore_FileAndTargetComeFromTheSameResolverAsRequestLines(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{})
+	resolve := func(actor, edev string) Resolution {
+		if actor != lfdiA || edev != "dev1" {
+			t.Errorf("resolver asked about actor %s edev %s; want %s and dev1", actor, edev, lfdiA)
+		}
+		return Resolution{Known: true, Registered: false, Target: lfdiB}
+	}
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true), resolve)
+	if err := s.Create(context.Background(), "dev1", "abc", sampleEvent()); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	closeWriter(t, w)
+	if got := listDir(t, dir); len(got) != 1 || got[0] != UnregisteredFile+".jsonl" {
+		t.Fatalf("directory holds %v; want only the shared file", got)
+	}
+	line := readRaw(t, filepath.Join(dir, UnregisteredFile+".jsonl"))
+	if line["kind"] != KindLogEvent || line["actor"] != lfdiA || line["target"] != lfdiB || line["edev"] != "dev1" {
+		t.Errorf("line = %v; want a logevent line for actor %s with target %s", line, lfdiA, lfdiB)
 	}
 }

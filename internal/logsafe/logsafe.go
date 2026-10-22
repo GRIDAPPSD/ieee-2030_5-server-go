@@ -89,3 +89,15 @@ func unicodeEscape(r rune) string {
 	}
 	return fmt.Sprintf(`\u%04x`, r)
 }
+
+// TruncateOctets cuts s to at most n octets at a character boundary, so the
+// result is still valid UTF-8 when s was. It does not escape.
+func TruncateOctets(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}

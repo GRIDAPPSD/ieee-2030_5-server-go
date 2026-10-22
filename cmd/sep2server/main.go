@@ -143,7 +143,7 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 		return nil
 	}
 	cfg.DeviceLogResolvedDir = resolved
-	log.Printf("device log directory ready: %s (limit %d bytes per file, one rotated file kept; no request writes to it yet)", logsafe.Str(resolved), limit)
+	log.Printf("device log directory ready: %s (limit %d bytes per file, one rotated file kept)", logsafe.Str(resolved), limit)
 	return nil
 }
 

@@ -1,9 +1,6 @@
 package activity_test
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -70,34 +67,6 @@ func TestLastHoldsTimeAndCount(t *testing.T) {
 		t.Errorf("Last(b) count = %d, want 1", n)
 	}
 }
-
-func TestMiddlewareRecordsByIdentity(t *testing.T) {
-	t.Parallel()
-	r := activity.New()
-	identity := func(ctx context.Context) (string, string, bool) {
-		v, ok := ctx.Value(ctxKey{}).(string)
-		return v, "sfdi", ok
-	}
-	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := r.Middleware(identity)(inner)
-
-	req := httptest.NewRequest(http.MethodGet, "/dcap", nil)
-	h.ServeHTTP(httptest.NewRecorder(), req.WithContext(context.WithValue(req.Context(), ctxKey{}, "lfdi-a")))
-	if _, n, ok := r.Last("lfdi-a"); !ok || n != 1 {
-		t.Errorf("identified request: Last count = %d ok=%v, want 1 true", n, ok)
-	}
-
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dcap", nil))
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("unidentified request status = %d, want pass-through 204", rec.Code)
-	}
-	if _, n, ok := r.Last(""); ok || n != 0 {
-		t.Errorf("unidentified request recorded under empty LFDI: n=%d ok=%v", n, ok)
-	}
-}
-
-type ctxKey struct{}
 
 // A certificate-derived LFDI is 40 uppercase hex characters, but an EndDevice
 // record may hold any case its writer used; both must land on one entry.

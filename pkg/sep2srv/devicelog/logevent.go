@@ -20,15 +20,19 @@ type LogEventStore struct {
 	store.ScopedStore[sep2.LogEvent]
 	w        *Writer
 	identity identity.Func
+	resolve  Resolver
 }
 
 // NewLogEventStore returns inner unchanged when w or identity is nil, so a
 // server with device logging off mounts the plain store.
-func NewLogEventStore(inner store.ScopedStore[sep2.LogEvent], w *Writer, identity identity.Func) store.ScopedStore[sep2.LogEvent] {
+//
+// resolve decides the line's file and target exactly as it does for a request
+// line, through AppendResolved; nil files every line under its actor.
+func NewLogEventStore(inner store.ScopedStore[sep2.LogEvent], w *Writer, identity identity.Func, resolve Resolver) store.ScopedStore[sep2.LogEvent] {
 	if w == nil || identity == nil || store.IsAbsent(inner) {
 		return inner
 	}
-	return &LogEventStore{ScopedStore: inner, w: w, identity: identity}
+	return &LogEventStore{ScopedStore: inner, w: w, identity: identity, resolve: resolve}
 }
 
 // Create stores the event, then queues its line. The line is keyed by the
@@ -65,9 +69,9 @@ func (s *LogEventStore) Create(ctx context.Context, parentID, id string, ev sep2
 	if ev.Details != "" {
 		fields["details"] = logsafe.Str(ev.Details)
 	}
-	// Append counts and logs every drop itself, so the error carries nothing
-	// the request could act on.
-	_ = s.w.Append(actor, Entry{Kind: KindLogEvent, Fields: fields})
+	// AppendResolved counts and logs every drop itself, so the error carries
+	// nothing the request could act on.
+	_ = s.w.AppendResolved(actor, parentID, s.resolve, Entry{Kind: KindLogEvent, Fields: fields})
 	return nil
 }
 

@@ -299,18 +299,7 @@ func reasonOf(p *string) (string, frRefusalKind, bool) {
 	if utf8.RuneCountInString(reason) > maxFRReasonRunes {
 		return "", frReasonTooLong, false
 	}
-	return truncateOctets(reason, maxFRReasonOctets), frRefusalKind{}, true
-}
-
-// truncateOctets cuts s to at most n octets at a character boundary.
-func truncateOctets(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	return logsafe.TruncateOctets(reason, maxFRReasonOctets), frRefusalKind{}, true
 }
 
 func multiplierInRange(m int8) bool {

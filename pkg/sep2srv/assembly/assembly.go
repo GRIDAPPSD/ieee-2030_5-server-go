@@ -358,8 +358,10 @@ type RouterConfig struct {
 	// field here, not a parameter, so no existing caller changes.
 	Activity *activity.Recorder
 
-	// DeviceLog, when set, receives a line for each LogEvent a device posts,
-	// keyed by the LFDI AuthPolicy.Identity reports. Nil writes nothing.
+	// DeviceLog, when set, receives one line per request that gets past
+	// AuthPolicy.Wrap and one line for each LogEvent a device posts, keyed by
+	// the LFDI AuthPolicy.Identity reports. Nil writes nothing. The caller
+	// owns the Writer and closes it after the listener has drained.
 	DeviceLog *devicelog.Writer
 }
 
@@ -462,16 +464,24 @@ func BuildProtocolRouter(
 	protocolMux.HandleFunc("GET /sdev", coresdev.HandleSelfDevice(serverSFDI, serverLFDI))
 	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
+	// One resolver decides which device log file a line belongs to, for the
+	// request observer below and for the LogEvent decorator.
+	deviceLogResolver := newDeviceLogResolver(cfg.DeviceLog, stores)
+
 	if stores != nil {
-		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier)
+		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier, deviceLogResolver)
 		setSubscriberCheck(notifier, gated.checkSubscriber)
 	}
 
 	// Inside Wrap, so only requests that passed identity and the ACL count.
-	var inner http.Handler = protocolMux
-	if cfg.Activity != nil {
-		inner = cfg.Activity.Middleware(authPolicy.Identity)(inner)
+	observers := requestObservers{
+		identity: authPolicy.Identity,
+		activity: cfg.Activity,
+		log:      cfg.DeviceLog,
+		resolver: deviceLogResolver,
+		now:      time.Now,
 	}
+	inner := observers.wrap(protocolMux)
 	protocolChain := inner
 	if authPolicy.Wrap != nil {
 		protocolChain = authPolicy.Wrap(inner)
@@ -486,7 +496,7 @@ func BuildProtocolRouter(
 
 // registerGatedRoutes registers every store-backed route on next through one
 // ownership gate and returns the gate.
-func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) *ownershipGate {
+func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, deviceLogResolver *devicelog.CachingResolver) *ownershipGate {
 	// Every helper registers through the ownership gate, so each
 	// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
 	gated := newOwnershipGate(next, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
@@ -494,7 +504,7 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 	registerDERRoutes(gated, stores)
 	registerMeteringRoutes(gated, stores)
-	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, notifier)
+	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, deviceLogResolver, notifier)
 	return gated
 }
 
@@ -519,7 +529,7 @@ func NewSubscriberCheck(cfg RouterConfig, stores *Stores) coresub.SubscriberChec
 		Identity:   func(context.Context) (string, string, bool) { return "", "", false },
 		SFDIPrefix: func(string) (string, error) { return "", errors.New("SFDIPrefix not configured: deny") },
 	}
-	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil).checkSubscriber
+	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil, nil).checkSubscriber
 }
 
 // topLevelMounts are the prefixes under which the protocol mux is mounted on
@@ -1367,7 +1377,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, notifier ResourceNotifier) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, deviceLogResolver *devicelog.CachingResolver, notifier ResourceNotifier) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1425,7 +1435,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// Only the create path is decorated: the device log records what a
 		// device posted, and the list and instance routes read the plain store.
 		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(
-			devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity)))
+			devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity, deviceLogResolver.Resolve)))
 
 		logEventInstance := scopedResourceHandler[sep2.LogEvent](
 			stores.LogEvents, "id", "lelId", itemMethods{Delete: true}, nil)

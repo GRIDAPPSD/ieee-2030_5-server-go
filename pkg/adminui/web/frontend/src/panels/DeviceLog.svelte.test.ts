@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/svelte'
 import DeviceLog from './DeviceLog.svelte'
 import * as api from '../lib/api'
+import { loadDeviceProfiles, resetDeviceProfiles } from '../lib/devices'
 
 const LFDI = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const MANAGER = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
@@ -19,6 +20,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetDeviceProfiles()
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -276,5 +278,59 @@ describe('DeviceLog', () => {
     mount()
     await settle()
     expect(screen.getByRole('table', { name: 'Log of device 7' })).toBeInTheDocument()
+  })
+  async function asAggregator() {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValueOnce({
+      ok: true,
+      data: { profiles: [{ lfdi: LFDI, name: 'Agg', kind: 'aggregator' }] },
+    } as never)
+    await loadDeviceProfiles()
+  }
+
+  it('offers the own and managed switch only for an aggregator', async () => {
+    serve(() => page([entry(1)]))
+    const plain = mount()
+    await settle()
+    expect(screen.queryByTestId('device-logs-scope')).toBeNull()
+    plain.unmount()
+    vi.restoreAllMocks()
+
+    await asAggregator()
+    serve(() => page([entry(1)]))
+    mount()
+    await settle()
+    expect(screen.getByTestId('device-logs-scope')).toBeInTheDocument()
+  })
+
+  it('switches scope to managed, reloads with it, and shows the device of each line', async () => {
+    await asAggregator()
+    const paths = serve((path) =>
+      path.includes('scope=managed')
+        ? page([entry(3, { actor: MANAGER, path: '/theirs' }), entry(2, { actor: LFDI, path: '/mine' })])
+        : page([entry(1, { path: '/mine-only' })]),
+    )
+    mount()
+    await settle()
+    expect(paths[0]).toBe(`/api/device-logs/${LFDI}?limit=200`)
+    expect(screen.queryByRole('columnheader', { name: 'Device' })).toBeNull()
+
+    await fireEvent.click(screen.getByLabelText('Own and managed devices'))
+    await settle()
+    expect(paths[1]).toBe(`/api/device-logs/${LFDI}?limit=200&scope=managed`)
+    const rows = screen.getAllByTestId('device-log-row')
+    expect(rows).toHaveLength(2)
+    expect(screen.getByRole('columnheader', { name: 'Device' })).toBeInTheDocument()
+    expect(within(rows[0]).getByTestId('device-log-device')).toHaveTextContent('10000000002')
+    expect(within(rows[1]).getByTestId('device-log-device')).toHaveTextContent('Agg')
+    expect(within(rows[0]).getByTestId('device-log-via').textContent?.trim() ?? '').toBe('')
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(paths[2]).toBe(`/api/device-logs/${LFDI}?limit=200&scope=managed&after=c3`)
+
+    await fireEvent.click(screen.getByLabelText('Own requests'))
+    await settle()
+    expect(paths.at(-1)).toBe(`/api/device-logs/${LFDI}?limit=200`)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
+    expect(screen.queryByRole('columnheader', { name: 'Device' })).toBeNull()
   })
 })

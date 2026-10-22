@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,5 +111,69 @@ func TestAdminDeviceLogNonCanonicalManagedIDIs400(t *testing.T) {
 	h.HandleRead()(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("canonical manager: %d %s, want 200", rec.Code, rec.Body)
+	}
+}
+
+// An aggregator's scope=managed view merges its own file and the files of
+// both managed devices, newest first by line time, and each entry's line
+// still names the device that made it. Without the scope only its own file
+// is read.
+func TestAdminDeviceLogManagedScopeMergesAggregatorAndTwoDevices(t *testing.T) {
+	const (
+		agg  = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		devA = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+		devB = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+	)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := func(sec int, actor, path string) string {
+		return `{"seq":1,"t":"2026-10-21T12:00:0` + string(rune('0'+sec)) + `Z","kind":"request","actor":"` + actor + `","path":"` + path + `"}` + "\n"
+	}
+	for file, body := range map[string]string{
+		agg:  line(1, agg, "/agg1") + line(4, agg, "/agg4"),
+		devA: line(2, devA, "/a2") + line(5, devA, "/a5"),
+		devB: line(3, devB, "/b3") + line(6, devB, "/b6"),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file+".jsonl"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader, err := devicelog.NewReader(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &AdminDeviceLogHandler{Reader: reader, Managers: stubManagers{managed: []string{devA, devB}}}
+	read := func(query string) string {
+		req := httptest.NewRequest(http.MethodGet, "/api/device-logs/"+agg+query, nil)
+		req.SetPathValue("lfdi", agg)
+		rec := httptest.NewRecorder()
+		h.HandleRead()(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", query, rec.Code, rec.Body)
+		}
+		var body struct {
+			Entries []struct {
+				Line struct {
+					Actor string `json:"actor"`
+					Path  string `json:"path"`
+				} `json:"line"`
+			} `json:"entries"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, e := range body.Entries {
+			got = append(got, e.Line.Path+"@"+e.Line.Actor[:1])
+		}
+		return strings.Join(got, ",")
+	}
+	if got, want := read("?scope=managed"), "/b6@C,/a5@B,/agg4@A,/b3@C,/a2@B,/agg1@A"; got != want {
+		t.Errorf("managed scope = %s, want %s", got, want)
+	}
+	if got, want := read(""), "/agg4@A,/agg1@A"; got != want {
+		t.Errorf("own scope = %s, want %s", got, want)
 	}
 }

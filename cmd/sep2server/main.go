@@ -12,7 +12,9 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 )
 
 const version = "0.1.0"
@@ -57,6 +59,10 @@ func runServe() error {
 		return err
 	}
 
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -87,6 +93,60 @@ func prepareServe(resolver *certDirResolver) (*config.Config, *handler.AdminCert
 	return cfg, svc, nil
 }
 
+// prepareDeviceLog checks the device log settings before any listener starts.
+// An explicit SEP2_DEVICE_LOG_DIR that cannot be used stops startup; the
+// default directory only turns the log off, so a deployment whose working
+// directory is read-only still starts.
+func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
+	if cfg.DeviceLogOff {
+		log.Printf("device log disabled: SEP2_DEVICE_LOG=false")
+		return nil
+	}
+	limit, err := cfg.EffectiveDeviceLogMaxBytes()
+	if err != nil {
+		return fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %w", err)
+	}
+	dir, explicit := cfg.EffectiveDeviceLogDir()
+	// Protect only the paths in use. The default certificate directory is in
+	// use only when some setting fell back to it; a server with every path
+	// set explicitly starts without a determinable home directory. A path
+	// that is in use but cannot be resolved stops startup (fail closed).
+	protected := []string{cfg.KeyFile, cfg.AdminKeyFile}
+	caKey, servingCAKey, deviceCAKey, err := caKeyPaths(r)
+	if err != nil {
+		return fmt.Errorf("device log: cannot resolve the certificate directory to protect it (set SEP2_CERT_DIR, or SEP2_DEVICE_LOG=false): %w", err)
+	}
+	protected = append(protected, caKey, servingCAKey, deviceCAKey)
+	if r.resolved && r.err == nil {
+		protected = append(protected, r.dir)
+	} else if os.Getenv("SEP2_CERT_DIR") != "" {
+		// A directory the operator named stays off-limits even when every
+		// path is set explicitly elsewhere.
+		certDir, cerr := r.get()
+		if cerr != nil {
+			return fmt.Errorf("device log: cannot resolve SEP2_CERT_DIR to protect it: %w", cerr)
+		}
+		protected = append(protected, certDir)
+	}
+	// The admin secret file is read only when the admin plane can mint, so
+	// an unresolvable default is not in use.
+	if secret, serr := adminSecretPath(r); serr == nil {
+		protected = append(protected, secret)
+	}
+	resolved, err := devicelog.PrepareDir(dir, protected)
+	if err != nil {
+		if explicit {
+			return fmt.Errorf("SEP2_DEVICE_LOG_DIR: %w", err)
+		}
+		log.Printf("device log disabled: %s: %s", logsafe.Str(dir), logsafe.Str(err.Error()))
+		cfg.DeviceLogOff = true
+		return nil
+	}
+	cfg.DeviceLogResolvedDir = resolved
+	log.Printf("device log directory ready: %s (limit %d bytes per file, one rotated file kept; no request writes to it yet)", logsafe.Str(resolved), limit)
+	return nil
+}
+
 // loadAdminCertService resolves the CA key settings and loads both CA pairs
 // for the admin cert service (#622).
 //
@@ -110,15 +170,7 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 	// key are not a matched pair" (MEDIUM 2): both leave key nil, so
 	// neither is silently paired and neither reaches the admin cert
 	// service as mint-capable, but the two cases get their own log line.
-	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
-	if err != nil {
-		return nil, err
-	}
-	servingCAKeyFile, err := envPathOr("SEP2_SERVING_CA_KEY", caKeyFile)
-	if err != nil {
-		return nil, err
-	}
-	deviceCAKeyFile, err := envPathOr("SEP2_DEVICE_CA_KEY", caKeyFile)
+	_, servingCAKeyFile, deviceCAKeyFile, err := caKeyPaths(resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +227,23 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 		}
 	}
 	return svc, nil
+}
+
+// caKeyPaths resolves SEP2_CA_KEY and the two role keys that fall back to it.
+func caKeyPaths(r *certDirResolver) (caKey, servingCAKey, deviceCAKey string, err error) {
+	caKey, err = r.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
+	if err != nil {
+		return "", "", "", err
+	}
+	servingCAKey, err = envPathOr("SEP2_SERVING_CA_KEY", caKey)
+	if err != nil {
+		return "", "", "", err
+	}
+	deviceCAKey, err = envPathOr("SEP2_DEVICE_CA_KEY", caKey)
+	if err != nil {
+		return "", "", "", err
+	}
+	return caKey, servingCAKey, deviceCAKey, nil
 }
 
 // configFromEnv builds the server configuration from SEP2_* environment
@@ -272,6 +341,18 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	deviceLogOn, err := config.ParseDeviceLog(os.Getenv("SEP2_DEVICE_LOG"))
+	if err != nil {
+		return nil, err
+	}
+	deviceLogMaxBytes, err := config.ParseDeviceLogMaxBytes(os.Getenv("SEP2_DEVICE_LOG_MAX_BYTES"))
+	if err != nil {
+		return nil, err
+	}
+	deviceLogDir, err := envPathOr("SEP2_DEVICE_LOG_DIR", "")
+	if err != nil {
+		return nil, err
+	}
 	mirrorReadingRetention, err := config.ParseMirrorReadingRetentionSeconds(os.Getenv("SEP2_MIRROR_READING_RETENTION_SECONDS"))
 	if err != nil {
 		return nil, err
@@ -332,6 +413,12 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		TrafficCapture:    os.Getenv("SEP2_TRAFFIC_CAPTURE") == "true",
 		TrafficCaptureEnv: os.Getenv("SEP2_TRAFFIC_CAPTURE"),
 		TrafficDir:        trafficDir,
+
+		// #1063: on unless SEP2_DEVICE_LOG=false. An empty directory means
+		// the default, which only turns the log off when unusable.
+		DeviceLogOff:      !deviceLogOn,
+		DeviceLogDir:      deviceLogDir,
+		DeviceLogMaxBytes: deviceLogMaxBytes,
 
 		// Observability: dedicated plain-HTTP Prometheus metrics listener.
 		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"

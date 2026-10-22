@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -266,12 +267,11 @@ func (h *AdminManagementHandler) writeKindRefusal(w http.ResponseWriter, op, msg
 // and refuses only a value that is not valid hexBinary or not 40 hex
 // digits; a schema-valid lowercase LFDI is never refused.
 func normalizeLFDI(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
+	if strings.TrimSpace(s) == "" {
 		return "", errors.New("required")
 	}
-	upper := strings.ToUpper(s)
-	if !validLFDI(upper) {
+	upper, ok := sep2lfdi.CanonicalTrimSpace(s)
+	if !ok {
 		return "", errors.New("must be 40 hex characters")
 	}
 	return upper, nil

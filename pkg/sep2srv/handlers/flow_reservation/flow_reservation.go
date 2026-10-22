@@ -17,6 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -438,7 +439,7 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 				return
 			}
 		} else {
-			lfdi, ok := canonicalLFDI(rsp.EndDeviceLFDI)
+			lfdi, ok := sep2lfdi.Canonical(rsp.EndDeviceLFDI)
 			if !ok {
 				http.Error(w, "endDeviceLFDI must be 40 hexadecimal digits", http.StatusBadRequest)
 				return
@@ -481,23 +482,6 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 // log, or "" when the request carries no identity. A non-nil error means
 // the check could not complete, and the POST answers 500.
 type ResponseSenderAuthorizer func(r *http.Request, endDeviceLFDI string) (allowed bool, sender string, err error)
-
-// canonicalLFDI returns s uppercased when it is 40 hex digits (HexBinary160).
-// hexBinary collapses surrounding whitespace and is case-insensitive, and
-// identities are compared uppercase.
-func canonicalLFDI(s string) (string, bool) {
-	s = strings.Trim(s, " \t\r\n")
-	if len(s) != 40 {
-		return "", false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
-			return "", false
-		}
-	}
-	return strings.ToUpper(s), true
-}
 
 // responseRoot returns the local name of body's root element, or "" when it
 // has none. body has already decoded, so this only names which subtype.

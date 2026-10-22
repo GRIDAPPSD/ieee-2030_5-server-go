@@ -39,6 +39,20 @@ const (
 	DefaultCommsOfflineAfter = activity.DefaultOfflineAfter
 )
 
+// Bounds on SEP2_DEVICE_LOG_MAX_BYTES. The ceiling is the operator's 20 MB
+// limit read as decimal bytes; the floor stops a value in megabytes from
+// rotating on every line. Zero in Config means unset and takes
+// DefaultDeviceLogMaxBytes.
+const (
+	MinDeviceLogMaxBytes     int64 = 1_000_000
+	MaxDeviceLogMaxBytes     int64 = 20_000_000
+	DefaultDeviceLogMaxBytes       = MaxDeviceLogMaxBytes
+)
+
+// DefaultDeviceLogDir is relative to the working directory on purpose;
+// SEP2_DATA_DIR does not move it.
+const DefaultDeviceLogDir = "./etc/sep2/logs"
+
 // Bounds on SEP2_MIRROR_READING_RETENTION_SECONDS. The floor keeps every
 // reading the DER control delivery figure can still use: the longest control
 // the issuer accepts plus the furthest one reading reaches. Zero in Config
@@ -122,6 +136,20 @@ type Config struct {
 	// <DataDir>/traffic; both empty means TrafficCapture had nothing to
 	// permit. See EffectiveTrafficDir for the precedence rule.
 	TrafficDir string // env SEP2_TRAFFIC_DIR
+
+	// Device log files (#1063). Logging is on unless DeviceLogOff
+	// (SEP2_DEVICE_LOG=false). DeviceLogDir is the explicit, tilde-expanded
+	// SEP2_DEVICE_LOG_DIR; empty means DefaultDeviceLogDir, and the two
+	// differ on failure (see EffectiveDeviceLogDir). DeviceLogMaxBytes zero
+	// means unset.
+	DeviceLogOff      bool
+	DeviceLogDir      string
+	DeviceLogMaxBytes int64
+
+	// DeviceLogResolvedDir is the symlink-resolved, created and probed
+	// directory startup validation settled on; empty until it has run or
+	// when the log is off.
+	DeviceLogResolvedDir string
 
 	// #161: admin listener configuration.
 	//
@@ -377,6 +405,57 @@ func ParseCommsOfflineAfterSeconds(v string) (time.Duration, error) {
 		return 0, fmt.Errorf("SEP2_COMMS_OFFLINE_AFTER_SECONDS: %d is outside 1 to 86400", n)
 	}
 	return time.Duration(n) * time.Second, nil
+}
+
+// ParseDeviceLog validates SEP2_DEVICE_LOG: empty or "true" is on, "false" is
+// off, and anything else is refused rather than read as on.
+func ParseDeviceLog(v string) (enabled bool, err error) {
+	switch v {
+	case "", "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("SEP2_DEVICE_LOG: %q is not \"true\" or \"false\"", v)
+}
+
+// ParseDeviceLogMaxBytes validates SEP2_DEVICE_LOG_MAX_BYTES: empty is unset
+// (zero), anything else must be whole bytes within the device log bounds.
+func ParseDeviceLogMaxBytes(v string) (int64, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %q is not a whole number of bytes", v)
+	}
+	if n < MinDeviceLogMaxBytes || n > MaxDeviceLogMaxBytes {
+		return 0, fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %d is outside %d to %d", n, MinDeviceLogMaxBytes, MaxDeviceLogMaxBytes)
+	}
+	return n, nil
+}
+
+// EffectiveDeviceLogMaxBytes resolves an unset limit to the default and
+// refuses one outside the bounds, as a hand-built Config can carry any value.
+func (c *Config) EffectiveDeviceLogMaxBytes() (int64, error) {
+	n := c.DeviceLogMaxBytes
+	if n == 0 {
+		return DefaultDeviceLogMaxBytes, nil
+	}
+	if n < MinDeviceLogMaxBytes || n > MaxDeviceLogMaxBytes {
+		return 0, fmt.Errorf("device log limit %d is outside %d to %d", n, MinDeviceLogMaxBytes, MaxDeviceLogMaxBytes)
+	}
+	return n, nil
+}
+
+// EffectiveDeviceLogDir returns the directory and whether the operator set
+// it. An explicit directory that cannot be used stops startup; the default
+// one only turns the log off.
+func (c *Config) EffectiveDeviceLogDir() (dir string, explicit bool) {
+	if c.DeviceLogDir != "" {
+		return c.DeviceLogDir, true
+	}
+	return DefaultDeviceLogDir, false
 }
 
 // EffectiveCommsOfflineAfter resolves an unset or non-positive threshold to

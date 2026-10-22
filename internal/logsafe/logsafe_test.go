@@ -133,3 +133,22 @@ func TestErr(t *testing.T) {
 		t.Errorf("Err = %q, want bad\\nvalue", got)
 	}
 }
+
+func TestTruncateOctetsCutsAtACharacterBoundary(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"abc", 3, "abc"},
+		{"abc", 2, "ab"},
+		{"e\xc3\xa9x", 2, "e"},
+		{"e\xc3\xa9x", 3, "e\xc3\xa9"},
+		{"abc", 0, ""},
+	}
+	for _, c := range cases {
+		if got := TruncateOctets(c.in, c.n); got != c.want {
+			t.Errorf("TruncateOctets(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		}
+	}
+}

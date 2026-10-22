@@ -5,8 +5,6 @@
 package activity
 
 import (
-	"context"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -99,21 +97,5 @@ func (r *Recorder) State(lfdi string, now time.Time, offlineAfter time.Duration)
 		return Offline
 	default:
 		return Online
-	}
-}
-
-// Middleware records each request that reaches it, under the LFDI identity
-// reports. Place it inside the identity and ACL layers: a request they
-// refused never reaches it, so a refused request does not count as the
-// device being in contact. A request with no identity passes through
-// unrecorded.
-func (r *Recorder) Middleware(identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if lfdi, _, ok := identity(req.Context()); ok {
-				r.Record(lfdi)
-			}
-			next.ServeHTTP(w, req)
-		})
 	}
 }

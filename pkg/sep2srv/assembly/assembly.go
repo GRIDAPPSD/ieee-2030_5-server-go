@@ -57,6 +57,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
 	coredcap "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/dcap"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -355,6 +356,10 @@ type RouterConfig struct {
 	// layer refused never counts as the device being in contact. It is a
 	// field here, not a parameter, so no existing caller changes.
 	Activity *activity.Recorder
+
+	// DeviceLog, when set, receives a line for each LogEvent a device posts,
+	// keyed by the LFDI AuthPolicy.Identity reports. Nil writes nothing.
+	DeviceLog *devicelog.Writer
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -488,7 +493,7 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 	registerDERRoutes(gated, stores)
 	registerMeteringRoutes(gated, stores)
-	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, notifier)
 	return gated
 }
 
@@ -1361,7 +1366,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool), notifier ResourceNotifier) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool), deviceLog *devicelog.Writer, notifier ResourceNotifier) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1416,7 +1421,10 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/lel", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
 			stores.LogEvents, "id", store.SortByIDAsc, corelogevent.BuildLogEventList, 900,
 		))
-		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(stores.LogEvents))
+		// Only the create path is decorated: the device log records what a
+		// device posted, and the list and instance routes read the plain store.
+		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(
+			devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity)))
 
 		logEventInstance := scopedResourceHandler[sep2.LogEvent](
 			stores.LogEvents, "id", "lelId", itemMethods{Delete: true}, nil)

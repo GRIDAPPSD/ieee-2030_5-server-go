@@ -2,12 +2,14 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 )
@@ -251,12 +253,12 @@ type Config struct {
 	// PEN is this server's manufacturer Private Enterprise Number, embedded
 	// in the low 32 bits of a minted FlowReservationResponse mRID (#665) so
 	// a device can attribute it to this server rather than to a random
-	// draw. Env: SEP2_PEN. Nil (unset) or the explicit value 0 (IANA-
-	// reserved; use EffectivePEN, which treats it the same way
-	// internal/dercontrol.Config already does) means the server was not
-	// given one: minted mRIDs are then fully random and not conformant
-	// with IEEE 2030.5 mRIDType, and the server logs one startup warning
-	// rather than refusing the request.
+	// draw. Env: SEP2_PEN, which ParsePEN defaults to the IEEE 2030.5 test
+	// PEN. Nil or the explicit value 0 (IANA-reserved; use EffectivePEN,
+	// which treats it the same way internal/dercontrol.Config already does)
+	// means the server was not given one: minted mRIDs are then fully
+	// random and not conformant with IEEE 2030.5 mRIDType, and the server
+	// logs one startup warning rather than refusing the request.
 	PEN *uint32
 
 	// SEP2Edition is the IEEE 2030.5 edition GET /api/derms/fleets uses to
@@ -302,19 +304,35 @@ type Config struct {
 	MirrorReadingMaxPerSeries int
 }
 
-// ParsePEN validates the value of SEP2_PEN: empty is unset (nil), anything
-// else must be a base-10 uint32. An unparseable value is an error rather
-// than a silently ignored setting.
+// ParsePEN validates the value of SEP2_PEN: empty resolves to the IEEE
+// 2030.5 test PEN (certs.DefaultPENText), anything else must be a base-10
+// uint32. An unparseable value is an error rather than a silently ignored
+// setting. An explicit 0 parses through and is treated as unset by
+// EffectivePEN.
 func ParsePEN(v string) (*uint32, error) {
+	pen, _, err := ResolvePEN(v)
+	return pen, err
+}
+
+// ResolvePEN is ParsePEN that also reports whether the default was used, so
+// each entry point can log it once.
+func ResolvePEN(v string) (pen *uint32, defaulted bool, err error) {
 	if v == "" {
-		return nil, nil
+		v = certs.DefaultPENText
+		defaulted = true
 	}
 	n, err := strconv.ParseUint(v, 10, 32)
 	if err != nil {
-		return nil, fmt.Errorf("SEP2_PEN: %q is not a valid uint32: %w", v, err)
+		return nil, false, fmt.Errorf("SEP2_PEN: %q is not a valid uint32: %w", v, err)
 	}
-	pen := uint32(n)
-	return &pen, nil
+	p := uint32(n)
+	return &p, defaulted, nil
+}
+
+// LogPENDefault is the one startup line for a defaulted SEP2_PEN, shared by
+// the server and by embedders of the admin plane.
+func LogPENDefault(pen uint32) {
+	log.Printf("SEP2_PEN unset: using the IEEE 2030.5 test PEN %d; set SEP2_PEN to your manufacturer PEN for production", pen)
 }
 
 // ParseSEP2Edition validates the value of SEP2_EDITION: empty (unset,

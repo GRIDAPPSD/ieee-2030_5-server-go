@@ -321,9 +321,12 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	pen, err := config.ParsePEN(os.Getenv("SEP2_PEN"))
+	pen, penDefaulted, err := config.ResolvePEN(os.Getenv("SEP2_PEN"))
 	if err != nil {
 		return nil, err
+	}
+	if penDefaulted {
+		config.LogPENDefault(*pen)
 	}
 	sep2Edition, err := config.ParseSEP2Edition(os.Getenv("SEP2_EDITION"))
 	if err != nil {
@@ -435,9 +438,9 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// harnesses whose notification receivers listen there.
 		NotificationAllowLoopback: os.Getenv("SEP2_NOTIFICATION_ALLOW_LOOPBACK") == "true",
 
-		// #665: unset by default (nil); minted FlowReservationResponse
-		// mRIDs are then fully random rather than conformant, and Run logs
-		// a startup warning instead of refusing every POST.
+		// #665: unset resolves to the IEEE 2030.5 test PEN in ParsePEN. Only
+		// an explicit 0 leaves it unconfigured, and Run then logs a startup
+		// warning instead of refusing every POST.
 		PEN: pen,
 
 		// #715 fix round 3 item 2: unset by default (empty string), which

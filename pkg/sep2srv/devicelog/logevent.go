@@ -13,6 +13,9 @@ import (
 // KindLogEvent is the line kind for a LogEvent a device posted.
 const KindLogEvent = "logevent"
 
+// KindRequest is the line kind for a request that passed identity and the ACL.
+const KindRequest = "request"
+
 // KindRefused is the line kind for a request the ownership gate refused
 // with a 403.
 const KindRefused = "refused"

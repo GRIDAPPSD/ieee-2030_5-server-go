@@ -131,7 +131,7 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 		"resp_bytes": rec.Bytes,
 		"remote":     r.RemoteAddr,
 	}
-	kind := "request"
+	kind := devicelog.KindRequest
 	if ref.reason != "" && rec.Status == http.StatusForbidden {
 		// A refusal replaces the request line rather than adding a second
 		// one, and carries the gate's fixed reason text, never client text.

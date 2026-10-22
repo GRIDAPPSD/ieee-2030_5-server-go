@@ -139,7 +139,7 @@ fi
 "$SERVER_BIN" certs generate-device \
   --ca "${CERT_DIR}/ca.crt" --ca-key "${CERT_DIR}/ca.key" \
   --hw-serial "$SERIAL" \
-  "${HW_TYPE_ARGS[@]}" \
+  ${HW_TYPE_ARGS[@]+"${HW_TYPE_ARGS[@]}"} \
   --device-type "$DEVICE_TYPE" \
   --name "$DEVICE_NAME" --out "$CERT_DIR"
 

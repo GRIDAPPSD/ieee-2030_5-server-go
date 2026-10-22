@@ -136,7 +136,7 @@ an allowlist, no per-vendor handling. CSIP section 6.2 mandates the SAN is
 present and well-formed; that's it. The PEN is metadata, parallel to
 the device-type policy OID above.
 
-The default and how to change it are in the README section "Device certificate hardware type" (**default `1.3.6.1.4.1.40732.99`, the SunSpec test PEN OID; override with `SEP2_HW_TYPE` for the server and CLI, or `HW_TYPE` for `make certs` and `scripts/new-device.sh`**). `SEP2_HW_TYPE` and `HW_TYPE` take a full OID such as `1.3.6.1.4.1.40732.99`, never the bare number `40732`.
+The default and how to change it are in the README section "Device certificate hardware type" (**default `1.3.6.1.4.1.40732.99`, a test value under the IEEE 2030.5 arc, not a production PEN; override with `SEP2_HW_TYPE` for the server and CLI, or `HW_TYPE` for `make certs` and `scripts/new-device.sh`**). `SEP2_HW_TYPE` and `HW_TYPE` take a full OID such as `1.3.6.1.4.1.40732.99`, never the bare number `40732`.
 
 A separate setting, `SEP2_PEN` (a plain decimal number, not an OID), embeds
 this server's own PEN into a minted FlowReservationResponse mRID. Unset by

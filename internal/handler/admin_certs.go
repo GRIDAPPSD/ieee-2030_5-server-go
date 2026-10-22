@@ -37,6 +37,8 @@ type AdminCertService struct {
 	// defaultHWType is used when a device-cert request names no hwType;
 	// empty means certs.DefaultHWTypeOID.
 	defaultHWType string
+	// hwTypeNotice makes the fallback log line print once per process.
+	hwTypeNotice sync.Once
 }
 
 // NewAdminCertService creates a service with a single CA signing both the
@@ -262,7 +264,9 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 			if req.HWType == "" {
 				req.HWType = certs.DefaultHWTypeOID
 			}
-			log.Printf("device cert: hwType not given, using the default %s (test PEN unless SEP2_HW_TYPE is set); production devices should carry their manufacturer's PEN OID", logsafe.Str(req.HWType))
+			s.hwTypeNotice.Do(func() {
+				log.Printf("device cert: hwType not given, using the default %s (a test value unless SEP2_HW_TYPE is set); production devices should carry their manufacturer's PEN OID", logsafe.Str(req.HWType))
+			})
 		}
 		hwTypeOID, err := certs.ParseOID(req.HWType)
 		if err != nil {

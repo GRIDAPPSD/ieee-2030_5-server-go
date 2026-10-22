@@ -1198,7 +1198,7 @@ func TestAdminCertServiceServingOnlyPairServesServingRoutesAndRefusesDeviceRoute
 }
 
 // TestHandleCreateDeviceCertHWTypeDefaultsToTestOID pins #1062: an omitted
-// hwType mints with certs.DefaultHWTypeOID and logs that the test default was
+// hwType mints with certs.DefaultHWTypeOID and logs once that the default was
 // used.
 func TestHandleCreateDeviceCertHWTypeDefaultsToTestOID(t *testing.T) {
 	var buf bytes.Buffer
@@ -1214,6 +1214,12 @@ func TestHandleCreateDeviceCertHWTypeDefaultsToTestOID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"DEF-001"}`))
 	w := httptest.NewRecorder()
 	svc.HandleCreateDeviceCert().ServeHTTP(w, req)
+	// A second defaulted request must not repeat the notice.
+	w2 := httptest.NewRecorder()
+	svc.HandleCreateDeviceCert().ServeHTTP(w2, httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"DEF-002"}`)))
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("second request status = %d", w2.Code)
+	}
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())

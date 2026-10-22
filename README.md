@@ -44,11 +44,11 @@ Binaries land in `bin/`.
 
 ## Device certificate hardware type
 
-**The default hardware type is the SunSpec test PEN OID `1.3.6.1.4.1.40732.99`.**
+**The default hardware type is `1.3.6.1.4.1.40732.99`, a test value under the IEEE 2030.5 arc; production devices use their manufacturer's PEN.**
 It is used by `sep2server certs`, `POST /api/certs/device`, `make certs` and
-`scripts/new-device.sh` when no hardware type is given. 40732 is a test PEN, so a
-production device should carry its manufacturer's own. The first two log or print
-once when they fall back to it.
+`scripts/new-device.sh` when no hardware type is given. The server and the CLI
+note the fallback once per process. `make certs`, `make new-device` and the CLI
+all read `SEP2_HW_TYPE`; `HW_TYPE` overrides it for the two make targets.
 
 The hardware type is a full OID, not the bare PEN number. It needs at least two
 arcs, a first arc of 0, 1 or 2, and a second arc of 0 to 39 when the first is 0

@@ -175,4 +175,24 @@ describe('LogsTab', () => {
     await vi.advanceTimersByTimeAsync(30000)
     expect(logCalls(calls)).toHaveLength(2)
   })
+
+  it('keeps the log, its polling and its place when the device list refreshes with new objects for the same device', async () => {
+    window.history.replaceState({}, '', `/ui/logs?device=${A}`)
+    const calls = serve((path) =>
+      path.includes('after=') ? logPage(A, [line(A, 2, '/second')]) : logPage(A, [line(A, 1, '/first')]),
+    )
+    const view = mount()
+    await settle()
+    const box = screen.getByTestId('device-logs-scroll')
+    const row = screen.getByTestId('device-log-row')
+    expect(logCalls(calls)).toHaveLength(1)
+
+    // The dashboard stream hands over a fresh object for every device on each frame.
+    await view.rerender({ devices: [device(A, '10000000001'), device(B, '10000000002')], ready: true, error: '' })
+    await settle()
+    expect(screen.getByTestId('device-logs-scroll')).toBe(box)
+    expect(screen.getByTestId('device-log-row')).toBe(row)
+    expect(logCalls(calls)).toHaveLength(1)
+    expect(logCalls(calls)[0].signal?.aborted).toBe(false)
+  })
 })

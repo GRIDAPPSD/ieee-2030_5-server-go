@@ -17,6 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
+	srvmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -259,7 +260,7 @@ func buildProgramEdit(ctx context.Context, curves dercontrol.CurveReader, body p
 	}
 	e.primacy = uint8(*body.Primacy)
 	if body.MRID != nil {
-		m, ok := normalizeMRID(*body.MRID)
+		m, ok := srvmrid.Canonical(*body.MRID)
 		// mRIDType reserves the high 96 bits all F, for any PEN.
 		if !ok || strings.HasPrefix(m, "FFFFFFFFFFFFFFFFFFFFFFFF") {
 			return e, "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F", false, nil

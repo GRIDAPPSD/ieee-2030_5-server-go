@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	srvmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
 )
 
 // FunctionsView is a control's functions keyed by DERControlBase element
@@ -153,7 +154,7 @@ func buildCreateRequest(ctx context.Context, curves dercontrol.CurveReader, body
 	}
 
 	if body.ExecutesGrant != nil {
-		grant, ok := normalizeMRID(*body.ExecutesGrant)
+		grant, ok := srvmrid.Canonical(*body.ExecutesGrant)
 		if !ok {
 			return req, refuseExecutesGrantFormat, false
 		}

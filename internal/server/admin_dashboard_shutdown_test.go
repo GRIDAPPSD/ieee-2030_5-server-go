@@ -41,7 +41,7 @@ func TestAdminShutdownWithOpenDashboardStreamReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	line, err := bufio.NewReader(resp.Body).ReadString('\n')
 	if err != nil || !strings.HasPrefix(line, "data: ") {
 		t.Fatalf("first line = %q, err %v, want a data frame", line, err)

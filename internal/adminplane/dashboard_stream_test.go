@@ -54,7 +54,7 @@ func TestDashboardSSE_EndsWhenStreamsDoneCloses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	br := bufio.NewReader(resp.Body)
 	if !nextDataFrame(t, br, 5*time.Second) {
 		t.Fatal("no initial frame")
@@ -90,7 +90,7 @@ func TestDashboardSSE_KeepsDeliveringPastServerWriteTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	br := bufio.NewReader(resp.Body)
 
 	start := time.Now()

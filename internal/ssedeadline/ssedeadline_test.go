@@ -25,7 +25,7 @@ func TestExtend_SetsDeadlineOnSupportedWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if called {
 		t.Fatal("onErr called on a writer that supports deadlines")
 	}

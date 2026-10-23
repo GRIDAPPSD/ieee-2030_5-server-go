@@ -71,6 +71,10 @@ const inBandOffMessage = "in-band management is off"
 // naming the caller and the managed LFDI so the add is attributable.
 const managedLogPrefix = "sep2srv: manager registered a managed device: "
 
+// managedDeleteLogPrefix begins the line logged for each manager-deleted
+// device, so the erasure is attributable to the caller.
+const managedDeleteLogPrefix = "sep2srv: manager deleted a managed device: "
+
 // logConflict records that a POST /edev was refused, naming the route and
 // the kind of conflict, and nothing about either identity involved.
 func logConflict(r *http.Request, kind string) {
@@ -492,8 +496,12 @@ func resolveTarget(w http.ResponseWriter, r *http.Request, cfg *createConfig, de
 // log when one is wired; the same limiter that bounds the ownership gate's
 // denial lines then bounds these.
 func (c *createConfig) refuse(w http.ResponseWriter, r *http.Request, caller string, status int, reason, msg string) {
-	if c.refusals != nil {
-		c.refusals(r, caller, reason)
+	refuseWith(c.refusals, w, r, caller, status, reason, msg)
+}
+
+func refuseWith(refusals func(r *http.Request, caller, reason string), w http.ResponseWriter, r *http.Request, caller string, status int, reason, msg string) {
+	if refusals != nil {
+		refusals(r, caller, reason)
 	}
 	http.Error(w, msg, status)
 }
@@ -638,11 +646,79 @@ func sweepVacantID(ctx context.Context, s store.EndDeviceStore, fn func(context.
 	}
 }
 
+// releaseManagedPair drops manager's pair for the record at id before the
+// record is deleted, and reports whether the delete may go on. Releasing
+// first fails closed: if the delete then fails, the manager has lost the grant
+// and an operator can reach the orphaned record, where the reverse order would
+// leave a pair no retry could reach (the gate answers 404 on a missing
+// record). ErrNotFound from Release means the grant that admitted the request
+// is gone, so nothing is deleted.
+func (c *deleteConfig) releaseManagedPair(w http.ResponseWriter, r *http.Request, s store.EndDeviceStore, manager, id string) bool {
+	if c.inBandOff {
+		refuseWith(c.refusals, w, r, manager, http.StatusForbidden, "in-band-off", inBandOffMessage)
+		return false
+	}
+	if store.IsAbsent(c.managers) {
+		srverr.Internal(w, r, errors.New("enddevice: a manager delete has no management store to release the pair in"))
+		return false
+	}
+	dev, err := s.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return false
+		}
+		srverr.Internal(w, r, fmt.Errorf("read the EndDevice before releasing its pair: %w", err))
+		return false
+	}
+	if err := c.managers.Release(r.Context(), manager, dev.LFDI); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			refuseWith(c.refusals, w, r, manager, http.StatusForbidden, "not-manager", notManagedMessage)
+			return false
+		}
+		srverr.Internal(w, r, fmt.Errorf("release the management pair: %w", err))
+		return false
+	}
+	return true
+}
+
 // DeleteOption configures [HandleDeleteEndDevice].
 type DeleteOption func(*deleteConfig)
 
 type deleteConfig struct {
 	afterNotify func(ctx context.Context, id string) error
+	managers    store.EndDeviceManagementStore
+	inBandOff   bool
+	refusals    func(r *http.Request, caller, reason string)
+}
+
+// WithManagerDelete lets a manager that the ownership gate admitted (see
+// [WithDelegatedAccess]) delete the EndDevice it manages: the pair is
+// released through managers, then the record is deleted. With inBandOff the
+// request is refused 403 and nothing is deleted. refusals, when set, receives
+// each such refusal with the caller's LFDI and a short reason.
+func WithManagerDelete(managers store.EndDeviceManagementStore, inBandOff bool, refusals func(r *http.Request, caller, reason string)) DeleteOption {
+	return func(c *deleteConfig) {
+		c.managers = managers
+		c.inBandOff = inBandOff
+		c.refusals = refusals
+	}
+}
+
+type delegatedAccessKey struct{}
+
+// WithDelegatedAccess records on ctx that an /edev/{id} request was admitted
+// because manager is the record's current manager, not because the caller owns
+// it. Only the ownership gate sets it; [DelegatedBy] reads it.
+func WithDelegatedAccess(ctx context.Context, manager string) context.Context {
+	return context.WithValue(ctx, delegatedAccessKey{}, manager)
+}
+
+// DelegatedBy returns the manager LFDI recorded by [WithDelegatedAccess], or
+// "" when the request was admitted as the device itself.
+func DelegatedBy(ctx context.Context) string {
+	manager, _ := ctx.Value(delegatedAccessKey{}).(string)
+	return manager
 }
 
 // WithAfterNotify runs fn with the deleted device's id after the device is
@@ -682,6 +758,11 @@ func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier, opts ...D
 			return
 		}
 
+		manager := DelegatedBy(r.Context())
+		if manager != "" && !cfg.releaseManagedPair(w, r, s, manager, id) {
+			return
+		}
+
 		if err := s.Delete(r.Context(), id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -689,6 +770,9 @@ func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier, opts ...D
 			}
 			srverr.Internal(w, r, err)
 			return
+		}
+		if manager != "" {
+			log.Printf("%s%s: caller %s, id %s", managedDeleteLogPrefix, logsafe.Str(srverr.Route(r)), logsafe.Str(manager), logsafe.Str(id))
 		}
 
 		// MAINT-002 step 5: fan out a removal notification to every

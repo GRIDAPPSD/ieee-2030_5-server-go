@@ -45,6 +45,7 @@ citation:
 | `PUT /edev/{id}/der/{derId}/ders` | DERStatus |
 | `PUT /edev/{id}/der/{derId}/dera` | DERAvailability |
 | `POST /edev/{id}/lel` | a LogEvent |
+| `DELETE /edev/{id}` | removal of the managed record and its pair (CSIP MAINT-002, IG 5.3.1.2) |
 
 Every other write below a managed record is refused, including
 `PUT /edev/{id}/der/{derId}` itself, `POST` and `DELETE` on the managed
@@ -57,13 +58,25 @@ exception.
 
 A manager may not:
 
-- `PUT` or `DELETE /edev/{id}`: a manager never rewrites or removes the
-  managed device's record;
+- `PUT /edev/{id}`: a manager never rewrites the managed device's record;
 - `GET /edev/{id}/rg`: the Registration, including its pIN, is the device's
   own.
 
 A write pattern added to the route table later is refused by default until
 an entry naming it, with its source, is added here and to the gate.
+
+## DELETE /edev/{id} by a manager
+
+A manager's `DELETE /edev/{id}` on a device it manages releases the pair, then
+deletes the record through the same cascade a device's own delete uses, and
+notifies `/edev` subscribers; a later `GET` answers 404. The release compares
+the manager, so a pair an operator rekeyed to another manager after the gate
+admitted the request is left alone and the request answers 403 with nothing
+deleted. If the record delete fails after the release, the answer is 500 and
+the pair stays gone. Re-adding the device needs the operator to write the pair
+again. A delete by the device itself leaves every pair as it was. With
+in-band management off the request answers 403, and each manager delete logs
+the caller and the record id.
 
 ## Mirroring for a managed device
 

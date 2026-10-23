@@ -29,6 +29,7 @@ var managementMutators = []string{
 	"Assign func(*memory.EndDeviceManagementStore, context.Context, string, string) error",
 	"RekeyManaged func(*memory.EndDeviceManagementStore, context.Context, string, string) error",
 	"RekeyManager func(*memory.EndDeviceManagementStore, context.Context, string, string) error",
+	"Release func(*memory.EndDeviceManagementStore, context.Context, string, string) error",
 	"Unassign func(*memory.EndDeviceManagementStore, context.Context, string) error",
 }
 

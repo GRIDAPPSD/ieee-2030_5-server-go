@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -28,7 +29,7 @@ import (
 // comparable condition once at construction (assembly/ownership.go); this
 // does the same, at the same "log" package level, rather than staying
 // silent where that gate is loud.
-func newAdminManagementHandler(stores *Stores) *handler.AdminManagementHandler {
+func newAdminManagementHandler(stores *Stores, rec *activity.Recorder) *handler.AdminManagementHandler {
 	if stores == nil || stores.EndDeviceManagers == nil {
 		return nil
 	}
@@ -37,5 +38,5 @@ func newAdminManagementHandler(stores *Stores) *handler.AdminManagementHandler {
 		log.Printf("server: Stores.EndDeviceManagers is %T, not *memory.EndDeviceManagementStore: no management-pair admin routes mounted", stores.EndDeviceManagers)
 		return nil
 	}
-	return &handler.AdminManagementHandler{Managers: managers, Profiles: stores.DeviceProfiles}
+	return &handler.AdminManagementHandler{Managers: managers, Profiles: stores.DeviceProfiles, EndDevices: stores.EndDevices, Activity: rec}
 }

@@ -468,12 +468,16 @@ func BuildProtocolRouter(
 	// request observer below and for the LogEvent decorator.
 	deviceLogResolver := newDeviceLogResolver(cfg.DeviceLog, stores)
 
+	var served http.Handler = protocolMux
 	if stores != nil {
 		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier, deviceLogResolver)
 		setSubscriberCheck(notifier, gated.checkSubscriber)
+		served = gated.exclusive(protocolMux)
 	}
 
 	// Inside Wrap, so only requests that passed identity and the ACL count.
+	// The exclusivity refusal sits inside the observers, so a refused request
+	// still moves last-seen and writes a device log line.
 	observers := requestObservers{
 		identity: authPolicy.Identity,
 		activity: cfg.Activity,
@@ -481,7 +485,7 @@ func BuildProtocolRouter(
 		resolver: deviceLogResolver,
 		now:      time.Now,
 	}
-	inner := observers.wrap(protocolMux)
+	inner := observers.wrap(served)
 	protocolChain := inner
 	if authPolicy.Wrap != nil {
 		protocolChain = authPolicy.Wrap(inner)

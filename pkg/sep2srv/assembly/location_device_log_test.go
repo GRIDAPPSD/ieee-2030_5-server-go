@@ -13,7 +13,7 @@ import (
 // client saw, and that the GET of the created mirror carries none.
 func TestDeviceLogRecordsLocationOfCreateOnly(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog := logServer(t, gateTestPolicy())
+	srv, dir, closeLog := ownerLogServer(t, gateTestPolicy())
 	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 	body := `<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns"><mRID>LOCLOG0001</mRID></MirrorUsagePoint>`

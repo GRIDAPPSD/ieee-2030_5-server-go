@@ -59,17 +59,18 @@ func TestManagement_RotatedManagerIsRefusedUntilRekeyed(t *testing.T) {
 
 const rotatedChildLFDI = "C100000000000000000000000000000000000099"
 
-// TestManagement_RotatedManagedDeviceFollowsTheRecordNotThePair pins what each
-// identity gets when a managed device's certificate rotates (#1087). The
-// record keeps the old LFDI, so before any rekey the manager still reaches it
-// and the new certificate reaches nothing. After RekeyManaged the pair names
-// the new LFDI, which has no record, so the manager loses the record; the old
-// certificate still owns its own record, and the new one still owns nothing.
+// TestManagement_RotatedManagedDeviceIsRefusedOnWhicheverLFDIIsPaired pins
+// what each identity gets when a managed device's certificate rotates. The
+// pair is the designation, so whichever LFDI it names is refused on its own
+// certificate (managed-direct) and the other one is an ordinary device. The
+// record keeps the old LFDI: before any rekey the manager reaches it, and after
+// RekeyManaged the pair names the new LFDI, which has no record, so the
+// manager loses it and the old LFDI, now unpaired, owns it again.
 // It cannot run in parallel: it swaps the process-wide log output.
-func TestManagement_RotatedManagedDeviceFollowsTheRecordNotThePair(t *testing.T) {
+func TestManagement_RotatedManagedDeviceIsRefusedOnWhicheverLFDIIsPaired(t *testing.T) {
 	fleet := newManagementFleet(t)
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
-	captureLog(t)
+	buf := captureLog(t)
 	path := "/edev/" + victimID
 
 	check := func(stage, asLFDI string, want int) {
@@ -79,7 +80,7 @@ func TestManagement_RotatedManagedDeviceFollowsTheRecordNotThePair(t *testing.T)
 		}
 	}
 	check("before rekey", managerLFDI, http.StatusOK)
-	check("before rekey", victimLFDI, http.StatusOK)
+	check("before rekey", victimLFDI, http.StatusForbidden)
 	check("before rekey", rotatedChildLFDI, http.StatusForbidden)
 
 	if err := fleet.managers.RekeyManaged(t.Context(), victimLFDI, rotatedChildLFDI); err != nil {
@@ -92,4 +93,11 @@ func TestManagement_RotatedManagedDeviceFollowsTheRecordNotThePair(t *testing.T)
 	check("after rekey", managerLFDI, http.StatusForbidden)
 	check("after rekey", victimLFDI, http.StatusOK)
 	check("after rekey", rotatedChildLFDI, http.StatusForbidden)
+
+	if !lineWith(buf.String(), denialLogMarker, `caller="`+rotatedChildLFDI+`"`, "reason=managed-direct") {
+		t.Errorf("no denial line naming the paired new LFDI and managed-direct; log=%q", buf.String())
+	}
+	if !lineWith(buf.String(), denialLogMarker, `caller="`+victimLFDI+`"`, "reason=managed-direct") {
+		t.Errorf("no denial line naming the paired old LFDI before the rekey; log=%q", buf.String())
+	}
 }

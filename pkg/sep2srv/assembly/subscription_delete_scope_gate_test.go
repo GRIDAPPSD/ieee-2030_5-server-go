@@ -60,9 +60,9 @@ func TestManagement_SubscriptionDeleteIsScopedToItsEndDevice(t *testing.T) {
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
 
 	// A device that owns its own path id but not the subscription's real
-	// EndDevice is refused, and the subscription stays stored. callerLFDI
-	// owns callerID, not victimID.
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+callerID+"/sub/sub-victim", callerLFDI, ""); status != http.StatusNotFound {
+	// EndDevice is refused, and the subscription stays stored. unmanagedLFDI
+	// owns unmanagedID, not victimID.
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+unmanagedID+"/sub/sub-victim", unmanagedLFDI, ""); status != http.StatusNotFound {
 		t.Errorf("non-owner cross-device delete: status %d, want 404; body=%q", status, raw)
 	}
 	stillStored(t, "sub-victim")
@@ -82,9 +82,11 @@ func TestManagement_SubscriptionDeleteIsScopedToItsEndDevice(t *testing.T) {
 	}
 	stillStored(t, "sub-child")
 
-	// The owner (victimLFDI) deletes its own subscription directly: 204.
+	// The owner (victimLFDI) deletes its own subscription directly: 204. The
+	// fleet pairs victimLFDI, so its own certificate is served by the owner view.
 	seedSub("sub-victim-2", victimID)
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID+"/sub/sub-victim-2", victimLFDI, ""); status != http.StatusNoContent {
+	ownerSrv := gateServer(t, ownerView(fleet.stores), gateTestPolicy())
+	if status, raw := gateRequest(t, ownerSrv, http.MethodDelete, "/edev/"+victimID+"/sub/sub-victim-2", victimLFDI, ""); status != http.StatusNoContent {
 		t.Fatalf("owner delete of its own subscription: status %d, want 204; body=%q", status, raw)
 	}
 	removed(t, "sub-victim-2")

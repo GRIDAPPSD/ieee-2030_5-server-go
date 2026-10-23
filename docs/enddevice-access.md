@@ -22,6 +22,23 @@ manager of a device that itself manages others reaches only the first device.
 "Aggregator" is not a role flag; it is any LFDI that manages at least one
 EndDevice. An aggregator with no pairs is an ordinary device.
 
+## A paired DER is refused on its own certificate
+
+CSIP IG 3.2 has each DER connect to the utility in one scenario only, and the
+utility designates which. A pair is that designation. A request whose
+certificate LFDI is the managed side of a pair answers 403 `forbidden` on
+every protocol route, `/dcap` and `/tm` included, and the denial log and the
+device log name `reason=managed-direct`. A request with no identity is not
+affected, so the anonymous `/dcap` and `/tm` access the ACL allows is
+unchanged, and the aggregator's own requests for the same device are
+unchanged. The refusal sits inside the request observers, so a refused
+request still moves the device's last-seen time and writes a device log line.
+
+The check reads the management store on every request that carries an
+identity. If the store fails the request answers 500, because failing open
+would let a paired DER act during exactly that outage. Removing the pair gives
+the device direct access again on its next request.
+
 ## What a manager can and cannot do
 
 Reads and writes are two separate rules.
@@ -92,6 +109,7 @@ no route serves.
 | 404 | The caller has an identity and no EndDevice exists at `{id}`. |
 | 403 | The record exists and the caller is neither its owner nor, on a delegated route, its manager. |
 | 403 | The record exists but carries no LFDI, so it is owned by nobody. |
+| 403 | The caller's LFDI is the managed side of a pair (`managed-direct`), on any protocol route. Checked before the route is matched. |
 | 500 | The EndDevice store or the management store failed, or no EndDevice store is wired. The handler does not run. |
 
 A denial body is a fixed string (`forbidden` or `not found`) and carries no
@@ -102,7 +120,8 @@ LFDI, the requested id (truncated to 64 bytes, then quoted) and a reason class:
 `no-identity`, `no-device-id`, `absent`, `record-has-no-lfdi`, `not-owner` (a
 route management never grants, or no management store), or
 `not-owner-or-manager` (a delegated route where the caller is not the
-record's manager either).
+record's manager either), or `managed-direct` (the caller is the managed side
+of a pair).
 
 These lines are budgeted per router in one-minute windows. A window opens at
 the first refusal after the previous window has closed. Within a window each
@@ -164,8 +183,9 @@ configured, and staying pure in-memory otherwise.
   A pair moves only when an operator rekeys it. After a manager rekey the
   new LFDI holds the grant and the old one loses it on the next request.
   After a managed-side rekey the pair names the new LFDI, which has no
-  record, so the manager loses the record; the old certificate still owns
-  its own record, because the record keeps the old LFDI.
+  record, so the manager loses the record. The new LFDI is the paired one and
+  is refused as `managed-direct`; the old LFDI is no longer paired, so it owns
+  its record again, because the record keeps the old LFDI.
   `GET /api/management-pairs` shows the signal: each LFDI in the answer
   carries `hasRecord` (an EndDevice record exists for it; omitted when the
   handler has no EndDevice reader) and `lastSeen` (RFC 3339 UTC time of its

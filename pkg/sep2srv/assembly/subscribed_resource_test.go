@@ -59,14 +59,17 @@ func newSubscribedResourceFleet(t *testing.T) subscribedResourceFleet {
 	go func() { defer close(done); mgr.Start(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
 
-	router := func(lfdi string) *httptest.Server {
+	// Device B is paired, so its own certificate is served by a router over the
+	// owner view; the router built last installs the delivery check on mgr, so
+	// m, which sees the real pair, is built after b.
+	router := func(lfdi string, routed *assembly.Stores) *httptest.Server {
 		cfg := assembly.RouterConfig{FlowReservationDeadline: 20 * time.Millisecond}
-		h, _ := assembly.BuildProtocolRouter(cfg, stores, fixedIdentityPolicy(lfdi), testSFDI, testLFDI, mgr)
+		h, _ := assembly.BuildProtocolRouter(cfg, routed, fixedIdentityPolicy(lfdi), testSFDI, testLFDI, mgr)
 		srv := httptest.NewServer(h)
 		t.Cleanup(srv.Close)
 		return srv
 	}
-	return subscribedResourceFleet{stores: stores, a: router(deviceLFDIA), b: router(deviceLFDIB), m: router(subMgrLFDI)}
+	return subscribedResourceFleet{stores: stores, a: router(deviceLFDIA, stores), b: router(deviceLFDIB, ownerView(stores)), m: router(subMgrLFDI, stores)}
 }
 
 // subscribe POSTs a Subscription to resource under edevID and returns the status.

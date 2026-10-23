@@ -47,7 +47,7 @@ func TestDeviceLogRecordsWhatEachResponseSaid(t *testing.T) {
 	t.Parallel()
 	srv, dir, closeLog := logServer(t, gateTestPolicy())
 	warmDeviceLog(t, srv, dir, managerLFDI, "/edev/"+victimID)
-	warmDeviceLog(t, srv, dir, callerLFDI, "/edev/"+callerID)
+	warmDeviceLog(t, srv, dir, unmanagedLFDI, "/edev/"+unmanagedID)
 
 	lower := strings.ToLower(rspSubject)
 	posts := []struct {
@@ -55,10 +55,10 @@ func TestDeviceLogRecordsWhatEachResponseSaid(t *testing.T) {
 		want           int
 	}{
 		{"manager for managed device", managerLFDI, responseBody(victimLFDI, lower, "3"), http.StatusCreated},
-		{"device for itself", callerLFDI, responseBody(callerLFDI, rspSubject, "1"), http.StatusCreated},
-		{"non-hex subject", callerLFDI, responseBody(callerLFDI, "ZZZZ-not-hex", "2"), http.StatusCreated},
-		{"forbidden: not sender or manager", callerLFDI, responseBody(victimLFDI, rspSubject, "3"), http.StatusForbidden},
-		{"bad request: not an LFDI", callerLFDI, responseBody("zz", rspSubject, "3"), http.StatusBadRequest},
+		{"device for itself", unmanagedLFDI, responseBody(unmanagedLFDI, rspSubject, "1"), http.StatusCreated},
+		{"non-hex subject", unmanagedLFDI, responseBody(unmanagedLFDI, "ZZZZ-not-hex", "2"), http.StatusCreated},
+		{"forbidden: not sender or manager", unmanagedLFDI, responseBody(victimLFDI, rspSubject, "3"), http.StatusForbidden},
+		{"bad request: not an LFDI", unmanagedLFDI, responseBody("zz", rspSubject, "3"), http.StatusBadRequest},
 	}
 	for _, p := range posts {
 		if got := postResponse(t, srv.URL, p.as, p.body); got != p.want {
@@ -82,7 +82,7 @@ func TestDeviceLogRecordsWhatEachResponseSaid(t *testing.T) {
 		t.Errorf("manager line subject/rspStatus/target = %v/%v/%v, want %s/3/%s", m["subject"], m["rspStatus"], m["target"], rspSubject, victimLFDI)
 	}
 
-	_, dev := readLogLines(t, filepath.Join(dir, callerLFDI+".jsonl"))
+	_, dev := readLogLines(t, filepath.Join(dir, unmanagedLFDI+".jsonl"))
 	var own, invalid, forbidden, bad map[string]any
 	for _, l := range dev {
 		if l["method"] != http.MethodPost {

@@ -81,7 +81,7 @@ func TestDeviceLogRecordsServedControlMRIDs(t *testing.T) {
 			t.Parallel()
 			stores := newManagementFleet(t).stores
 			seedServedControls(t, stores, tc.n)
-			srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), stores)
+			srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), ownerView(stores))
 			warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 			status, raw := gateRequest(t, srv, http.MethodGet, listPath+"?l=100", victimLFDI, "")
@@ -117,7 +117,7 @@ func TestDeviceLogRecordsSingleControlAndDefaultControlMRID(t *testing.T) {
 	seedServedControls(t, stores, 2)
 	const defaultMRID = "DEFA0000000000000000000000000001"
 	seedDefaultDERControl(t, stores, victimID, defaultMRID)
-	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), stores)
+	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), ownerView(stores))
 	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 	onePath := "/edev/1/fsa/1/derp/1/derc/c01"
@@ -150,7 +150,7 @@ func TestServedStoreNotesNothingOnTheUndecoratedStore(t *testing.T) {
 	t.Parallel()
 	stores := newManagementFleet(t).stores
 	seedServedControls(t, stores, 3)
-	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), stores)
+	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), ownerView(stores))
 	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 	ctx, note := devicelog.WithNote(context.Background())
@@ -182,7 +182,7 @@ func TestDeviceLogRecordsOnlyTheServedPage(t *testing.T) {
 	const listPath = "/edev/1/fsa/1/derp/1/derc"
 	stores := newManagementFleet(t).stores
 	seedServedControlsStarting(t, stores, 10, func(i int) int64 { return int64(20000 - i*1000) })
-	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), stores)
+	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), ownerView(stores))
 	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 	// Served order is by start ascending, so control 9 comes first.

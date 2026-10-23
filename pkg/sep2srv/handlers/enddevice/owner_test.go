@@ -59,6 +59,44 @@ func serveList(t *testing.T, h http.HandlerFunc) (int, string) {
 	return rec.Code, rec.Body.String()
 }
 
+type failingManagerOf struct{ store.EndDeviceManagementStore }
+
+func (failingManagerOf) ManagerOf(context.Context, string) (string, error) {
+	return "", errors.New("backend down")
+}
+
+func TestManagerOf(t *testing.T) {
+	t.Parallel()
+	const manager, child = "AA00000000000000000000000000000000000001", "C100000000000000000000000000000000000001"
+	ctx := context.Background()
+	managers := memory.NewEndDeviceManagementStore()
+	if err := managers.Assign(ctx, manager, child); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+
+	got, managed, err := coreedev.ManagerOf(ctx, managers, child)
+	if got != manager || !managed || err != nil {
+		t.Errorf("ManagerOf(paired) = %q, %v, %v; want %q, true, nil", got, managed, err, manager)
+	}
+	got, managed, err = coreedev.ManagerOf(ctx, managers, manager)
+	if got != "" || managed || err != nil {
+		t.Errorf("ManagerOf(unpaired) = %q, %v, %v; want \"\", false, nil", got, managed, err)
+	}
+	got, managed, err = coreedev.ManagerOf(ctx, failingManagerOf{managers}, child)
+	if got != "" || managed || err == nil {
+		t.Errorf("ManagerOf(store failing) = %q, %v, %v; want \"\", false, an error", got, managed, err)
+	}
+	if owns, err := coreedev.CurrentManagerOwns(ctx, failingManagerOf{managers}, child, manager); owns || err == nil {
+		t.Errorf("CurrentManagerOwns(store failing) = %v, %v; want false and the error", owns, err)
+	}
+	if owns, err := coreedev.CurrentManagerOwns(ctx, managers, child, manager); !owns || err != nil {
+		t.Errorf("CurrentManagerOwns(manager) = %v, %v; want true, nil", owns, err)
+	}
+	if owns, err := coreedev.CurrentManagerOwns(ctx, managers, manager, manager); owns || err != nil {
+		t.Errorf("CurrentManagerOwns(unpaired device) = %v, %v; want false, nil", owns, err)
+	}
+}
+
 func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 	t.Parallel()
 	const caller = "CALLER"

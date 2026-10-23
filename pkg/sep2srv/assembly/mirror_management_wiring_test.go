@@ -64,8 +64,8 @@ func mupWiringRequest(t *testing.T, method, url, caller, body string) *http.Resp
 // TestAssembly_MirrorManagerWiringThroughTheRouter proves the production
 // wiring end to end: a manager, assigned through the real
 // store.EndDeviceManagementStore BuildProtocolRouter is given, creates a
-// mirror naming a managed device, and the device itself (a DIFFERENT
-// identity from the creator) can then read that same mirror. Neither would
+// mirror naming a managed device, and reads it back, while the device itself
+// is refused on its own certificate. Neither the create nor the read would
 // be possible if registerMirrorRoutes still passed a nil managers reader to
 // any of the five /mup constructors.
 func TestAssembly_MirrorManagerWiringThroughTheRouter(t *testing.T) {
@@ -88,13 +88,18 @@ func TestAssembly_MirrorManagerWiringThroughTheRouter(t *testing.T) {
 		t.Fatal("POST /mup returned no Location header")
 	}
 
-	// The device itself, a different identity from the creator, reads the
-	// mirror the manager created for it.
-	getResp := mupWiringRequest(t, http.MethodGet, srv.URL+loc, wiringDeviceLFDI, "")
+	// The managed device's own certificate is refused (it is paired), while
+	// the manager reads the mirror it created.
+	deviceResp := mupWiringRequest(t, http.MethodGet, srv.URL+loc, wiringDeviceLFDI, "")
+	_ = deviceResp.Body.Close()
+	if deviceResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("paired device GET %s: status = %d, want 403", loc, deviceResp.StatusCode)
+	}
+	getResp := mupWiringRequest(t, http.MethodGet, srv.URL+loc, wiringManagerLFDI, "")
 	getBody, _ := io.ReadAll(getResp.Body)
 	_ = getResp.Body.Close()
 	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("device GET %s: status = %d, want 200; body = %s", loc, getResp.StatusCode, getBody)
+		t.Fatalf("manager GET %s: status = %d, want 200; body = %s", loc, getResp.StatusCode, getBody)
 	}
 	if !strings.Contains(string(getBody), "<deviceLFDI>"+wiringDeviceLFDI+"</deviceLFDI>") {
 		t.Errorf("served body does not carry the managed device's LFDI; body = %s", getBody)

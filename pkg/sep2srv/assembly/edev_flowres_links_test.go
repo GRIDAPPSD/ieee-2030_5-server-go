@@ -148,8 +148,11 @@ func TestEndDeviceLinks_ManagedDeviceSeenByAggregatorMatchesOwner(t *testing.T) 
 	stores.EndDeviceManagers = managers
 
 	srv := gateServer(t, stores, gateTestPolicy())
+	// The managed device's own certificate is refused, so its record is
+	// registered and read through a router with no pair.
+	ownerSrv := gateServer(t, ownerView(stores), gateTestPolicy())
 
-	status, raw := gateRequest(t, srv, http.MethodPost, "/edev", victimLFDI, "")
+	status, raw := gateRequest(t, ownerSrv, http.MethodPost, "/edev", victimLFDI, "")
 	if status != http.StatusCreated {
 		t.Fatalf("register the managed device: status %d, want 201; body=%q", status, raw)
 	}
@@ -159,7 +162,7 @@ func TestEndDeviceLinks_ManagedDeviceSeenByAggregatorMatchesOwner(t *testing.T) 
 	}
 	href := registered.Href
 
-	ownerStatus, ownerRaw := gateRequest(t, srv, http.MethodGet, href, victimLFDI, "")
+	ownerStatus, ownerRaw := gateRequest(t, ownerSrv, http.MethodGet, href, victimLFDI, "")
 	if ownerStatus != http.StatusOK {
 		t.Fatalf("owner GET %s: status %d, want 200; body=%q", href, ownerStatus, ownerRaw)
 	}

@@ -183,6 +183,7 @@ const (
 	reasonRecordHasNoLFDI = "record-has-no-lfdi"
 	reasonNotOwner        = "not-owner"
 	reasonNotManager      = "not-owner-or-manager"
+	reasonManagedDirect   = "managed-direct"
 )
 
 // ownershipVerdict is the gate's answer to one request. caller and reason
@@ -215,6 +216,36 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 			http.Error(w, "forbidden", http.StatusForbidden)
 		}
 	}
+}
+
+// exclusive refuses a caller whose certificate LFDI is the managed side of a
+// management pair, on every route behind it. CSIP IG 3.2 has each DER connect
+// in one scenario only and the pair is the utility's designation of it. A
+// request with no identity passes, so the anonymous /dcap and /tm access the
+// ACL allows is unchanged. A store failure is a 500: failing open would let a
+// managed DER act during exactly that outage.
+func (g *ownershipGate) exclusive(next http.Handler) http.Handler {
+	if g.managersAbsent {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callerLFDI, ok := g.caller(r.Context())
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		_, managed, err := coreedev.ManagerOf(r.Context(), g.managers, callerLFDI)
+		switch {
+		case err != nil:
+			srverr.Internal(w, r, fmt.Errorf("exclusivity check could not read the caller's manager: %w", err))
+		case managed:
+			g.denials.record(r, ownershipVerdict{caller: callerLFDI, reason: reasonManagedDirect})
+			devicelog.NoteFrom(r.Context()).Refuse(reasonManagedDirect)
+			http.Error(w, "forbidden", http.StatusForbidden)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict {
@@ -259,8 +290,7 @@ func (g *ownershipGate) decideFor(ctx context.Context, callerLFDI, id string, de
 	}
 
 	// Management is consulted only after self fails and only on a delegable
-	// pattern, so a management store outage never blocks a device's own
-	// /edev/{id} routes. CurrentManagerOwns is the same helper the /mup
+	// pattern. CurrentManagerOwns is the same helper the /mup
 	// device-or-manager rule uses (metering.newMirrorActor, #720), so the two
 	// "is caller the current manager of this device" checks cannot drift.
 	if !delegated || g.managersAbsent {

@@ -537,11 +537,7 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 		if errors.As(err, &live) {
 			h.audit(r, slog.LevelWarn, "admin: device unassign refused", "der_fsa_unassign_refused",
 				"code", "live_controls", "device", deviceID, "fsa", fsaID, "controls", live.Controls)
-			writeJSON(w, http.StatusConflict, programRefusal{
-				Error:    "cancel these controls, or wait for them to end, before unassigning the device",
-				Code:     "live_controls",
-				Controls: slices.Clone(live.Controls),
-			})
+			writeLiveControlsRefusal(w, live, "cancel these controls, or wait for them to end, before unassigning the device")
 			return
 		}
 		if copyFailed {

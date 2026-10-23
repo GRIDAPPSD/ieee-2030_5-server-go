@@ -196,9 +196,6 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		if !store.IsAbsent(stores.Registrations) {
 			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations, stores.DeviceProfiles, stores.EndDeviceManagers))
 		}
-		if stores.EndDeviceDelete != nil {
-			mountWrite("DELETE /api/devices/{id}", handler.GuardEndDeviceDelete(stores.DERPrograms, programRetirer(stores), stores.EndDeviceDelete))
-		}
 	}
 
 	// #1032 device profiles: a name and kind per device, off
@@ -235,6 +232,16 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		mountWrite("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
 		mountWrite("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())
 		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
+	}
+
+	// #1120: the delete shares the FSA handler's program lock and its control
+	// issuer, so it cannot race an assignment or a control create.
+	if stores != nil && stores.EndDeviceDelete != nil {
+		guard := fsaH
+		if guard == nil {
+			guard = &handler.AdminFSAHandler{Retirer: programRetirer(stores)}
+		}
+		mountWrite("DELETE /api/devices/{id}", guard.GuardEndDeviceDelete(stores.DERPrograms, stores.EndDeviceDelete))
 	}
 
 	// #923 every DER program with its origin and restart behavior. A read on

@@ -42,6 +42,35 @@ func refuseProgram(w http.ResponseWriter, code, msg string) {
 	writeJSON(w, http.StatusConflict, programRefusal{Error: msg, Code: code})
 }
 
+// writeLiveControlsRefusal is the one 409 live_controls body: msg says what
+// to do, and the live controls are named.
+func writeLiveControlsRefusal(w http.ResponseWriter, live *dercontrol.LiveControlsError, msg string) {
+	writeJSON(w, http.StatusConflict, programRefusal{
+		Error:    msg,
+		Code:     "live_controls",
+		Controls: slices.Clone(live.Controls),
+	})
+}
+
+// programScopes is the one derivation of a device program's control scopes
+// and of the FSA its href names. The issuer files controls under the FSA the
+// control list link names, which a fixture program may set apart from its
+// href, so both are scopes. ok is false for a program whose href names no
+// program of deviceID.
+func programScopes(prog sep2.DERProgram, deviceID string) (scopes []dercontrol.Scope, fsaID, derpID string, ok bool) {
+	edev, fsaID, derpID, ok := derhref.Program(prog.Href)
+	if !ok || edev != deviceID {
+		return nil, "", "", false
+	}
+	scopes = []dercontrol.Scope{{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: derpID}}
+	if prog.DERControlListLink != nil {
+		if _, linkFSA, _, ok := derhref.ControlList(prog.DERControlListLink.Href); ok && linkFSA != fsaID {
+			scopes = append(scopes, dercontrol.Scope{EndDeviceID: deviceID, FSAID: linkFSA, DERProgramID: derpID})
+		}
+	}
+	return scopes, fsaID, derpID, true
+}
+
 // checkMRID refuses an edit body naming a different mRID: IEEE 2030.5 keeps
 // an object's mRID across modifications.
 func checkMRID(w http.ResponseWriter, e programEdit, current string) bool {
@@ -382,14 +411,7 @@ func (h *AdminFSAHandler) HandleDeleteDeviceProgram() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		scopes := []dercontrol.Scope{{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: id}}
-		// The issuer files controls under the FSA the control list link
-		// names, which a fixture program may set apart from its href.
-		if prog.DERControlListLink != nil {
-			if _, linkFSA, _, ok := derhref.ControlList(prog.DERControlListLink.Href); ok && linkFSA != fsaID {
-				scopes = append(scopes, dercontrol.Scope{EndDeviceID: deviceID, FSAID: linkFSA, DERProgramID: id})
-			}
-		}
+		scopes, _, _, _ := programScopes(prog, deviceID)
 
 		programGone := false
 		err := h.Retirer.Retire(r.Context(), scopes, func(ctx context.Context) error {
@@ -438,8 +460,8 @@ func (h *AdminFSAHandler) lookupDeviceProgram(w http.ResponseWriter, r *http.Req
 		h.templateFailed(w, r, "program_lookup", err)
 		return prog, "", false
 	}
-	edev, fsaID, derp, ok := derhref.Program(prog.Href)
-	if !ok || edev != deviceID || derp != id {
+	_, fsaID, derp, ok := programScopes(prog, deviceID)
+	if !ok || derp != id {
 		refuseProgram(w, "unaddressable_program", "this program's href names no FSA of this device")
 		return prog, "", false
 	}
@@ -464,11 +486,7 @@ func (h *AdminFSAHandler) retireRefused(w http.ResponseWriter, err error) bool {
 	if !errors.As(err, &live) {
 		return false
 	}
-	writeJSON(w, http.StatusConflict, programRefusal{
-		Error:    "cancel these controls, or wait for them to end, before deleting the program",
-		Code:     "live_controls",
-		Controls: slices.Clone(live.Controls),
-	})
+	writeLiveControlsRefusal(w, live, "cancel these controls, or wait for them to end, before deleting the program")
 	return true
 }
 

@@ -117,11 +117,12 @@ changes no existing one.
 | `nav.tab-bar` | `AdminShell.svelte` | every tab | the tab bar, a `nav` of anchors |
 | `[data-testid="tab-overview"]` | `AdminShell.svelte` | every tab | `href="/ui/overview"` |
 | `[data-testid="tab-devices"]` | `AdminShell.svelte` | every tab | `href="/ui/devices"` |
+| `[data-testid="tab-logs"]` | `AdminShell.svelte` | every tab | `href="/ui/logs"` |
 | `[data-testid="tab-fsas"]` | `AdminShell.svelte` | every tab | `href="/ui/fsas"` |
 | `[data-testid="tab-control"]` | `AdminShell.svelte` | every tab | `href="/ui/control"` |
 | `[data-testid="tab-certificates"]` | `AdminShell.svelte` | every tab | `href="/ui/certificates"` |
 | `[data-testid="tab-derms"]` | `AdminShell.svelte` | every tab | `href="/ui/derms"` |
-| `[aria-current="page"]` on a tab anchor | `AdminShell.svelte` | every tab | set on the active tab only; absent on all six at a not-found path |
+| `[aria-current="page"]` on a tab anchor | `AdminShell.svelte` | every tab | set on the active tab only; absent on all seven at a not-found path |
 | `[data-testid="not-found"]` | `AdminShell.svelte` | none (any other `/ui/` path) | card naming the unmatched path |
 | `[data-testid="not-found-overview-link"]` | `AdminShell.svelte` | none (any other `/ui/` path) | `href="/ui/overview"` |
 

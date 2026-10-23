@@ -157,7 +157,7 @@ func TestPanelGetRefusals(t *testing.T) {
 }
 
 func TestPanelsCannotOverrideOrReorderCoreTabs(t *testing.T) {
-	for _, id := range []string{"derms", "overview", "fsas"} {
+	for _, id := range []string{"derms", "overview", "fsas", "logs"} {
 		_, _, err := Build(Config{AdminKey: panelTestKey, Panels: []sep2admin.Panel{testPanel(id, 1, okView)}})
 		if !errors.Is(err, sep2admin.ErrInvalidID) {
 			t.Errorf("Build with a panel named %q: err = %v, want ErrInvalidID", id, err)

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The Logs drawer of one device: its log newest first, from
+  // The log of one device: its log newest first, from
   // GET /api/device-logs/{lfdi}. It polls for newer lines every 5 s while it
   // is mounted, so closing the drawer is what stops the polling.
   import { untrack } from 'svelte'
@@ -17,12 +17,7 @@
     type LogEntry,
   } from '../lib/devicelog'
 
-  let {
-    deviceId,
-    lfdi,
-    devices,
-    onClose,
-  }: { deviceId: string; lfdi: string; devices: { lfdi: string; sfdi?: string }[]; onClose: () => void } = $props()
+  let { lfdi, devices }: { lfdi: string; devices: { lfdi: string; sfdi?: string }[] } = $props()
 
   const PAGE = 200
   const POLL_MS = 5000
@@ -49,9 +44,10 @@
 
   const rows = $derived(entries.map(logRow))
   const shown = $derived(visible(rows, kind, errorsOnly))
+  const label = $derived(deviceLabelIn(devices, lfdi))
 
   // The controller of the current device; replaced when the device changes
-  // and aborted when the drawer closes, which also drops a reply in flight.
+  // and aborted when the component unmounts, which also drops a reply in flight.
   let lifetime: AbortController | undefined
   // The signal of the run whose poll is out. A poll of a replaced run must
   // not clear it, or the new run's poll would be joined by a second one.
@@ -155,7 +151,7 @@
   }
 </script>
 
-<div class="logs" id="device-logs-{deviceId}" data-testid="device-logs-{deviceId}">
+<div class="logs" data-testid="device-logs">
   <div class="logs-head">
     <strong>Logs</strong>
     <label>
@@ -169,8 +165,8 @@
     </label>
     {#if aggregator}
       <span role="radiogroup" aria-label="Whose requests" data-testid="device-logs-scope">
-        <label><input type="radio" name="logs-scope-{deviceId}" value="own" bind:group={scope} /> Own requests</label>
-        <label><input type="radio" name="logs-scope-{deviceId}" value="managed" bind:group={scope} /> Own and managed devices</label>
+        <label><input type="radio" name="logs-scope" value="own" bind:group={scope} /> Own requests</label>
+        <label><input type="radio" name="logs-scope" value="managed" bind:group={scope} /> Own and managed devices</label>
       </span>
     {/if}
     <label><input type="checkbox" bind:checked={errorsOnly} data-testid="device-logs-errors" /> Errors only</label>
@@ -179,9 +175,8 @@
       href={logPath(lfdi, '/download')}
       download
       data-testid="device-logs-download"
-      aria-label="Download log of device {deviceId}">Download</a
+      aria-label="Download log of device {label}">Download</a
     >
-    <button class="btn btn-small" aria-label="Close logs" onclick={onClose}>Close</button>
   </div>
 
   {#if error}
@@ -200,7 +195,7 @@
       </p>
     {:else}
       <table>
-        <caption class="visually-hidden">Log of device {deviceId}</caption>
+        <caption class="visually-hidden">Log of device {label}</caption>
         <thead>
           <tr><th>Time</th><th>Kind</th><th>Request</th><th>Status</th><th>ms</th><th>Detail</th>{#if managed}<th>Device</th>{/if}<th>Made by</th></tr>
         </thead>

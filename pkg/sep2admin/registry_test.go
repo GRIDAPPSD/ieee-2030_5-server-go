@@ -102,6 +102,7 @@ func TestValidateID(t *testing.T) {
 		{"over-length", longID},
 		{"reserved overview", "overview"},
 		{"reserved devices", "devices"},
+		{"reserved logs", "logs"},
 		{"reserved fsas", "fsas"},
 		{"reserved control", "control"},
 		{"reserved certificates", "certificates"},

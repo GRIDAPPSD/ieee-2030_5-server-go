@@ -22,7 +22,7 @@ const data: DashboardData = {
   devices: [],
 }
 
-const CORE_TABS = ['Overview', 'Devices', 'FSAs', 'Control', 'Certificates', 'DERMS']
+const CORE_TABS = ['Overview', 'Devices', 'Logs', 'FSAs', 'Control', 'Certificates', 'DERMS']
 
 const registry: Descriptor = {
   version: 2,

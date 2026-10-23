@@ -59,7 +59,6 @@ pkg/sep2srv/assembly/miswired.go 2
 pkg/sep2srv/assembly/ownership.go 6
 pkg/sep2srv/handlers/der/links.go 11
 pkg/sep2srv/handlers/der/program_link_count.go 2
-pkg/sep2srv/handlers/enddevice/enddevice.go 2
 pkg/sep2srv/handlers/enddevice/owner.go 6
 pkg/sep2srv/handlers/flow_reservation/flow_reservation.go 6
 pkg/sep2srv/handlers/metering/mirror.go 8

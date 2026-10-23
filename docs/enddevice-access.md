@@ -98,7 +98,7 @@ creates a pair.
 The derived SFDI is not authenticated: any LFDI sharing the first 9 hex digits
 yields the same SFDI, which is why a collision is refused rather than
 overwritten. `SEP2_INBAND_MANAGEMENT=false` turns manager registration off
-(default on); the same option will govern manager delete.
+(default on). It does not cover manager delete.
 
 `PUT /edev/{id}` never changes the record's identity. The stored LFDI and SFDI
 are kept whatever the body carries: present, empty, absent, or another

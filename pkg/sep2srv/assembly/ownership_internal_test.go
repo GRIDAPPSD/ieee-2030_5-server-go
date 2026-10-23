@@ -148,7 +148,7 @@ func fullStores() *Stores {
 }
 
 func registerAll(mux routeRegistrar, stores *Stores, policy AuthPolicy) {
-	registerEndDeviceRoutes(mux, stores, policy, nil, nil, false)
+	registerEndDeviceRoutes(mux, stores, policy, nil, nil, false, nil)
 	registerMirrorRoutes(mux, stores, policy, nil)
 	registerDERRoutes(mux, stores)
 	registerMeteringRoutes(mux, stores)

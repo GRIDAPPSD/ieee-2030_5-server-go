@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -246,5 +248,39 @@ func TestManagerPost_OptionOffRefusesTheManagerAddButNotSelfRegistration(t *test
 	const self = "00CD0000000000000000000000000000000000EF"
 	if status, raw := gateRequest(t, srv, http.MethodPost, "/edev", self, ""); status != http.StatusCreated {
 		t.Errorf("self registration with the option off: status %d, want 201; body=%s", status, raw)
+	}
+}
+
+// Not parallel: it captures the process log.
+func TestManagerPost_RefusalsShareTheBoundedDenialLog(t *testing.T) {
+	srv, _ := managerPostServer(t, assembly.RouterConfig{})
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	gateRequest(t, srv, http.MethodPost, "/edev", managerLFDI, edevBody("not-hex", ""))
+	for i := 0; i < 12; i++ {
+		lfdi := fmt.Sprintf("D1%038X", i)
+		if status, _ := gateRequest(t, srv, http.MethodPost, "/edev", managerLFDI, edevBody(lfdi, "")); status != http.StatusForbidden {
+			t.Fatalf("unmanaged POST %d: status %d, want 403", i, status)
+		}
+	}
+
+	var lines, invalid, notManager int
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if !strings.Contains(l, "ownership gate denied POST /edev") {
+			continue
+		}
+		lines++
+		if strings.Contains(l, "reason=invalid-lfdi") {
+			invalid++
+		}
+		if strings.Contains(l, "reason=not-manager") {
+			notManager++
+		}
+	}
+	// One caller's budget is 5 lines per window, shared by every reason.
+	if lines != 5 || invalid != 1 || notManager != 4 {
+		t.Errorf("denial lines %d (invalid-lfdi %d, not-manager %d), want 5 (1, 4) for 13 refusals", lines, invalid, notManager)
 	}
 }

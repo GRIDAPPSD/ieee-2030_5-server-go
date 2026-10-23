@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,17 +24,38 @@ import (
 
 const frAgreeLFDI = "AABBCCDDEEFF0011223344556677889900112233"
 
+// fixtureClock is the one clock read the agreement and commitments fixtures
+// take their times from; a test replaces it to step the clock between reads.
+var fixtureClock = func() int64 { return sep2time.Now().Unix() }
+
+// steppingFixtureClock makes every fixtureClock read a second later than the
+// last, for the length of the test.
+func steppingFixtureClock(t *testing.T) {
+	t.Helper()
+	var reads atomic.Int64
+	base := sep2time.Now().Unix()
+	prev := fixtureClock
+	fixtureClock = func() int64 { return base + reads.Add(1) }
+	t.Cleanup(func() { fixtureClock = prev })
+}
+
 // frAgreementFixture stores three responses to one device, scheduled, active
 // and cancelled against the protocol clock, and returns the protocol server
 // and the admin router over the same stores.
 func frAgreementFixture(t *testing.T) (device *httptest.Server, admin http.Handler, stores *server.Stores) {
+	t.Helper()
+	return frAgreementFixtureAt(t, fixtureClock())
+}
+
+// frAgreementFixtureAt is frAgreementFixture against a caller-supplied clock,
+// so a test that also derives times from it takes one reading, not two.
+func frAgreementFixtureAt(t *testing.T, now int64) (device *httptest.Server, admin http.Handler, stores *server.Stores) {
 	t.Helper()
 	ctx := context.Background()
 	stores = newTestStores()
 	if err := stores.EndDevices.Create(ctx, "dev", sep2.EndDevice{LFDI: frAgreeLFDI}); err != nil {
 		t.Fatal(err)
 	}
-	now := sep2time.Now().Unix()
 	seed := func(id string, created, start int64, lc *dercontrol.LifecycleRecord) {
 		frq := sep2.FlowReservationRequest{
 			Resource: sep2.Resource{Href: "/edev/dev/frq/" + id}, MRID: "M-" + id, CreationTime: created,

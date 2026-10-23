@@ -16,7 +16,7 @@ internal/adminplane/login.go 1
 internal/adminplane/notifier.go 2
 internal/adminplane/page_panels.go 4
 internal/adminplane/panel_actions.go 15
-internal/adminplane/panel_stream.go 14
+internal/adminplane/panel_stream.go 12
 internal/adminplane/panels.go 13
 internal/auth/admin.go 16
 internal/auth/admin_cross_origin.go 6

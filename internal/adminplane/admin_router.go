@@ -197,7 +197,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations, stores.DeviceProfiles, stores.EndDeviceManagers))
 		}
 		if stores.EndDeviceDelete != nil {
-			mountWrite("DELETE /api/devices/{id}", stores.EndDeviceDelete)
+			mountWrite("DELETE /api/devices/{id}", handler.GuardEndDeviceDelete(stores.DERPrograms, programRetirer(stores), stores.EndDeviceDelete))
 		}
 	}
 

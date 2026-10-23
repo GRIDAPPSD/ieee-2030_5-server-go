@@ -18,7 +18,7 @@
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
   import type { MintedCert } from './lib/deviceCert'
   import { isSameOriginPath, PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
-  import { currentPath, navigate, replace } from './lib/router'
+  import { currentPath, currentSearch, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
   import ServerInfo from './panels/ServerInfo.svelte'
@@ -31,6 +31,7 @@
   import FsaCatalog from './panels/FsaCatalog.svelte'
   import TopologyTree from './panels/TopologyTree.svelte'
   import DeviceTable from './panels/DeviceTable.svelte'
+  import LogsTab from './panels/LogsTab.svelte'
   import ActivityChart from './panels/ActivityChart.svelte'
   import LoginPanel from './panels/LoginPanel.svelte'
   import FleetPane from './panels/FleetPane.svelte'
@@ -43,10 +44,11 @@
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
   // they alias overview.
-  type TabSlug = 'overview' | 'devices' | 'fsas' | 'control' | 'certificates' | 'derms'
+  type TabSlug = 'overview' | 'devices' | 'logs' | 'fsas' | 'control' | 'certificates' | 'derms'
   const TABS: { slug: TabSlug; label: string }[] = [
     { slug: 'overview', label: 'Overview' },
     { slug: 'devices', label: 'Devices' },
+    { slug: 'logs', label: 'Logs' },
     { slug: 'fsas', label: 'FSAs' },
     { slug: 'control', label: 'Control' },
     { slug: 'certificates', label: 'Certificates' },
@@ -102,7 +104,7 @@
     const path = $currentPath
     if (path === '/ui/' || !path.startsWith('/ui/') || !path.endsWith('/')) return
     const slug = path.slice('/ui/'.length, -1)
-    if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}`)
+    if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}${untrack(() => $currentSearch)}`)
   })
 
   // Panel paths normalize the same way, once the panel list is known.
@@ -286,6 +288,8 @@
       <AddDevice devices={data?.devices ?? []} onAdded={() => { void refresh(); void loadNames() }} pending={mintedCert} />
       <LookupDevice />
       <ManagementPairs devices={data?.devices ?? []} ready={data !== null || probeError !== ''} />
+    {:else if activeTab === 'logs'}
+      <LogsTab devices={data?.devices ?? []} ready={data !== null || probeError !== ''} error={dashboardError} />
     {:else if activeTab === 'fsas'}
       <CreateFsa onCreated={refresh} />
       <FsaCatalog {fsas} onChanged={refresh} />

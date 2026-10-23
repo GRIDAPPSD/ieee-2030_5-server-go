@@ -229,6 +229,17 @@ describe('AdminShell trailing slash on a tab path (criterion 6)', () => {
     expect(pushSpy).not.toHaveBeenCalled()
   })
 
+  it('keeps the query when it drops the slash, so a hand-typed Logs URL keeps its device', async () => {
+    const lfdi = data.devices![0].lfdi
+    window.history.pushState({}, '', `/ui/logs/?device=${lfdi}`)
+    mockAuthenticated()
+    render(AdminShell)
+
+    await waitFor(() => expect(window.location.pathname).toBe('/ui/logs'))
+    expect(window.location.search).toBe(`?device=${lfdi}`)
+    expect(await screen.findByTestId('logs-picker')).toHaveValue(lfdi)
+  })
+
   it('leaves "/ui/" itself alone: it is the overview alias, not a trailing-slash tab', async () => {
     await renderOnPath('/ui/')
     expect(window.location.pathname).toBe('/ui/')

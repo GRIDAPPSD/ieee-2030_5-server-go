@@ -230,6 +230,18 @@ td {
   flex: 1;
 }
 
+.compact-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.compact-select.narrow {
+  max-width: 200px;
+}
+
 .form-row input[type='checkbox'] {
   flex: none;
 }

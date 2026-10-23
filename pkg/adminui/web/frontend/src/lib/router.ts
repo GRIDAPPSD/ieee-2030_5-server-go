@@ -25,12 +25,29 @@ export const currentPath = readable(window.location.pathname, (set) => {
   return () => window.removeEventListener('popstate', onPopState)
 })
 
+// currentSearch is the current window.location.search ("" or "?a=b"), kept in
+// step with currentPath so a tab can carry one selection in its URL.
+export const currentSearch = readable(window.location.search, (set) => {
+  set(window.location.search)
+  const onPopState = () => set(window.location.search)
+  window.addEventListener('popstate', onPopState)
+  return () => window.removeEventListener('popstate', onPopState)
+})
+
+// isCurrent is true when path is where the window already is. A path with no
+// query compares by pathname alone, so a tab link does not push a new entry
+// just to drop a query the page was loaded with (a login token).
+function isCurrent(path: string): boolean {
+  if (!path.includes('?')) return path === window.location.pathname
+  return path === window.location.pathname + window.location.search
+}
+
 // navigate pushes a new history entry for path and notifies currentPath's
 // subscribers by dispatching a synthetic popstate, keeping the store's
 // single source of truth as window.location rather than a second,
 // potentially-divergent piece of state.
 export function navigate(path: string): void {
-  if (path === window.location.pathname) return
+  if (isCurrent(path)) return
   window.history.pushState({}, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -39,7 +56,7 @@ export function navigate(path: string): void {
 // one, for normalizing a canonical redirect (a tab path's trailing slash,
 // issue 561 criterion 6) so the back button does not have to skip past it.
 export function replace(path: string): void {
-  if (path === window.location.pathname) return
+  if (isCurrent(path)) return
   window.history.replaceState({}, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }

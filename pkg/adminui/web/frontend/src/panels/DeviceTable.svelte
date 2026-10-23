@@ -2,7 +2,7 @@
   // The registered EndDevice list, plus the per-device FSA assignment
   // control. The LFDI cell is truncated for width, as it always has been;
   // the untruncated value is available through Lookup Device by LFDI.
-  import { tick, untrack } from 'svelte'
+  import { untrack } from 'svelte'
   import { fetchJSON, postJSON } from '../lib/api'
   import { takeProgramsRequest } from '../lib/programsRequest'
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
@@ -13,7 +13,7 @@
   import { applyPairs, pairFailures, pairFailureText } from '../lib/management'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
-  import DeviceLog from './DeviceLog.svelte'
+  import TabLink from './TabLink.svelte'
   import DevicePicker from './DevicePicker.svelte'
 
   let {
@@ -75,18 +75,6 @@
   // The device whose Programs drawer is open. A link from another tab may
   // have asked for one; that request is read once, on mount.
   let programsFor = $state(untrack(() => takeProgramsRequest()))
-
-  // The device whose Logs drawer is open; independent of the Programs drawer,
-  // so each kind of drawer has at most one open row.
-  let logsFor = $state('')
-
-  // Closing from inside the drawer removes the focused Close button, so focus
-  // goes back to the toggle that opened it.
-  async function closeLogs(deviceID: string) {
-    logsFor = ''
-    await tick()
-    document.getElementById(`device-logs-toggle-${deviceID}`)?.focus()
-  }
 
   let selected = $state<Record<string, string>>({})
   let error = $state('')
@@ -210,6 +198,7 @@
                   }}
                 />
                 <select
+                  class="compact-select narrow"
                   aria-label="Kind of device {deviceLabel(device.lfdi, device.sfdi)}"
                   data-testid="device-kind-select"
                   bind:value={draftKind}
@@ -265,19 +254,12 @@
                 aria-label="Programs of device {deviceID}"
                 onclick={() => (programsFor = programsFor === deviceID ? '' : deviceID)}>Programs</button
               >
-              <button
-                class="btn btn-small"
-                id="device-logs-toggle-{deviceID}"
-                data-testid="device-logs-toggle-{deviceID}"
-                aria-expanded={logsFor === deviceID}
-                aria-controls={logsFor === deviceID ? `device-logs-${deviceID}` : undefined}
-                aria-label="Logs of device {deviceID}"
-                disabled={!device.lfdi}
-                onclick={() => (logsFor = logsFor === deviceID ? '' : deviceID)}>Logs</button
-              >
+              {#if device.lfdi}
+                <TabLink path="/ui/logs?device={encodeURIComponent(device.lfdi)}" testid="device-logs-link-{deviceID}">Logs</TabLink>
+              {/if}
             </td>
             <td>
-              <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
+              <select class="compact-select narrow" id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
                 <option value="">(pick FSA)</option>
                 {#each fsas as fsa (fsa.mRID)}
                   <option value={'/api/fsas/' + fsa.mRID}>{fsaLabel(fsa.mRID)}</option>
@@ -290,13 +272,6 @@
             <tr data-testid="device-programs-row-{deviceID}">
               <td colspan={10 + columns.length}>
                 <DevicePrograms deviceId={deviceID} {fsas} onFsaChanged={onChanged} onClose={() => (programsFor = '')} />
-              </td>
-            </tr>
-          {/if}
-          {#if logsFor === deviceID}
-            <tr data-testid="device-logs-row-{deviceID}">
-              <td colspan={10 + columns.length}>
-                <DeviceLog deviceId={deviceID} lfdi={device.lfdi} {devices} onClose={() => closeLogs(deviceID)} />
               </td>
             </tr>
           {/if}
@@ -314,14 +289,3 @@
     <div class="result err" role="alert" data-testid="device-rename-error">{renameError}</div>
   {/if}
 </div>
-
-<style>
-  select {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 2px 4px;
-    font-size: 12px;
-    max-width: 200px;
-  }
-</style>

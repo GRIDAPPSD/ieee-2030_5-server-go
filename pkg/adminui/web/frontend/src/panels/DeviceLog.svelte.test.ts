@@ -1,7 +1,7 @@
-// The Logs drawer reads GET /api/device-logs/{lfdi} through fetchJSON, so the
+// The device log reads GET /api/device-logs/{lfdi} through fetchJSON, so the
 // tests answer by path and assert the request the server would see. Timers
 // are faked: the 5 s poll is advanced by hand, and the teardown cases count
-// requests after the drawer is gone.
+// requests after the log is gone.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/svelte'
 import DeviceLog from './DeviceLog.svelte'
@@ -75,8 +75,8 @@ function serve(answer: (path: string) => Reply | Promise<Reply>) {
   return paths
 }
 
-function mount(onClose = () => {}) {
-  return render(DeviceLog, { props: { deviceId: '7', lfdi: LFDI, devices: DEVICES, onClose } })
+function mount() {
+  return render(DeviceLog, { props: { lfdi: LFDI, devices: DEVICES } })
 }
 
 async function settle() {
@@ -147,7 +147,7 @@ describe('DeviceLog', () => {
     expect(paths4[3]).toContain('/dcap/1')
   })
 
-  it('stops polling and aborts the request in flight when the drawer unmounts', async () => {
+  it('stops polling and aborts the request in flight when the log unmounts', async () => {
     const signals: (AbortSignal | undefined)[] = []
     const paths: string[] = []
     vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string, opts) => {
@@ -230,7 +230,7 @@ describe('DeviceLog', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toHaveTextContent('403')
   })
-  it('runs one poll at a time after the device changes under an open drawer', async () => {
+  it('runs one poll at a time after the device changes under an open log', async () => {
     const other = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
     const releases: (() => void)[] = []
     const paths: string[] = []
@@ -241,7 +241,7 @@ describe('DeviceLog', () => {
     })
     const view = mount()
     await settle()
-    await view.rerender({ deviceId: '8', lfdi: other, devices: DEVICES, onClose: () => {} })
+    await view.rerender({ lfdi: other, devices: DEVICES })
     await settle()
     // The old device's reply lands while the new device's first read is out.
     releases[0]()
@@ -277,7 +277,7 @@ describe('DeviceLog', () => {
     serve(() => page([entry(1)]))
     mount()
     await settle()
-    expect(screen.getByRole('table', { name: 'Log of device 7' })).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Log of device 10000000001' })).toBeInTheDocument()
   })
   async function asAggregator() {
     vi.spyOn(api, 'fetchJSON').mockResolvedValueOnce({
@@ -335,7 +335,7 @@ describe('DeviceLog', () => {
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
     expect(screen.queryByRole('columnheader', { name: 'Device' })).toBeNull()
   })
-  it('drops a managed-scope reply that lands after the drawer switched back to own', async () => {
+  it('drops a managed-scope reply that lands after the view switched back to own', async () => {
     await asAggregator()
     let release: () => void = () => {}
     serve(async (path) => {

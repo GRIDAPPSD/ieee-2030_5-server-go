@@ -87,7 +87,7 @@ var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 // NewRegistry seeds them into the core band, and Register refuses them as
 // reserved, so an extension can neither take nor displace a core tab.
 // TestCoreTabsMatchTheShell reads that file, so the lists cannot drift.
-var coreTabs = []string{"overview", "devices", "fsas", "control", "certificates", "derms"}
+var coreTabs = []string{"overview", "devices", "logs", "fsas", "control", "certificates", "derms"}
 
 // pathSegmentIDs are the admin listener's own top-level path segments.
 var pathSegmentIDs = map[string]struct{}{

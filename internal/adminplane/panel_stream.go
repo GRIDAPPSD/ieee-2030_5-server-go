@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/ssedeadline"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 )
 
@@ -312,12 +313,14 @@ func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher 
 		if closing {
 			d = panelStreamShutdownGrace
 		}
-		if err := rc.SetWriteDeadline(time.Now().Add(d)); err != nil && !deadlineLogged {
+		ssedeadline.Extend(rc, d, func(err error) {
 			// Without the extension the listener's WriteTimeout ends the
 			// stream; logged once per stream rather than per write.
-			deadlineLogged = true
-			log.Printf("admin: panel %q: stream write-deadline extension failed: %v", id, err)
-		}
+			if !deadlineLogged {
+				deadlineLogged = true
+				log.Printf("admin: panel %q: stream write-deadline extension failed: %v", id, err)
+			}
+		})
 	}
 	write := func(b []byte) bool {
 		extend()

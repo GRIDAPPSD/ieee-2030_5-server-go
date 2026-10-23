@@ -67,6 +67,11 @@ test('the Logs tab lists the requests a device made, survives a reload, and link
   const logs = page.getByTestId('device-logs');
   await expect(logs.getByRole('row').filter({ hasText: 'GET /dcap' })).toBeVisible({ timeout: 15000 });
   await expect(logs.getByRole('row').filter({ hasText: 'GET /tm' })).toBeVisible();
+  // The lines sit in their own scroll box, and a short log says where it starts
+  // instead of offering an Older button.
+  await expect(logs.getByTestId('device-logs-scroll')).toBeVisible();
+  await expect(logs.getByTestId('device-logs-start')).toBeVisible();
+  await expect(logs.getByTestId('device-logs-older')).toHaveCount(0);
   await expect(logs.getByTestId('device-logs-download')).toHaveAttribute('href', `/api/device-logs/${lfdi}/download`);
 
   await page.reload();

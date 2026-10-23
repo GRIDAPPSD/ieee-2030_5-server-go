@@ -344,6 +344,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	inBandManagementOn, err := config.ParseInBandManagement(os.Getenv("SEP2_INBAND_MANAGEMENT"))
+	if err != nil {
+		return nil, err
+	}
 	deviceLogOn, err := config.ParseDeviceLog(os.Getenv("SEP2_DEVICE_LOG"))
 	if err != nil {
 		return nil, err
@@ -422,6 +426,9 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		DeviceLogOff:      !deviceLogOn,
 		DeviceLogDir:      deviceLogDir,
 		DeviceLogMaxBytes: deviceLogMaxBytes,
+
+		// #1087: on unless SEP2_INBAND_MANAGEMENT=false.
+		InBandManagementOff: !inBandManagementOn,
 
 		// Observability: dedicated plain-HTTP Prometheus metrics listener.
 		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"

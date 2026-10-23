@@ -123,9 +123,9 @@ func TestAssembly_MirrorUnmanagedClaimRefusedThroughTheRouter(t *testing.T) {
 
 // mupWiringInstanceRoutes is every /mup route BESIDES POST /mup (the two
 // tests above already cover creation): the five separate HandleFunc calls in
-// registerMirrorRoutes (assembly.go), each its own line passing
-// stores.EndDeviceManagers, so a mutation on any ONE line is a defect this
-// table must catch on that line's own row. path is relative to the created
+// registerMirrorRoutes (assembly.go), each its own call passing
+// stores.EndDeviceManagers and the RequireDeviceRecords option, so a mutation
+// on any ONE call is a defect this table must catch on that call's own row. path is relative to the created
 // mirror's Location; wantStatus is the response on the admitted case.
 var mupWiringInstanceRoutes = []struct {
 	name       string

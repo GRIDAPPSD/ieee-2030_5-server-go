@@ -21,6 +21,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	srvmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -768,7 +769,7 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 			h.refuse(w, r, "cancel", refuseReason, &logged)
 			return
 		}
-		mrid, ok := normalizeMRID(r.PathValue("mrid"))
+		mrid, ok := srvmrid.Canonical(r.PathValue("mrid"))
 		if !ok {
 			h.refuse(w, r, "cancel", refuseMRIDFormat, &logged)
 			return
@@ -1121,21 +1122,6 @@ func validProgramHref(href string) bool {
 		return false
 	}
 	return validHrefSegment(edev) && validHrefSegment(fsa) && validHrefSegment(derp)
-}
-
-// normalizeMRID accepts exactly 32 hex digits, either case, and returns them
-// uppercase, the form the issuer mints.
-func normalizeMRID(s string) (string, bool) {
-	if len(s) != 32 {
-		return "", false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
-			return "", false
-		}
-	}
-	return strings.ToUpper(s), true
 }
 
 func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontrol.LifecycleRecord, now int64) DERControlView {

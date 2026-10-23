@@ -7,7 +7,7 @@ import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
 import { readWire } from './fixtures/fsa_wire';
 
-// #1067: the Logs drawer of a device. The device makes real requests over
+// #1067, #1083: the Logs tab of a device. The device makes real requests over
 // mutual TLS on the protocol port; the drawer must show them as the log
 // writer recorded them, read through GET /api/device-logs/{lfdi}.
 
@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders(AUTH);
 });
 
-test('the Logs drawer lists the requests a device made, with a Download link', async ({ page, request }) => {
+test('the Logs tab lists the requests a device made, survives a reload, and links to Download', async ({ page, request }) => {
   await expect
     .poll(async () => (await request.get(`${baseUrl}/api/fsas`, { headers: AUTH }).catch(() => null))?.status(), { timeout: 15000 })
     .toBe(200);
@@ -62,12 +62,18 @@ test('the Logs drawer lists the requests a device made, with a Download link', a
   expect((await readWire(PROTOCOL_PORT, getCertDir(), cert, '/tm')).status).toBe(200);
 
   await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
-  await page.getByRole('button', { name: `Logs of device ${id}` }).click();
-  const drawer = page.getByTestId(`device-logs-${id}`);
-  await expect(drawer.getByRole('row').filter({ hasText: 'GET /dcap' })).toBeVisible({ timeout: 15000 });
-  await expect(drawer.getByRole('row').filter({ hasText: 'GET /tm' })).toBeVisible();
-  await expect(drawer.getByTestId('device-logs-download')).toHaveAttribute('href', `/api/device-logs/${lfdi}/download`);
+  await page.getByTestId(`device-logs-link-${id}`).click();
+  await expect(page).toHaveURL(new RegExp(`/ui/logs\\?device=${lfdi}$`));
+  const logs = page.getByTestId('device-logs');
+  await expect(logs.getByRole('row').filter({ hasText: 'GET /dcap' })).toBeVisible({ timeout: 15000 });
+  await expect(logs.getByRole('row').filter({ hasText: 'GET /tm' })).toBeVisible();
+  await expect(logs.getByTestId('device-logs-download')).toHaveAttribute('href', `/api/device-logs/${lfdi}/download`);
 
-  await drawer.getByRole('button', { name: 'Close logs' }).click();
-  await expect(drawer).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('logs-picker')).toHaveValue(lfdi);
+  await expect(page.getByTestId('device-logs').getByRole('row').filter({ hasText: 'GET /dcap' })).toBeVisible({ timeout: 15000 });
+
+  await page.goto(baseUrl + '/ui/logs?device=0000000000000000000000000000000000000000');
+  await expect(page.getByTestId('logs-not-found')).toBeVisible();
+  await expect(page.getByTestId('device-logs')).toHaveCount(0);
 });

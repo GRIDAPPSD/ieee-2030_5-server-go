@@ -323,12 +323,10 @@ func TestPower_ReadingsExpiredWhenWindowOutlastsRetention(t *testing.T) {
 	}
 }
 
-// BenchmarkPower_ListMirrors is the cost of one read at the size the design
-// names: 58 devices posting every 5 s for 24 h.
-func BenchmarkPower_ListMirrors(b *testing.B) {
-	old := nowUnix
-	nowUnix = func() int64 { return powerNow }
-	defer func() { nowUnix = old }()
+// benchPowerStores seeds the size the design names: 58 devices posting every
+// 5 s for 24 h.
+func benchPowerStores(b *testing.B) (*memory.Store[sep2.MirrorUsagePoint], *memory.ScopedStore[sep2.MirrorMeterReading]) {
+	b.Helper()
 	mups := memory.NewStore[sep2.MirrorUsagePoint]()
 	mmrs := memory.NewScopedStore[sep2.MirrorMeterReading]()
 	ctx := context.Background()
@@ -348,13 +346,39 @@ func BenchmarkPower_ListMirrors(b *testing.B) {
 			}
 		}
 	}
+	return mups, mmrs
+}
+
+// BenchmarkPower_ListMirrors is a poll that finds no fresh answer: a new
+// handler per iteration, so every read lists the store.
+func BenchmarkPower_ListMirrors(b *testing.B) {
+	old := nowUnix
+	nowUnix = func() int64 { return powerNow }
+	defer func() { nowUnix = old }()
+	mups, mmrs := benchPowerStores(b)
 	h := &AdminFleetHandler{Managers: memory.NewEndDeviceManagementStore(), MirrorUsagePoints: mups, MirrorMeterReadings: mmrs}
 	b.ResetTimer()
 	for range b.N {
-		w := httptest.NewRecorder()
-		HandlePower(h, 0)(w, httptest.NewRequest(http.MethodGet, "/api/derms/power?scope=all&window=86400", nil))
-		if w.Code != http.StatusOK {
-			b.Fatalf("status %d: %s", w.Code, w.Body.Bytes())
+		if code, body := serve(HandlePower(h, 0), "scope=all&window=86400"); code != http.StatusOK {
+			b.Fatalf("status %d: %s", code, body)
+		}
+	}
+}
+
+// BenchmarkPower_CachedRead is a poll that finds a fresh answer.
+func BenchmarkPower_CachedRead(b *testing.B) {
+	old := nowUnix
+	nowUnix = func() int64 { return powerNow }
+	defer func() { nowUnix = old }()
+	mups, mmrs := benchPowerStores(b)
+	h := HandlePower(&AdminFleetHandler{Managers: memory.NewEndDeviceManagementStore(), MirrorUsagePoints: mups, MirrorMeterReadings: mmrs}, 0)
+	if code, body := serve(h, "scope=all&window=86400"); code != http.StatusOK {
+		b.Fatalf("status %d: %s", code, body)
+	}
+	b.ResetTimer()
+	for range b.N {
+		if code, _ := serve(h, "scope=all&window=86400"); code != http.StatusOK {
+			b.Fatal(code)
 		}
 	}
 }

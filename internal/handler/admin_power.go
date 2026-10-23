@@ -2,12 +2,15 @@ package handler
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"math"
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
@@ -28,12 +31,100 @@ const powerTotalName = "Total"
 // powerBucketCap is the most buckets one window may split into.
 const powerBucketCap = sep2admin.MaxChartSeriesPoints
 
-// powerBucketSizes are the bucket lengths in seconds, smallest first.
-var powerBucketSizes = []int64{5, 10, 30, 60, 120}
+// powerBucketSizes are the bucket lengths in seconds, smallest first: the
+// sizes the allowed windows select (5 s for 15 min and 1 h, 30 s for 6 h,
+// 120 s for 24 h).
+var powerBucketSizes = []int64{5, 30, 120}
 
 // powerWindows are the accepted window lengths in seconds: 15 min, 1 h, 6 h
 // and 24 h, the last inside the default 25 h reading retention.
 var powerWindows = []int64{900, 3600, 21600, 86400}
+
+// powerCacheTTL is how long an answer is reused: the smallest bucket, so a
+// cached answer is at most one bucket behind the answer a fresh read would
+// give. Polls arrive once per bucket per open page, so the cache mainly
+// collapses concurrent pages onto one read of the mirror stores.
+const powerCacheTTL = 5 * time.Second
+
+var (
+	errPowerRead  = errors.New("admin power: mirror read failed")
+	errPowerChart = errors.New("admin power: chart refused")
+)
+
+// powerKey names everything an answer depends on besides the clock. The
+// aggregator is the canonical LFDI, empty for the all-devices scope.
+type powerKey struct {
+	scope, aggregator string
+	window            int64
+}
+
+// powerEntry is one answer, in flight until done is closed. at, resp and err
+// are written before the close and read only after it.
+type powerEntry struct {
+	done chan struct{}
+	at   time.Time
+	resp PowerResponse
+	err  error
+}
+
+// powerCache holds one answer per powerKey for ttl and lets concurrent
+// callers of one key share a single computation. A failed computation is
+// handed to the callers waiting on it and never kept.
+type powerCache struct {
+	mu      sync.Mutex
+	entries map[powerKey]*powerEntry
+	ttl     time.Duration
+	clock   func() time.Time
+}
+
+func newPowerCache(ttl time.Duration) *powerCache {
+	return &powerCache{entries: map[powerKey]*powerEntry{}, ttl: ttl, clock: time.Now}
+}
+
+// usableLocked reports whether e is in flight or a fresh success.
+func (c *powerCache) usableLocked(e *powerEntry) bool {
+	select {
+	case <-e.done:
+		return e.err == nil && c.clock().Sub(e.at) < c.ttl
+	default:
+		return true
+	}
+}
+
+func (c *powerCache) get(ctx context.Context, key powerKey, compute func() (PowerResponse, error)) (PowerResponse, error) {
+	c.mu.Lock()
+	if e, ok := c.entries[key]; ok && c.usableLocked(e) {
+		c.mu.Unlock()
+		select {
+		case <-e.done:
+			return e.resp, e.err
+		case <-ctx.Done():
+			return PowerResponse{}, ctx.Err()
+		}
+	}
+	for k, e := range c.entries {
+		if !c.usableLocked(e) {
+			delete(c.entries, k)
+		}
+	}
+	e := &powerEntry{done: make(chan struct{}), err: errPowerRead}
+	c.entries[key] = e
+	c.mu.Unlock()
+
+	defer func() {
+		e.at = c.clock()
+		if e.err != nil {
+			c.mu.Lock()
+			if c.entries[key] == e {
+				delete(c.entries, key)
+			}
+			c.mu.Unlock()
+		}
+		close(e.done)
+	}()
+	e.resp, e.err = compute()
+	return e.resp, e.err
+}
 
 // PowerDevice is one device's entry in a power answer. Drawn is false for a
 // device reporting power that did not make the series cap, and for one with
@@ -124,6 +215,7 @@ func devicePowerOf(lfdi string, mirrors []deviceMirror, edition SEP2Edition, bou
 // when unknown. The route sits under the sensitive /api/derms/ prefix, so a
 // real credential is required even from loopback.
 func HandlePower(h *AdminFleetHandler, retention time.Duration) http.HandlerFunc {
+	cache := newPowerCache(powerCacheTTL)
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		q := r.URL.Query()
@@ -164,49 +256,65 @@ func HandlePower(h *AdminFleetHandler, retention time.Duration) http.HandlerFunc
 			match = func(device string) bool { return slices.Contains(members, device) }
 		}
 
-		now := nowUnix()
-		bucket := powerBucketSeconds(window)
-		we := now / bucket * bucket
-		ws := we - window
-		bounds := make([]int64, 0, window/bucket+1)
-		for x := ws; x <= we; x += bucket {
-			bounds = append(bounds, x)
-		}
-		resp.WindowStart, resp.WindowEnd, resp.BucketSeconds = ws, we, bucket
-		resp.ReadingsExpired = readingsExpired(ws, now, retention)
-
-		mirrors, err := mirrorReadingsFor(ctx, "admin GET /api/derms/power", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
-			return match(canonicalLFDI(device))
+		key := powerKey{scope: resp.Scope, aggregator: resp.AggregatorLFDI, window: window}
+		out, err := cache.get(ctx, key, func() (PowerResponse, error) {
+			return computePower(context.WithoutCancel(ctx), h, retention, resp, fleetScope, members, match, window)
 		})
-		if err != nil {
+		switch {
+		case err == nil:
+			writeJSON(w, http.StatusOK, out)
+		case errors.Is(err, errPowerChart):
+			writeError(w, http.StatusInternalServerError, "power chart refused, see server log")
+		default:
 			writeError(w, http.StatusInternalServerError, "power read failed, see server log")
-			return
 		}
-		byDevice := map[string][]deviceMirror{}
-		for _, m := range mirrors {
-			byDevice[m.deviceLFDI] = append(byDevice[m.deviceLFDI], m)
-		}
-		if fleetScope {
-			for _, m := range members {
-				if _, ok := byDevice[m]; !ok {
-					byDevice[m] = nil
-				}
+	}
+}
+
+// computePower reads the mirrors and builds one answer. resp arrives with
+// its scope, aggregator and aggregator list set. The read runs without the
+// caller's cancellation: its answer is shared with every poll that joined it.
+func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Duration, resp PowerResponse, fleetScope bool, members []string, match func(string) bool, window int64) (PowerResponse, error) {
+	now := nowUnix()
+	bucket := powerBucketSeconds(window)
+	we := now / bucket * bucket
+	ws := we - window
+	bounds := make([]int64, 0, window/bucket+1)
+	for x := ws; x <= we; x += bucket {
+		bounds = append(bounds, x)
+	}
+	resp.WindowStart, resp.WindowEnd, resp.BucketSeconds = ws, we, bucket
+	resp.ReadingsExpired = readingsExpired(ws, now, retention)
+
+	mirrors, err := mirrorReadingsFor(ctx, "admin GET /api/derms/power", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
+		return match(canonicalLFDI(device))
+	})
+	if err != nil {
+		return PowerResponse{}, errPowerRead
+	}
+	byDevice := map[string][]deviceMirror{}
+	for _, m := range mirrors {
+		byDevice[m.deviceLFDI] = append(byDevice[m.deviceLFDI], m)
+	}
+	if fleetScope {
+		for _, m := range members {
+			if _, ok := byDevice[m]; !ok {
+				byDevice[m] = nil
 			}
 		}
-
-		devices := make([]devicePower, 0, len(byDevice))
-		for lfdi, ms := range byDevice {
-			devices = append(devices, devicePowerOf(lfdi, ms, h.Edition, bounds))
-		}
-		slices.SortFunc(devices, func(a, b devicePower) int { return cmp.Compare(a.lfdi, b.lfdi) })
-
-		if err := fillPower(&resp, devices, bounds); err != nil {
-			log.Printf("admin power: encode chart: %s", logsafe.Err(err))
-			writeError(w, http.StatusInternalServerError, "power chart refused, see server log")
-			return
-		}
-		writeJSON(w, http.StatusOK, resp)
 	}
+
+	devices := make([]devicePower, 0, len(byDevice))
+	for lfdi, ms := range byDevice {
+		devices = append(devices, devicePowerOf(lfdi, ms, h.Edition, bounds))
+	}
+	slices.SortFunc(devices, func(a, b devicePower) int { return cmp.Compare(a.lfdi, b.lfdi) })
+
+	if err := fillPower(&resp, devices, bounds); err != nil {
+		log.Printf("admin power: encode chart: %s", logsafe.Err(err))
+		return PowerResponse{}, errPowerChart
+	}
+	return resp, nil
 }
 
 // fillPower builds the chart, device list and gap counts of resp from the

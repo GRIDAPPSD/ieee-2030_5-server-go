@@ -860,8 +860,8 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}
 
 	adminSrv := newAdminServer(adminRouter)
-	// Shutdown does not cancel request contexts, so open panel streams are
-	// ended here, at its start, rather than holding it to its deadline.
+	// Shutdown does not cancel request contexts, so open panel and dashboard
+	// streams are ended here, at its start, rather than holding it to its deadline.
 	var endStreams sync.Once
 	adminSrv.RegisterOnShutdown(func() { endStreams.Do(func() { close(streamsDone) }) })
 

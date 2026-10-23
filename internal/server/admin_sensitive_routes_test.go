@@ -157,6 +157,9 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/derms/flow-reservations/{edevId}/{frqId}", method: http.MethodGet, path: "/api/derms/flow-reservations/4/frq-1", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/derms/grants", method: http.MethodGet, path: "/api/derms/grants", wantReachedStatus: http.StatusBadRequest},
 		{name: "GET /api/derms/commitments", method: http.MethodGet, path: "/api/derms/commitments", wantReachedStatus: http.StatusBadRequest},
+		// #1114: per-device power is metering data. A credentialed request with
+		// no query reaches the handler and answers its own 400.
+		{name: "GET /api/derms/power", method: http.MethodGet, path: "/api/derms/power", wantReachedStatus: http.StatusBadRequest},
 		{name: "GET /api/derms/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/derms/audit", wantReachedStatus: http.StatusNotFound},
 	}
 

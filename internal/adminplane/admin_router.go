@@ -261,6 +261,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// fleet membership.
 	if fleetH := newAdminFleetHandler(stores); fleetH != nil {
 		authed.HandleFunc("GET /api/derms/fleets", handler.HandleListFleets(fleetH))
+		authed.HandleFunc("GET /api/derms/power", handler.HandlePower(fleetH, stores.MirrorReadingRetention))
 	}
 
 	// #764 DERMS read API: a fleet's flow reservation requests, their

@@ -3,6 +3,8 @@ package sep2tls
 import (
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -21,13 +23,48 @@ func LFDI(cert *x509.Certificate) string {
 	return fmt.Sprintf("%X", fp[:20])
 }
 
+// ErrInvalidLFDI is returned for an LFDI that is not exactly 40 uppercase
+// hex characters, the form LFDI produces.
+var ErrInvalidLFDI = errors.New("sep2tls: LFDI must be 40 uppercase hex characters")
+
 // SFDI returns the Short Form Device Identifier: the certificate
 // fingerprint left-truncated to 36 bits, expressed as 11 decimal digits
 // with a sum-of-digits check digit appended (12 digits total).
 // Per spec section 6.3.3.
 func SFDI(cert *x509.Certificate) string {
-	fp := Fingerprint(cert)
+	return sfdiFromHash(Fingerprint(cert))
+}
 
+// SFDIFromLFDI derives the SFDI from an LFDI without the certificate. The
+// LFDI is the first 20 bytes of the fingerprint and the SFDI uses only its
+// first 36 bits, so the LFDI carries everything needed.
+//
+// The input must be 40 uppercase hex characters; canonicalizing is the
+// caller's job, and anything else returns ErrInvalidLFDI and no value. The
+// result is not authenticated: any LFDI sharing the first 9 hex characters
+// yields the same SFDI, so callers must refuse a minted SFDI or LFDI that
+// already exists.
+func SFDIFromLFDI(lfdi string) (string, error) {
+	if len(lfdi) != 40 {
+		return "", ErrInvalidLFDI
+	}
+	for i := 0; i < len(lfdi); i++ {
+		c := lfdi[i]
+		if !(c >= '0' && c <= '9') && !(c >= 'A' && c <= 'F') {
+			return "", ErrInvalidLFDI
+		}
+	}
+	head, err := hex.DecodeString(lfdi[:10])
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidLFDI, err)
+	}
+	var fp [32]byte
+	copy(fp[:], head)
+	return sfdiFromHash(fp), nil
+}
+
+// sfdiFromHash computes the SFDI from the leading bytes of the fingerprint.
+func sfdiFromHash(fp [32]byte) string {
 	// Left-truncate to 36 bits from the first 5 bytes.
 	// Take top 36 bits: shift the 40-bit value right by 4.
 	val := uint64(fp[0])<<28 |

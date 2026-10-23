@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -29,6 +30,43 @@ func deleteScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedSt
 	}
 	_, err := cascader.DeleteParent(ctx, parentID)
 	return err
+}
+
+// deleteScopedParentsUnder removes every parent of s whose id starts with
+// prefix. It serves stores keyed by a composite parent (deviceID + "/" +
+// derId), where the device owns many parents and DeleteParent alone, which
+// takes an exact id, cannot reach them. Parents is the enumeration the
+// store contract provides for this.
+func deleteScopedParentsUnder[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], prefix string) error {
+	cascader, ok := s.(parentCascader)
+	if !ok {
+		return fmt.Errorf("the store (%T) cannot cascade a parent delete", s)
+	}
+	parents, err := s.Parents(ctx)
+	if err != nil {
+		return fmt.Errorf("listing the parents of the store (%T): %w", s, err)
+	}
+	for _, p := range parents {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		if _, err := cascader.DeleteParent(ctx, p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probeScopedParentsUnder is [probeScopedParent] for [deleteScopedParentsUnder]:
+// the capability and the enumeration it needs, checked without mutating.
+func probeScopedParentsUnder[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], prefix string) error {
+	if _, ok := s.(parentCascader); !ok {
+		return fmt.Errorf("the store (%T) cannot cascade a parent delete", s)
+	}
+	if _, err := s.Parents(ctx); err != nil {
+		return fmt.Errorf("listing the parents of the store (%T) for prefix %q: %w", s, prefix, err)
+	}
+	return nil
 }
 
 // probeScopedParent checks the two things known ahead of the actual cascade:

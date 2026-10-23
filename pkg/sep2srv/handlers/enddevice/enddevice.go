@@ -381,13 +381,38 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 	}
 }
 
+// DeleteOption configures [HandleDeleteEndDevice].
+type DeleteOption func(*deleteConfig)
+
+type deleteConfig struct {
+	afterNotify func(ctx context.Context, id string) error
+}
+
+// WithAfterNotify runs fn with the deleted device's id after the device is
+// removed and the EndDeviceList notification is queued. A failure answers 500;
+// the device is already gone, and a retried DELETE answers 404.
+func WithAfterNotify(fn func(ctx context.Context, id string) error) DeleteOption {
+	return func(c *deleteConfig) { c.afterNotify = fn }
+}
+
 // HandleDeleteEndDevice returns a handler for DELETE /edev/{id}. CSIP V1.2
 // MAINT-002 step 5 mandates that on successful deletion the server fires a
 // Notification on the EndDeviceList subscription (SubscribedResource =
 // "/edev") with NotificationStatusDefault: the list changed, no subscription ended. The notifier is optional:
 // passing nil disables notification fan-out (useful for tests that don't
 // exercise the subscription path).
-func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier) http.HandlerFunc {
+//
+// A [DeleteOption] adds work after the notification is queued. Subscriptions
+// are removed there rather than inside the store's Delete because Notify looks
+// up its subscribers, the deleted device's own among them, and removing them
+// first would drop the notification MAINT-002 requires.
+func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier, opts ...DeleteOption) http.HandlerFunc {
+	var cfg deleteConfig
+	for _, o := range opts {
+		if o != nil {
+			o(&cfg)
+		}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			encoding.MethodNotAllowed(w, "DELETE")
@@ -414,6 +439,13 @@ func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier) http.Hand
 		// queue and returns immediately, so this stays non-blocking.
 		if n != nil {
 			n.Notify(r.Context(), EndDeviceListHref, sep2.NotificationStatusDefault)
+		}
+
+		if cfg.afterNotify != nil {
+			if err := cfg.afterNotify(r.Context(), id); err != nil {
+				srverr.Internal(w, r, err)
+				return
+			}
 		}
 
 		w.WriteHeader(http.StatusNoContent)

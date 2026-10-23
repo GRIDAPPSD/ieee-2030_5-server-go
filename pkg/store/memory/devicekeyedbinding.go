@@ -11,8 +11,10 @@ import (
 
 // DeviceKeyedCascadeEndDeviceStore decorates any [store.EndDeviceStore] so
 // deleting an EndDevice also removes the DeviceStatus, PowerStatus,
-// Configuration and FunctionSetAssignments records kept under it, and the
-// admin-plane FSA assignment links that name it, closing the same orphan
+// Configuration and FunctionSetAssignments records kept under it, its DER
+// instances with their capability, settings, status and availability
+// (WithDERs), and the admin-plane FSA
+// assignment links that name it, closing the same orphan
 // shape #701 closed for flow reservation and LogEvent records
 // (GRIDAPPSD/ieee-2030_5-server-go#721): without this, a device later
 // created at the same key inherits whatever its predecessor left behind, and
@@ -25,6 +27,12 @@ import (
 // stamped unconditionally by the POST /edev handler rather than derived
 // here. There is nothing for a decorator to get right or wrong on the read
 // side, so this type only ever touches Delete.
+//
+// Subscriptions are deliberately not cascaded here. MAINT-002 requires the
+// EndDeviceList notification to reach the deleted device's own subscription,
+// which Notify looks up after Delete returns, so removing them inside Delete
+// would drop that notification. [handlers/enddevice.HandleDeleteEndDevice]
+// removes them after notifying instead (GRIDAPPSD/ieee-2030_5-server-go#1100).
 //
 // Each collection is optional and cascaded independently: a deployment that
 // does not wire one has that family's routes unmounted (assembly.go
@@ -39,6 +47,15 @@ type DeviceKeyedCascadeEndDeviceStore struct {
 	powerStatuses  store.ScopedStore[sep2.PowerStatus]
 	fsas           store.ScopedStore[sep2.FunctionSetAssignments]
 	adminFSAs      *AdminFSAStore
+
+	// ders is keyed (deviceID, derId); the four singleton stores below are
+	// keyed (deviceID + "/" + derId, key), so removing a device's DERs means
+	// removing every parent that starts with deviceID + "/".
+	ders        store.ScopedStore[sep2.DER]
+	derCaps     store.ScopedStore[sep2.DERCapability]
+	derSettings store.ScopedStore[sep2.DERSettings]
+	derStatuses store.ScopedStore[sep2.DERStatus]
+	derAvails   store.ScopedStore[sep2.DERAvailability]
 }
 
 // compile-time proof the decorator is substitutable for what it decorates,
@@ -75,6 +92,22 @@ func NewDeviceKeyedCascadeEndDeviceStore(
 		fsas:           fsas,
 		adminFSAs:      adminFSAs,
 	}
+}
+
+// WithDERs makes Delete also remove the device's DER instances and the
+// capability, settings, status and availability singletons kept under each
+// of them. Any argument may be absent ([store.IsAbsent]); that family is then
+// not served and is skipped. It returns the receiver so the constructor call
+// can be extended in place.
+func (s *DeviceKeyedCascadeEndDeviceStore) WithDERs(
+	ders store.ScopedStore[sep2.DER],
+	caps store.ScopedStore[sep2.DERCapability],
+	settings store.ScopedStore[sep2.DERSettings],
+	statuses store.ScopedStore[sep2.DERStatus],
+	avails store.ScopedStore[sep2.DERAvailability],
+) *DeviceKeyedCascadeEndDeviceStore {
+	s.ders, s.derCaps, s.derSettings, s.derStatuses, s.derAvails = ders, caps, settings, statuses, avails
+	return s
 }
 
 // deviceKeyedFamily names one cascaded ScopedStore collection alongside the
@@ -120,7 +153,41 @@ func (s *DeviceKeyedCascadeEndDeviceStore) scopedFamilies() []deviceKeyedFamily 
 			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.fsas, id) },
 		})
 	}
+	out = s.appendDERFamilies(out)
 	return out
+}
+
+// appendDERFamilies adds the wired DER families: the DER instances, keyed by
+// device, and the four singleton stores keyed by device + "/" + derId.
+func (s *DeviceKeyedCascadeEndDeviceStore) appendDERFamilies(out []deviceKeyedFamily) []deviceKeyedFamily {
+	if !store.IsAbsent(s.ders) {
+		out = append(out, deviceKeyedFamily{
+			name:   "DER",
+			probe:  func(ctx context.Context, id string) error { return probeScopedParent(ctx, s.ders, id) },
+			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.ders, id) },
+		})
+	}
+	if !store.IsAbsent(s.derCaps) {
+		out = append(out, derSingletonFamily("DER capability", s.derCaps))
+	}
+	if !store.IsAbsent(s.derSettings) {
+		out = append(out, derSingletonFamily("DER settings", s.derSettings))
+	}
+	if !store.IsAbsent(s.derStatuses) {
+		out = append(out, derSingletonFamily("DER status", s.derStatuses))
+	}
+	if !store.IsAbsent(s.derAvails) {
+		out = append(out, derSingletonFamily("DER availability", s.derAvails))
+	}
+	return out
+}
+
+func derSingletonFamily[T store.Copier[T]](name string, st store.ScopedStore[T]) deviceKeyedFamily {
+	return deviceKeyedFamily{
+		name:   name,
+		probe:  func(ctx context.Context, id string) error { return probeScopedParentsUnder(ctx, st, id+"/") },
+		delete: func(ctx context.Context, id string) error { return deleteScopedParentsUnder(ctx, st, id+"/") },
+	}
 }
 
 // probeDelete checks whether Delete(ctx, id) looks likely to succeed,

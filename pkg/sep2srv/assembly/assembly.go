@@ -702,8 +702,9 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 
 // deviceKeyedCascadeEndDevices returns the EndDevice store the /edev routes
 // must use so DELETE also removes the device's Configuration, DeviceStatus,
-// PowerStatus and FunctionSetAssignments records, and the admin-plane FSA
-// assignment links that name it (GRIDAPPSD/ieee-2030_5-server-go#721).
+// PowerStatus and FunctionSetAssignments records, its DER instances with
+// their capability, settings, status and availability, and the admin-plane FSA assignment links that name it
+// (GRIDAPPSD/ieee-2030_5-server-go#721, #1100).
 //
 // Unlike [logEventLinkedEndDevices], the gate here is not one mount decision:
 // assembly.go's own family table lists Configurations, DeviceStatuses,
@@ -717,13 +718,25 @@ func deviceKeyedCascadeEndDevices(devs store.EndDeviceStore, stores *Stores) sto
 		return devs
 	}
 	if store.IsAbsent(stores.Configurations) && store.IsAbsent(stores.DeviceStatuses) &&
-		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) {
+		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) &&
+		store.IsAbsent(stores.DERs) {
 		return devs
 	}
 	if linked, ok := devs.(*memory.DeviceKeyedCascadeEndDeviceStore); ok {
 		return linked
 	}
-	return memory.NewDeviceKeyedCascadeEndDeviceStore(devs, stores.Configurations, stores.DeviceStatuses, stores.PowerStatuses, stores.FSAs, stores.AdminFSAs)
+	return memory.NewDeviceKeyedCascadeEndDeviceStore(devs, stores.Configurations, stores.DeviceStatuses, stores.PowerStatuses, stores.FSAs, stores.AdminFSAs).
+		WithDERs(stores.DERs, stores.DERCapabilities, stores.DERSettings, stores.DERStatuses, stores.DERAvailabilities)
+}
+
+// deleteSubscriptionsOption removes a deleted EndDevice's subscriptions once
+// the removal notification has been queued; see HandleDeleteEndDevice. It is a
+// no-op option when Subscriptions is not wired.
+func deleteSubscriptionsOption(stores *Stores) coreedev.DeleteOption {
+	if store.IsAbsent(stores.Subscriptions) {
+		return nil
+	}
+	return coreedev.WithAfterNotify(stores.Subscriptions.DeleteDevice)
 }
 
 // flowReservationLinkedEndDevices returns the EndDevice store the /edev
@@ -825,7 +838,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))
-	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier))
+	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, deleteSubscriptionsOption(stores)))
 
 	// Registration GET handler at /edev/{id}/rg
 	// (GRIDAPPSD/ieee-2030_5-server-go#170).

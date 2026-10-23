@@ -2,10 +2,12 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // SubscriptionStore wraps the generic Store with secondary indexes
@@ -57,6 +59,35 @@ func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 	if err := s.Store.Delete(ctx, id); err != nil {
 		return err
 	}
+	return s.persistSnapshot()
+}
+
+// DeleteDevice removes every subscription scoped to deviceID and flushes one
+// snapshot. It exists for the EndDevice delete cascade: the device index is
+// reused when the same LFDI registers again, so subscriptions left behind
+// would be served under the new record.
+func (s *SubscriptionStore) DeleteDevice(ctx context.Context, deviceID string) error {
+	s.idxMu.RLock()
+	ids := make([]string, len(s.deviceIndex[deviceID]))
+	copy(ids, s.deviceIndex[deviceID])
+	s.idxMu.RUnlock()
+
+	for _, id := range ids {
+		old, err := s.Store.Get(ctx, id)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		s.removeIndex(id, old)
+		if err := s.Store.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	s.idxMu.Lock()
+	delete(s.deviceIndex, deviceID)
+	s.idxMu.Unlock()
 	return s.persistSnapshot()
 }
 

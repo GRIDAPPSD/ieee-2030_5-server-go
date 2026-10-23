@@ -138,19 +138,21 @@ func TestMAINT_001_AdminDeleteRefusesWithoutCredential(t *testing.T) {
 	t.Parallel()
 	owner := csiptest.NewDeviceIdentity(t, "MAINT-001-REFUSE")
 	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
-	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint001EndDeviceID, owner)
 	router := adminDeleteRouter(srv, nil)
 
 	cases := []struct {
-		name, remote, bearer string
+		id, name, remote, bearer string
 	}{
-		{"remote, no credential", "192.0.2.1:4000", ""},
-		{"loopback bypass only", "127.0.0.1:4000", ""},
-		{"wrong bearer", "192.0.2.1:4000", "Bearer not-the-key"},
+		{"edev-refuse-remote", "remote, no credential", "192.0.2.1:4000", ""},
+		{"edev-refuse-loopback", "loopback bypass only", "127.0.0.1:4000", ""},
+		{"edev-refuse-bearer", "wrong bearer", "192.0.2.1:4000", "Bearer not-the-key"},
+	}
+	for _, tc := range cases {
+		seedOwnedEndDevice(t, srv.Stores.EndDevices, tc.id, owner)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodDelete, "/api/devices/"+maint001EndDeviceID, nil)
+			req := httptest.NewRequest(http.MethodDelete, "/api/devices/"+tc.id, nil)
 			req.RemoteAddr = tc.remote
 			if tc.bearer != "" {
 				req.Header.Set("Authorization", tc.bearer)
@@ -160,8 +162,8 @@ func TestMAINT_001_AdminDeleteRefusesWithoutCredential(t *testing.T) {
 			if rec.Code != http.StatusUnauthorized {
 				t.Errorf("status = %d, want 401: %s", rec.Code, rec.Body.String())
 			}
-			if _, err := srv.Stores.EndDevices.Get(context.Background(), maint001EndDeviceID); err != nil {
-				t.Errorf("EndDevice gone after a refused request: %v", err)
+			if _, err := srv.Stores.EndDevices.Get(context.Background(), tc.id); err != nil {
+				t.Errorf("EndDevice %q gone after a refused request: %v", tc.id, err)
 			}
 		})
 	}

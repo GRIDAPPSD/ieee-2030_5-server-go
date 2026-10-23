@@ -358,3 +358,23 @@ func TestPlaneDeletesAnEndDeviceThroughTheFullCleanup(t *testing.T) {
 		t.Errorf("notified %q, want [/edev]", notifier.hrefs)
 	}
 }
+
+// A typed-nil Notifier is no notifier: the delete answers 204 instead of
+// calling through the nil pointer.
+func TestPlaneTreatsATypedNilNotifierAsNone(t *testing.T) {
+	ctx := context.Background()
+	cfg := baseConfig()
+	var typedNil *listNotifier
+	cfg.Notifier = typedNil
+	if err := cfg.Stores.EndDevices.Create(ctx, "7", sep2.EndDevice{LFDI: "0000000000000000000000000000000000000007"}); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+	p := newPlane(t, cfg)
+
+	if rec := send(p, http.MethodDelete, "/api/devices/7", "", true); rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE with a typed-nil Notifier = %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if _, err := cfg.Stores.EndDevices.Get(ctx, "7"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("EndDevice 7 after delete: err = %v, want ErrNotFound", err)
+	}
+}

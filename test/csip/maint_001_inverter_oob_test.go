@@ -17,12 +17,9 @@
 //	                                          -> POST /test/mutations/edev-delete-oob
 //	                                          -> 204 No Content
 //	                                          -> server's store no longer contains the EndDevice
-//	Step 3: server fires a Notification on EndDeviceList; aggregator
-//	        GETs the deleted href and gets 404. The OOB mutation does
-//	        NOT itself emit a Notification (by design - see the
-//	        handleEdevDeleteOOB comment); we drive the Notify in-test
-//	        as #151 does, then assert delivery.
-//	                                          -> mgr.Notify(/edev, Removed)
+//	Step 3: server fires a Notification on EndDeviceList (the hook
+//	        serves the same handler as DELETE /edev/{id}); aggregator
+//	        GETs the deleted href and gets 404.
 //	                                          -> receiver.Wait(1)
 //	                                          -> GET /edev/{id} -> 404
 //
@@ -47,7 +44,7 @@ import (
 // TestMAINT_001_InverterMaintenanceOOB implements CSIP V1.2 section 11.1.
 func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 	t.Parallel()
-	runMAINT001(t, func(ctx context.Context, t *testing.T, srv *csiptest.BootedServer, mgr *coresub.Manager) {
+	runMAINT001(t, func(ctx context.Context, t *testing.T, srv *csiptest.BootedServer, _ *coresub.Manager) {
 		// Step 2: OOB delete via the test mutation hook. A 404 here on
 		// an otherwise plumb wire means TestMain didn't set the env or
 		// the build was untagged; both are caught earlier in this file
@@ -59,12 +56,5 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 			t.Fatalf("MAINT-001 Step 2: POST %s status = %d, want 204: %s",
 				mutateEdevDeleteOOB, status, string(body))
 		}
-
-		// The hook does not emit notifications (its scope is the
-		// authoritative-store rewrite), so the manager fans out the
-		// status 0 Notification from here, the same way #151 layers
-		// Notify on top of the #27 mutation shape. The route variant
-		// asserts the delete itself notifies.
-		mgr.Notify(ctx, "/edev", 0)
 	})
 }

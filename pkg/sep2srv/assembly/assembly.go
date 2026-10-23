@@ -732,32 +732,13 @@ func deviceKeyedCascadeEndDevices(devs store.EndDeviceStore, stores *Stores) sto
 // EndDeviceCleanup returns the one routine that removes what an EndDevice
 // leaves outside the device store: its subscriptions, and those other devices
 // hold on its resources. The DELETE route runs it after the removal
-// notification, POST /edev runs it on a vacant reused index, and the
-// out-of-band delete runs it directly, so every path to a deleted device
-// ends in the same code. It returns nil when subscriptions are not wired.
+// notification and POST /edev runs it on a vacant reused index, so every path
+// to a deleted device ends in the same code. It returns nil when subscriptions are not wired.
 func EndDeviceCleanup(stores *Stores) func(ctx context.Context, id string) error {
 	if store.IsAbsent(stores.Subscriptions) {
 		return nil
 	}
 	return stores.Subscriptions.DeleteDevice
-}
-
-// EndDeviceCleanupDeferringNotification is [EndDeviceCleanup] for a delete
-// whose removal notification is sent after it returns: the deleted device's
-// own subscriptions to resources outside its tree stay deliverable until the
-// index is next registered, which sweeps them.
-func EndDeviceCleanupDeferringNotification(stores *Stores) func(ctx context.Context, id string) error {
-	if store.IsAbsent(stores.Subscriptions) {
-		return nil
-	}
-	return stores.Subscriptions.DeleteDeviceResources
-}
-
-// OwnedEndDevices is the EndDevice store the /edev routes serve from, for a
-// caller outside this package that must delete through the same cascade
-// (the test-hook out-of-band delete).
-func OwnedEndDevices(stores *Stores) store.EndDeviceStore {
-	return ownedEndDevices(stores)
 }
 
 // EndDeviceDeleteHandler is the handler DELETE /edev/{id} serves, for a caller

@@ -1,6 +1,7 @@
 package sep2admin
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -104,6 +105,18 @@ func wireChartOf(c ChartBody, total *int) (wireChart, error) {
 		series = append(series, wireChartSeries{Name: s.Name, Points: points})
 	}
 	return wireChart{Unit: c.Unit, Series: series}, nil
+}
+
+// MarshalChart encodes c to the JSON a Descriptor chart section carries as
+// its body, through the same checks and bounds. The per-Descriptor point
+// cap applies to c alone, since c is the only chart in the response.
+func MarshalChart(c ChartBody) ([]byte, error) {
+	total := 0
+	w, err := wireChartOf(c, &total)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(w)
 }
 
 func chartMillis(p ChartPoint) (int64, error) {

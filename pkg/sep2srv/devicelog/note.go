@@ -2,7 +2,9 @@ package devicelog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
@@ -15,9 +17,16 @@ const maxNoteValue = 256
 // ErrNoteField is returned by Note.Set for a name outside the closed set.
 var ErrNoteField = errors.New("devicelog: field name not allowed in a request note")
 
+// ErrNoteValue is returned by Note.Set for a value JSON cannot encode (NaN,
+// an infinity, a channel), which would otherwise drop the whole request line.
+var ErrNoteValue = errors.New("devicelog: note value cannot be encoded")
+
 // noteFields is the closed set of names Note.Set accepts. It never holds a
 // name the writer or the request line sets itself (seq, t, kind, actor,
 // method, path, status, reason, ...), so a decorator cannot overwrite one.
+// The one exception is target: a note supplies it for a request with no
+// /edev/ segment, and the writer's resolved target replaces it when it has
+// one (Writer.place), so the device the store resolved always wins.
 var noteFields = map[string]struct{}{
 	"subject": {}, "subjectInvalid": {}, "rspStatus": {}, "target": {},
 	"mrids": {}, "mridsMore": {},
@@ -77,6 +86,9 @@ func (n *Note) Reason() string {
 func (n *Note) Set(key string, value any) error {
 	if _, ok := noteFields[key]; !ok {
 		return ErrNoteField
+	}
+	if _, err := json.Marshal(value); err != nil {
+		return fmt.Errorf("%w: %q", ErrNoteValue, key)
 	}
 	if n == nil {
 		return nil

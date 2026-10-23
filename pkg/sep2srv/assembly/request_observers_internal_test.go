@@ -90,6 +90,8 @@ func TestLogRequestLocationRules(t *testing.T) {
 		{"relative 201", http.StatusCreated, "/mup/7", "/mup/7"},
 		{"relative 204", http.StatusNoContent, "/mup/7", "/mup/7"},
 		{"absolute url dropped", http.StatusCreated, "http://evil.example/mup/7", nil},
+		{"network-path reference dropped", http.StatusCreated, "//evil.example/mup/7", nil},
+		{"backslash network-path dropped", http.StatusCreated, `/\evil.example/mup/7`, nil},
 		{"scheme-relative dropped", http.StatusCreated, "mup/7", nil},
 		{"empty", http.StatusCreated, "", nil},
 		{"capped at 256 bytes", http.StatusCreated, long, long[:maxLoggedLocation]},

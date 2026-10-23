@@ -120,9 +120,10 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 		"remote":     r.RemoteAddr,
 	}
 	if rec.Status >= 200 && rec.Status < 300 {
-		// Only a relative href is kept: the Location is what the server
-		// minted for a create, and anything else is not a resource to trace.
-		if loc := rec.Header().Get("Location"); strings.HasPrefix(loc, "/") {
+		// Only a server-relative href is kept: the Location is what the server
+		// minted for a create. "//" and "/\" read as a network-path reference
+		// to a client, so they are not an href on this server.
+		if loc := rec.Header().Get("Location"); strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//") && !strings.HasPrefix(loc, `/\`) {
 			fields["location"] = logsafe.TruncateOctets(loc, maxLoggedLocation)
 		}
 	}

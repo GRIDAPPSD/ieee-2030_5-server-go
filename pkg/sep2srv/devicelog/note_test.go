@@ -3,6 +3,7 @@ package devicelog
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,18 @@ func TestNoteRefuseAndNilNote(t *testing.T) {
 	none.Refuse("x")
 	if none.Reason() != "" || none.Fields() != nil {
 		t.Error("nil note must be an inert no-op")
+	}
+}
+
+func TestNoteSetRefusesValuesThatCannotEncode(t *testing.T) {
+	t.Parallel()
+	_, n := WithNote(context.Background())
+	for _, v := range []any{math.NaN(), math.Inf(1), math.Inf(-1), make(chan int)} {
+		if err := n.Set("mmr", v); !errors.Is(err, ErrNoteValue) {
+			t.Errorf("Set(mmr, %v) = %v, want ErrNoteValue", v, err)
+		}
+	}
+	if got := n.Fields(); len(got) != 0 {
+		t.Errorf("Fields after refused values = %v, want none", got)
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -61,9 +60,9 @@ func getCommitments(t *testing.T, admin http.Handler) commitmentsBody {
 // cancelled grant. It returns the clock the records were stored against.
 func commitmentsFixture(t *testing.T) (http.Handler, *server.Stores, int64) {
 	t.Helper()
-	_, admin, stores := frAgreementFixture(t)
 	ctx := context.Background()
-	now := sep2time.Now().Unix()
+	now := fixtureClock()
+	_, admin, stores := frAgreementFixtureAt(t, now)
 
 	response := func(id string, start int64, power *sep2.ActivePower) {
 		frp := sep2.FlowReservationResponse{
@@ -280,5 +279,21 @@ func TestAdminCommitmentsUnknownFleetIs404(t *testing.T) {
 	}
 	if code, _, _ := get(manager); code != http.StatusOK {
 		t.Errorf("a manager without its own EndDevice = %d, want 200", code)
+	}
+}
+
+// The fixtures take their times from one clock reading: with the clock
+// stepping a second on every read, the active grant still starts 100 s before
+// the returned now. A second read inside the fixtures breaks this by 1 s.
+func TestCommitmentsFixtureReadsTheClockOnce(t *testing.T) {
+	steppingFixtureClock(t)
+
+	admin, _, now := commitmentsFixture(t)
+	body := getCommitments(t, admin)
+	if len(body.Grants) == 0 || body.Grants[0].MRID != "R-frq-active" {
+		t.Fatalf("grants = %+v, want R-frq-active first", body.Grants)
+	}
+	if got := body.Grants[0].Window.Start; got != now-100 {
+		t.Errorf("active grant starts at %d, want %d (now %d - 100)", got, now-100, now)
 	}
 }

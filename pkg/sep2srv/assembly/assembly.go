@@ -911,13 +911,16 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 		lfdi, _, ok := authPolicy.Identity(ctx)
 		return lfdi, ok
 	})
+	// A manager acts on /mup for a managed device only when that device has an
+	// EndDevice record, as GET /edev already requires.
+	requireRecords := coremetering.RequireDeviceRecords(stores.EndDevices)
 	mux.HandleFunc("GET /mup", corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
 		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
 	))
-	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider))
-	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider))
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider, requireRecords))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, requireRecords))
 	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(
-		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
 
 	// IEEE 2030.5-2018 section 10.11.3 rule (d): the client posts readings
@@ -935,7 +938,7 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// drift into minting different href shapes, or into enforcing creator
 	// scope on one path and not the other, for the same resource kind.
 	mux.HandleFunc("POST /mup/{id}", coremetering.HandlePostMirrorMeterReading(
-		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
 
 	// The two Mandatory methods on the MirrorUsagePoint instance.
@@ -959,10 +962,10 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// wrapper tables are removed upstream. Editing those tables from here is
 	// the cross-repo lockstep drift to avoid.
 	mux.HandleFunc("PUT /mup/{id}", coremetering.HandlePutMirrorUsagePoint(
-		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider,
+		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider, requireRecords,
 	))
 	mux.HandleFunc("DELETE /mup/{id}", coremetering.HandleDeleteMirrorUsagePoint(
-		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
 }
 

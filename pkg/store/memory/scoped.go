@@ -2,7 +2,9 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -202,6 +204,36 @@ func (s *ScopedStore[T]) Count(ctx context.Context, parentID string) (uint32, er
 		return 0, nil
 	}
 	return st.Count(ctx)
+}
+
+// DeleteParentsWithPrefix removes every parent whose id starts with prefix and
+// reports how many resources went with them. The match and the removal happen
+// under one hold of the parent lock, so a parent created before the call is
+// removed and none can slip between a listing and a delete. An empty prefix is
+// refused, since it would remove every parent.
+func (s *ScopedStore[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
+	if prefix == "" {
+		return 0, errors.New("memory: DeleteParentsWithPrefix: prefix is required")
+	}
+	s.mu.Lock()
+	var detached []*Store[T]
+	for id, st := range s.stores {
+		if strings.HasPrefix(id, prefix) {
+			detached = append(detached, st)
+			delete(s.stores, id)
+		}
+	}
+	s.mu.Unlock()
+
+	var total uint32
+	for _, st := range detached {
+		n, err := st.Count(ctx)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
 }
 
 // DeleteParent removes a parent's whole collection and reports how many

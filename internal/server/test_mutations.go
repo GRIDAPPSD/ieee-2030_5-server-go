@@ -39,6 +39,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
@@ -141,7 +142,16 @@ type edevDeleteOOBRequest struct {
 // store. Unlike the client-driven DELETE /edev/{id}, this is modeled as
 // an out-of-band server-side cleanup: no subscription notification is
 // emitted. Used by CSIP MAINT-001 (OOB delete path).
+//
+// It deletes through assembly.OwnedEndDevices, the chain DELETE /edev/{id}
+// uses, so the device's DERs do not outlive it, and runs the subscription
+// cleanup that keeps the device's own EndDeviceList subscription deliverable:
+// MAINT-001 notifies it after this returns, and the next registration of the
+// index sweeps it (GRIDAPPSD/ieee-2030_5-server-go#1100).
 func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
+	coreStores := NewCoreStores(stores)
+	edevs := assembly.OwnedEndDevices(coreStores)
+	cleanup := assembly.EndDeviceCleanupDeferringNotification(coreStores)
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req edevDeleteOOBRequest
 		if err := readJSON(r, &req); err != nil {
@@ -152,13 +162,19 @@ func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
 			http.Error(w, "bad request: end_device_id required", http.StatusBadRequest)
 			return
 		}
-		if err := stores.EndDevices.Delete(r.Context(), req.EndDeviceID); err != nil {
+		if err := edevs.Delete(r.Context(), req.EndDeviceID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "end device not found", http.StatusNotFound)
 				return
 			}
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if cleanup != nil {
+			if err := cleanup(r.Context(), req.EndDeviceID); err != nil {
+				http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}

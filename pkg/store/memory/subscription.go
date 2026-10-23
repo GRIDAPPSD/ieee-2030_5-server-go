@@ -51,44 +51,97 @@ func (s *SubscriptionStore) Create(ctx context.Context, id string, sub sep2.Subs
 }
 
 func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
-	old, err := s.Store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	s.removeIndex(id, old)
-	if err := s.Store.Delete(ctx, id); err != nil {
+	if err := s.removeOne(ctx, id); err != nil {
 		return err
 	}
 	return s.persistSnapshot()
 }
 
-// DeleteDevice removes every subscription scoped to deviceID and flushes one
-// snapshot. It exists for the EndDevice delete cascade: the device index is
-// reused when the same LFDI registers again, so subscriptions left behind
-// would be served under the new record.
-func (s *SubscriptionStore) DeleteDevice(ctx context.Context, deviceID string) error {
-	s.idxMu.RLock()
-	ids := make([]string, len(s.deviceIndex[deviceID]))
-	copy(ids, s.deviceIndex[deviceID])
-	s.idxMu.RUnlock()
+// removeOne removes one subscription and its index entries, returning
+// store.ErrNotFound when it is absent. It does not persist; callers do, so a
+// batch can flush once.
+func (s *SubscriptionStore) removeOne(ctx context.Context, id string) error {
+	old, err := s.Store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.removeIndex(id, old)
+	return s.Store.Delete(ctx, id)
+}
 
-	for _, id := range ids {
-		old, err := s.Store.Get(ctx, id)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			return err
-		}
-		s.removeIndex(id, old)
-		if err := s.Store.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+// DeleteDevice removes every subscription that belongs to deviceID or watches
+// one of its resources, and flushes one snapshot if it removed anything. It
+// exists for the EndDevice delete cascade: the device index is reused when the
+// same LFDI registers again, so subscriptions left behind would be served
+// under the new record, and a subscription another device holds on
+// /edev/{id} or beneath it would watch a resource that no longer exists.
+//
+// A subscription already gone is not an error, and nothing removed means no
+// snapshot, so a persistence fault cannot fail a delete that had nothing to
+// clean.
+func (s *SubscriptionStore) DeleteDevice(ctx context.Context, deviceID string) error {
+	return s.deleteDevice(ctx, deviceID, false)
+}
+
+// DeleteDeviceResources is [SubscriptionStore.DeleteDevice] for a delete whose
+// notification is sent later by someone else (the out-of-band delete): it
+// keeps the deleted device's own subscriptions to resources outside its own
+// tree, such as the EndDeviceList, so they can still be notified. Those are
+// removed when the index is next given to a device.
+func (s *SubscriptionStore) DeleteDeviceResources(ctx context.Context, deviceID string) error {
+	return s.deleteDevice(ctx, deviceID, true)
+}
+
+func (s *SubscriptionStore) deleteDevice(ctx context.Context, deviceID string, keepNotifiable bool) error {
+	removed := 0
+	for _, id := range s.deviceSubscriptionIDs(deviceID, keepNotifiable) {
+		err := s.removeOne(ctx, id)
+		switch {
+		case err == nil:
+			removed++
+		case !errors.Is(err, store.ErrNotFound):
 			return err
 		}
 	}
-	s.idxMu.Lock()
-	delete(s.deviceIndex, deviceID)
-	s.idxMu.Unlock()
+	if removed == 0 {
+		return nil
+	}
 	return s.persistSnapshot()
+}
+
+// deviceSubscriptionIDs returns the ids of the subscriptions scoped to
+// deviceID plus those, held by any device, whose subscribed resource is the
+// device or lies beneath it. With keepNotifiable, the device's own
+// subscriptions to resources outside its tree are left out.
+func (s *SubscriptionStore) deviceSubscriptionIDs(deviceID string, keepNotifiable bool) []string {
+	self := "/edev/" + deviceID
+	inTree := func(res string) bool { return res == self || strings.HasPrefix(res, self+"/") }
+	s.idxMu.RLock()
+	defer s.idxMu.RUnlock()
+	seen := make(map[string]bool)
+	var ids []string
+	add := func(list []string) {
+		for _, id := range list {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	for _, id := range s.deviceIndex[deviceID] {
+		if keepNotifiable {
+			if sub, err := s.Store.Get(context.Background(), id); err == nil && !inTree(sub.SubscribedResource) {
+				continue
+			}
+		}
+		add([]string{id})
+	}
+	for res, list := range s.resourceIndex {
+		if inTree(res) {
+			add(list)
+		}
+	}
+	return ids
 }
 
 // ListByResource returns all subscriptions for a given resource href,

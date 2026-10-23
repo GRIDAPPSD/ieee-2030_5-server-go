@@ -198,3 +198,46 @@ func TestFaultyStoresPassTheContractSuiteWhileDisarmed(t *testing.T) {
 		},
 	)
 }
+
+type prefixCascadingScoped struct {
+	*cascadingScoped
+	prefixCalls int
+}
+
+func (s *prefixCascadingScoped) DeleteParentsWithPrefix(_ context.Context, _ string) (uint32, error) {
+	s.prefixCalls++
+	return 2, nil
+}
+
+// The decorator claims DeleteParentsWithPrefix exactly when the store it wraps
+// does, and refuses it while the fault is armed.
+func TestFaultyScopedStorePreservesThePrefixCascadeCapability(t *testing.T) {
+	t.Parallel()
+
+	type prefixer interface {
+		DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error)
+	}
+	var fault storetest.Fault
+
+	plain := storetest.NewFaultyScopedStore[storetest.Resource](
+		&cascadingScoped{ScopedFake: storetest.NewScopedFake[storetest.Resource]()}, &fault)
+	if _, ok := plain.(prefixer); ok {
+		t.Error("the decorator claims DeleteParentsWithPrefix over a store that does not provide it")
+	}
+
+	inner := &prefixCascadingScoped{cascadingScoped: &cascadingScoped{ScopedFake: storetest.NewScopedFake[storetest.Resource]()}}
+	wrapped, ok := storetest.NewFaultyScopedStore[storetest.Resource](inner, &fault).(prefixer)
+	if !ok {
+		t.Fatal("the decorator dropped DeleteParentsWithPrefix from a store that provides it")
+	}
+	if n, err := wrapped.DeleteParentsWithPrefix(context.Background(), "p/"); err != nil || n != 2 || inner.prefixCalls != 1 {
+		t.Errorf("disarmed = %d, %v after %d inner calls, want 2, nil after 1", n, err, inner.prefixCalls)
+	}
+	fault.Arm(storetest.ErrBackendUnavailable)
+	if _, err := wrapped.DeleteParentsWithPrefix(context.Background(), "p/"); !errors.Is(err, storetest.ErrBackendUnavailable) {
+		t.Errorf("armed = %v, want ErrBackendUnavailable", err)
+	}
+	if inner.prefixCalls != 1 {
+		t.Errorf("armed call reached the inner store (%d calls, want 1)", inner.prefixCalls)
+	}
+}

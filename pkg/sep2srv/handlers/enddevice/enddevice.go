@@ -155,7 +155,13 @@ func HandleEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 // *memory.RegisteredEndDeviceStore for s to get the coupled behavior; with
 // any other store no device carries a RegistrationLink, which is what 2018
 // section 4.4 p.19 requires when the function set is not populated.
-func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identity IdentityFunc, sfdiPrefix SFDIPrefixFunc) http.HandlerFunc {
+func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identity IdentityFunc, sfdiPrefix SFDIPrefixFunc, opts ...CreateOption) http.HandlerFunc {
+	var cfg createConfig
+	for _, o := range opts {
+		if o != nil {
+			o(&cfg)
+		}
+	}
 	// idx is a required collaborator: every code path below that reaches
 	// registration calls idx.Allocate. A nil idx would panic on the first
 	// POST /edev, inside net/http's per-request recover, which turns a
@@ -271,6 +277,13 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 		// why the response below is re-read rather than serving the local
 		// copy: this handler no longer knows which links the device has.
 
+		if cfg.beforeCreate != nil {
+			if err := sweepVacantID(r.Context(), s, cfg.beforeCreate, id); err != nil {
+				srverr.Internal(w, r, err)
+				return
+			}
+		}
+
 		if err := s.Create(r.Context(), id, dev); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
 				// Race condition: another goroutine registered something at
@@ -378,6 +391,36 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// CreateOption configures [HandleCreateEndDevice].
+type CreateOption func(*createConfig)
+
+type createConfig struct {
+	beforeCreate func(ctx context.Context, id string) error
+}
+
+// WithBeforeCreate runs fn with the allocated id just before a new device is
+// stored there, but only when no device occupies that id. The index is reused
+// for a known LFDI, so this is where a cleanup a failed DELETE left undone is
+// finished before the new record can inherit it.
+func WithBeforeCreate(fn func(ctx context.Context, id string) error) CreateOption {
+	return func(c *createConfig) { c.beforeCreate = fn }
+}
+
+// sweepVacantID calls fn for id when s holds no device there. A device that
+// is present means a live record owns the id, and its subscriptions are not
+// stale.
+func sweepVacantID(ctx context.Context, s store.EndDeviceStore, fn func(context.Context, string) error, id string) error {
+	_, err := s.Get(ctx, id)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrNotFound):
+		return fn(ctx, id)
+	default:
+		return fmt.Errorf("check whether %q is vacant: %w", id, err)
 	}
 }
 

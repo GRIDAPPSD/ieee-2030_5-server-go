@@ -7,6 +7,7 @@ import (
 	"log"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -340,6 +341,35 @@ func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID st
 	defer s.writeMu.Unlock()
 	n, _, _, err := s.deleteParentLocked(ctx, parentID)
 	return n, err
+}
+
+// DeleteParentsWithPrefix removes every parent whose id starts with prefix.
+// writeMu is held from the listing to the last removal, and every write takes
+// it, so no parent is created between the two. Each parent is removed and
+// persisted by deleteParentLocked, so a failure part way leaves the earlier
+// parents removed and durable and the failing one restored; a retry finishes.
+func (s *PersistentScopedStore[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
+	if prefix == "" {
+		return 0, errors.New("memory: DeleteParentsWithPrefix: prefix is required")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	parents, err := s.inner.Parents(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var total uint32
+	for _, p := range parents {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		n, _, _, err := s.deleteParentLocked(ctx, p)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
 }
 
 // TakeParent is DeleteParent for a cascade that must be able to put the

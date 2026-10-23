@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 func edevDelRequest(t *testing.T, srv *httptest.Server, method, path string) (int, string) {
@@ -130,4 +131,69 @@ func derWithHref(href string) sep2.DER {
 	var d sep2.DER
 	d.Href = href
 	return d
+}
+
+// A DELETE whose subscription cleanup failed leaves stale subscriptions under
+// an index the same LFDI is given again. Registering must finish that cleanup
+// before the new record can inherit them, and must not touch the subscriptions
+// of a device that is live.
+func TestEndDeviceRegister_SweepsStaleSubscriptionsOnAReusedIndex(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	stores := testStores()
+	indexes := memory.NewEndDeviceIndex()
+	stores.EndDeviceIndexes = indexes
+	id, err := indexes.Allocate(victimLFDI)
+	if err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	// A live neighbour with its own subscription must keep it.
+	seedDevice(t, stores.EndDevices, callerID, callerLFDI, callerSFDI)
+	live := sep2.Subscription{SubscribedResource: "/edev"}
+	live.Href = "/edev/" + callerID + "/sub/live"
+	if err := stores.Subscriptions.Create(ctx, "live", live); err != nil {
+		t.Fatalf("seed live: %v", err)
+	}
+	stale := sep2.Subscription{SubscribedResource: "/edev"}
+	stale.Href = "/edev/" + id + "/sub/stale"
+	if err := stores.Subscriptions.Create(ctx, "stale", stale); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+
+	srv := gateServer(t, stores, gateTestPolicy())
+	if status, raw := gateRequest(t, srv, http.MethodPost, "/edev", victimLFDI, `<EndDevice xmlns="urn:ieee:std:2030.5:ns"/>`); status != http.StatusCreated {
+		t.Fatalf("POST /edev = %d, want 201; body=%s", status, raw)
+	}
+
+	if recs, err := stores.Subscriptions.ListByDeviceWithIDs(ctx, id); err != nil || len(recs) != 0 {
+		t.Errorf("re-registered device %s inherited %d stale subscriptions, %v, want 0", id, len(recs), err)
+	}
+	if recs, err := stores.Subscriptions.ListByDeviceWithIDs(ctx, callerID); err != nil || len(recs) != 1 {
+		t.Errorf("live device %s has %d subscriptions, %v, want 1", callerID, len(recs), err)
+	}
+}
+
+// A subscription another device holds on the deleted device's resources goes
+// with it.
+func TestEndDeviceDelete_RemovesSubscriptionsOtherDevicesHoldOnItsResources(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "e1")
+	other := sep2.Subscription{SubscribedResource: "/edev/e1/der/1/ders"}
+	other.Href = "/edev/e5/sub/x"
+	if err := stores.Subscriptions.Create(ctx, "x", other); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, stores, testAuthPolicy(), testSFDI, testLFDI, nil)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	if code, _ := edevDelRequest(t, srv, http.MethodDelete, "/edev/e1"); code != http.StatusNoContent {
+		t.Fatalf("DELETE /edev/e1 = %d, want 204", code)
+	}
+	if recs, err := stores.Subscriptions.ListByResource(ctx, "/edev/e1/der/1/ders"); err != nil || len(recs) != 0 {
+		t.Errorf("subscriptions on the deleted device's DER = %d, %v, want 0", len(recs), err)
+	}
 }

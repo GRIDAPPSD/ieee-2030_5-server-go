@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -20,11 +22,19 @@ func servedMRID(i int) string { return fmt.Sprintf("%032X", 0xA0000+i) }
 // management fleet's own control is removed first so the count is exactly n.
 func seedServedControls(t *testing.T, stores *assembly.Stores, n int) {
 	t.Helper()
+	seedServedControlsStarting(t, stores, n, func(i int) int64 { return int64(1000 + i*1000) })
+}
+
+// seedServedControlsStarting is seedServedControls with control i starting at
+// start(i), so a test can store controls in a different order than they are
+// served.
+func seedServedControlsStarting(t *testing.T, stores *assembly.Stores, n int, start func(i int) int64) {
+	t.Helper()
 	if err := stores.DERControls.Delete(context.Background(), derControlScopeKey(victimID, "1", "1"), victimID); err != nil {
 		t.Fatalf("remove the fleet's control: %v", err)
 	}
 	for i := 0; i < n; i++ {
-		c := seedDERControl(t, stores, victimID, fmt.Sprintf("c%02d", i), 100, int64(1000+i*1000))
+		c := seedDERControl(t, stores, victimID, fmt.Sprintf("c%02d", i), 100, start(i))
 		c.MRID = servedMRID(i)
 		if err := stores.DERControls.Update(context.Background(), derControlScopeKey(victimID, "1", "1"), fmt.Sprintf("c%02d", i), c); err != nil {
 			t.Fatalf("set mRID: %v", err)
@@ -160,5 +170,66 @@ func TestServedStoreNotesNothingOnTheUndecoratedStore(t *testing.T) {
 	line := servedLine(t, dir, missing)
 	if _, present := line["mrids"]; present {
 		t.Errorf("404 line carries mrids %v, want none", line["mrids"])
+	}
+}
+
+// TestDeviceLogRecordsOnlyTheServedPage stores 10 controls in the opposite
+// order to their start times and pages through them, so the page served is
+// not the first of the store's own order. The line must name exactly the
+// controls in the body, in the order served.
+func TestDeviceLogRecordsOnlyTheServedPage(t *testing.T) {
+	t.Parallel()
+	const listPath = "/edev/1/fsa/1/derp/1/derc"
+	stores := newManagementFleet(t).stores
+	seedServedControlsStarting(t, stores, 10, func(i int) int64 { return int64(20000 - i*1000) })
+	srv, dir, closeLog, _ := logServerFor(t, 1_000_000, gateTestPolicy(), stores)
+	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
+
+	// Served order is by start ascending, so control 9 comes first.
+	pages := []struct {
+		query string
+		want  []string
+	}{
+		{"?s=0&l=1", []string{servedMRID(9)}},
+		{"?s=0&l=3", []string{servedMRID(9), servedMRID(8), servedMRID(7)}},
+		{"?s=3&l=3", []string{servedMRID(6), servedMRID(5), servedMRID(4)}},
+	}
+	for _, pg := range pages {
+		status, raw := gateRequest(t, srv, http.MethodGet, listPath+pg.query, victimLFDI, "")
+		if status != http.StatusOK {
+			t.Fatalf("GET %s%s = %d: %s", listPath, pg.query, status, raw)
+		}
+		// Control: the body itself serves exactly this page, in this order.
+		last := -1
+		for _, m := range pg.want {
+			at := strings.Index(string(raw), m)
+			if at <= last {
+				t.Fatalf("control: body of %s%s does not serve %s after the previous one: %s", listPath, pg.query, m, raw)
+			}
+			last = at
+		}
+		if n := strings.Count(string(raw), "<mRID>"); n != len(pg.want) {
+			t.Fatalf("control: body of %s%s serves %d controls, want %d", listPath, pg.query, n, len(pg.want))
+		}
+	}
+	closeLog()
+
+	_, lines := linesFor(t, filepath.Join(dir, victimLFDI+".jsonl"), listPath)
+	var pageLines []map[string]any
+	for _, l := range lines {
+		if l["method"] == http.MethodGet {
+			pageLines = append(pageLines, l)
+		}
+	}
+	if len(pageLines) != len(pages) {
+		t.Fatalf("got %d list lines, want %d", len(pageLines), len(pages))
+	}
+	for i, pg := range pages {
+		if m := mridsOf(t, pageLines[i]); !reflect.DeepEqual(m, pg.want) {
+			t.Errorf("page %q mrids = %v, want the served page %v", pg.query, m, pg.want)
+		}
+		if more, present := pageLines[i]["mridsMore"]; present {
+			t.Errorf("page %q mridsMore = %v, want absent", pg.query, more)
+		}
 	}
 }

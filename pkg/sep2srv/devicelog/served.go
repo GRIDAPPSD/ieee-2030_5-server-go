@@ -67,9 +67,11 @@ func (s *ServedStore[T]) note(ctx context.Context, items []T) {
 		}
 	}
 	if len(listed) > 0 {
+		// Set fails only for a name outside the closed set or an unencodable value; neither can hold for a []string under a listed name.
 		_ = n.Set("mrids", listed)
 	}
 	if more := len(items) - len(listed); more > 0 {
+		// Same as above: a listed name and an int cannot fail.
 		_ = n.Set("mridsMore", more)
 	}
 }

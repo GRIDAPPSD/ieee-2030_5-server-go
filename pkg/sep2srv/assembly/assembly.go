@@ -955,8 +955,10 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 
 	// The protocol routes below read through these two, which note the served
 	// mRIDs on the request's device log line. derPrograms above counts the
-	// undecorated store, and the admin handlers never see either.
-	servedControls := devicelog.NewServedStore(derControls, func(c sep2.DERControl) string { return c.MRID })
+	// undecorated store, and the admin handlers never see either. The control
+	// decorator wraps the ordering wrapper, not the other way round, so List
+	// notes the page that was served rather than the whole collection.
+	servedControls := devicelog.NewServedStore(store.OrderedScoped(derControls, coreder.CompareDERControl), func(c sep2.DERControl) string { return c.MRID })
 	servedDefaults := devicelog.NewServedStore(defaultDERControls, func(c sep2.DefaultDERControl) string { return c.MRID })
 
 	dercap, derg, ders, dera := coreder.DERSingletonHandlers(
@@ -1037,7 +1039,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 		scopedListHandlerDeep[sep2.DERControl, sep2.DERControlList](
-			store.OrderedScoped(servedControls, coreder.CompareDERControl), store.SortByListOrdering, coreder.BuildDERControlList, 900,
+			servedControls, store.SortByListOrdering, coreder.BuildDERControlList, 900,
 		))
 
 	// A DERControl's own href, so an activated event resolves. A client that

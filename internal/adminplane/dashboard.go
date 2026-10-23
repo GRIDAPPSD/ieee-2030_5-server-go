@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -107,6 +108,27 @@ type DashboardHandler struct {
 	collectTimeout time.Duration
 	// columnTimeout bounds each embedder column source on its own.
 	columnTimeout time.Duration
+	// streamsDone, when closed, ends every open /dashboard/events stream so
+	// it cannot hold the admin server's Shutdown to its deadline. Nil never
+	// closes.
+	streamsDone <-chan struct{}
+}
+
+// dashboardStreamWriteDeadline is set before every SSE write: the listener's
+// WriteTimeout is set once before the handler runs and would otherwise cut
+// the stream (the panel and capture streams' pattern). A var so a test can
+// shrink it.
+var dashboardStreamWriteDeadline = 60 * time.Second
+
+// dashboardStreamInterval is the gap between SSE updates; a var so a test
+// can shrink it.
+var dashboardStreamInterval = 5 * time.Second
+
+// WithStreamsDone ends open dashboard streams when done closes. It returns d
+// so construction chains.
+func (d *DashboardHandler) WithStreamsDone(done <-chan struct{}) *DashboardHandler {
+	d.streamsDone = done
+	return d
 }
 
 // defaultCollectTimeout keeps a stalled store from holding a dashboard pass
@@ -183,26 +205,41 @@ func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send initial data
-	data := d.collectData(r.Context())
-	jsonData, _ := json.Marshal(data)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
-	flusher.Flush()
-
-	// Send updates every 5 seconds
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	rc := http.NewResponseController(w)
+	deadlineLogged := false
+	send := func(ctx context.Context) bool {
+		if err := rc.SetWriteDeadline(time.Now().Add(dashboardStreamWriteDeadline)); err != nil && !deadlineLogged {
+			// Without the extension the listener's WriteTimeout ends the
+			// stream; logged once per stream rather than per write.
+			deadlineLogged = true
+			log.Printf("dashboard: stream write-deadline extension failed: %s", logsafe.Str(err.Error()))
+		}
+		jsonData, _ := json.Marshal(d.collectData(ctx))
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
 
 	ctx := r.Context()
+	if !send(ctx) {
+		return
+	}
+
+	ticker := time.NewTicker(dashboardStreamInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-d.streamsDone:
+			return
 		case <-ticker.C:
-			data := d.collectData(ctx)
-			jsonData, _ := json.Marshal(data)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
-			flusher.Flush()
+			if !send(ctx) {
+				return
+			}
 		}
 	}
 }

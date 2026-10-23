@@ -15,14 +15,40 @@ const DEVICES = [
   { lfdi: MANAGER, sfdi: '10000000002' },
 ]
 
+// jsdom has no IntersectionObserver. This one records each observer made and
+// whether it is still connected, and the test decides when the sentinel shows.
+class FakeObserver {
+  static made: FakeObserver[] = []
+  connected = true
+  constructor(
+    private cb: (hits: { isIntersecting: boolean }[]) => void,
+    readonly options?: { root?: Element | null },
+  ) {
+    FakeObserver.made.push(this)
+  }
+  observe() {}
+  disconnect() {
+    this.connected = false
+  }
+  see() {
+    this.cb([{ isIntersecting: true }])
+  }
+  static live() {
+    return FakeObserver.made.filter((o) => o.connected)
+  }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
+  FakeObserver.made = []
+  vi.stubGlobal('IntersectionObserver', FakeObserver)
 })
 
 afterEach(() => {
   resetDeviceProfiles()
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 interface Reply {
@@ -166,19 +192,272 @@ describe('DeviceLog', () => {
     expect(paths).toHaveLength(2)
   })
 
-  it('pages back with the before cursor and drops Older when none remain', async () => {
+  it('loads older lines when the end of the box shows, one request at a time, and stops at the start', async () => {
+    let release: () => void = () => {}
+    const paths = serve(async (path) => {
+      if (!path.includes('before=')) return page([entry(4), entry(3)], { nextBefore: 'c3' })
+      await new Promise<void>((r) => (release = r))
+      return page([entry(2), entry(1)], { nextBefore: null, nextAfter: 'c2' })
+    })
+    mount()
+    await settle()
+    expect(screen.queryByTestId('device-logs-older')).toBeNull()
+    expect(screen.queryByTestId('device-logs-start')).toBeNull()
+    const watcher = FakeObserver.live()
+    expect(watcher).toHaveLength(1)
+    expect(watcher[0].options?.root).toBe(screen.getByTestId('device-logs-scroll'))
+
+    watcher[0].see()
+    await settle()
+    expect(paths[1]).toBe(`/api/device-logs/${LFDI}?limit=200&before=c3`)
+    // The read is out: the observer is gone, so the sentinel cannot start a second one.
+    expect(FakeObserver.live()).toHaveLength(0)
+    expect(paths).toHaveLength(2)
+
+    release()
+    await settle()
+    expect(screen.getAllByTestId('device-log-row').map((r) => r.textContent)).toEqual([
+      expect.stringContaining('/dcap/4'),
+      expect.stringContaining('/dcap/3'),
+      expect.stringContaining('/dcap/2'),
+      expect.stringContaining('/dcap/1'),
+    ])
+    expect(FakeObserver.live()).toHaveLength(0)
+    expect(screen.getByTestId('device-logs-start')).toBeInTheDocument()
+    expect(paths).toHaveLength(2)
+  })
+
+  it('asks again for the next older page when the end of the box is still in view after a read', async () => {
+    const paths = serve((path) => {
+      if (path.includes('before=c3')) return page([entry(2)], { nextBefore: 'c2' })
+      if (path.includes('before=c2')) return page([entry(1)], { nextBefore: null })
+      return page([entry(3)], { nextBefore: 'c3' })
+    })
+    mount()
+    await settle()
+    FakeObserver.live()[0].see()
+    await settle()
+    // A new observer reports the sentinel at once, as the real one does.
+    const next = FakeObserver.live()
+    expect(next).toHaveLength(1)
+    next[0].see()
+    await settle()
+    expect(paths.at(-1)).toBe(`/api/device-logs/${LFDI}?limit=200&before=c2`)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(3)
+  })
+
+  it('stops loading on a failed older read and retries only on request', async () => {
+    let fail = true
+    const paths = serve((path) => {
+      if (!path.includes('before=')) return page([entry(2)], { nextBefore: 'c2' })
+      return fail ? { ok: false, status: 500, error: 'boom' } : page([entry(1)], { nextBefore: null })
+    })
+    mount()
+    await settle()
+    FakeObserver.live()[0].see()
+    await settle()
+    expect(screen.getByTestId('device-logs-error')).toHaveTextContent('boom')
+    expect(FakeObserver.live()).toHaveLength(0)
+    expect(paths).toHaveLength(2)
+
+    fail = false
+    await fireEvent.click(screen.getByTestId('device-logs-older-retry'))
+    await settle()
+    expect(paths).toHaveLength(3)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(2)
+  })
+
+  it('pauses auto-load when an older page adds no line the filter shows, and re-arms on a filter change', async () => {
+    const paths = serve((path) => {
+      if (path.includes('before=c3')) return page([entry(2), entry(1)], { nextBefore: 'c1' })
+      if (path.includes('before=c1')) return page([entry(0, { status: 500 })], { nextBefore: null })
+      return page([entry(3)], { nextBefore: 'c3' })
+    })
+    mount()
+    await settle()
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.queryByTestId('device-log-row')).toBeNull()
+    // Re-arming on the filter change made a new observer; it loads one page.
+    FakeObserver.live()[0].see()
+    await settle()
+    expect(paths).toHaveLength(2)
+    // That page added nothing the filter shows: no observer, a button instead.
+    expect(FakeObserver.live()).toHaveLength(0)
+    expect(screen.getByTestId('device-logs-older-manual')).toHaveTextContent('Load older lines')
+
+    await fireEvent.click(screen.getByTestId('device-logs-older-manual'))
+    await settle()
+    expect(paths).toHaveLength(3)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
+    expect(screen.queryByTestId('device-logs-older-manual')).toBeNull()
+  })
+
+  it('leaves the button in place when a click loads a page with nothing to show', async () => {
     const paths = serve((path) =>
-      path.includes('before=')
-        ? page([entry(2), entry(1)], { nextBefore: null, nextAfter: 'c2' })
-        : page([entry(4), entry(3)], { nextBefore: 'c3' }),
+      path.includes('before=') ? page([entry(2)], { nextBefore: 'c2' }) : page([entry(3)], { nextBefore: 'c3' }),
     )
     mount()
     await settle()
-    await fireEvent.click(screen.getByTestId('device-logs-older'))
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    FakeObserver.live()[0].see()
     await settle()
-    expect(paths[1]).toBe(`/api/device-logs/${LFDI}?limit=200&before=c3`)
-    expect(screen.getAllByTestId('device-log-row')).toHaveLength(4)
-    expect(screen.queryByTestId('device-logs-older')).toBeNull()
+    await fireEvent.click(screen.getByTestId('device-logs-older-manual'))
+    await settle()
+    expect(paths).toHaveLength(3)
+    expect(screen.getByTestId('device-logs-older-manual')).toBeInTheDocument()
+    expect(FakeObserver.live()).toHaveLength(0)
+
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.queryByTestId('device-logs-older-manual')).toBeNull()
+    expect(FakeObserver.live()).toHaveLength(1)
+  })
+
+  it('counts only the held lines the filter shows, and shows all of them on the jump', async () => {
+    serve((path) =>
+      path.includes('after=') ? page([entry(5, { status: 500 }), entry(4), entry(3)]) : page([entry(2), entry(1)]),
+    )
+    mount()
+    await settle()
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    const box = screen.getByTestId('device-logs-scroll')
+    Object.defineProperty(box, 'scrollTop', { value: 40, writable: true, configurable: true })
+    await fireEvent.scroll(box)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('1 new line')
+
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('3 new lines')
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('1 new line')
+    await fireEvent.click(screen.getByTestId('device-logs-new'))
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(5)
+    expect(screen.queryByTestId('device-logs-new')).toBeNull()
+  })
+
+  it('keeps the older-read message while Retry is shown, after a poll clears the shared error', async () => {
+    serve((path) => {
+      if (path.includes('before=')) return { ok: false, status: 500, error: 'boom' }
+      return page([entry(2)], { nextBefore: 'c2' })
+    })
+    mount()
+    await settle()
+    FakeObserver.live()[0].see()
+    await settle()
+    expect(screen.getByTestId('device-logs-older-error')).toHaveTextContent('boom')
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.queryByTestId('device-logs-error')).toBeNull()
+    expect(screen.getByTestId('device-logs-older-retry')).toBeInTheDocument()
+    expect(screen.getByTestId('device-logs-older-error')).toHaveTextContent('boom')
+  })
+
+  it('keeps the rows under the reader still while a poll delivers lines', async () => {
+    serve((path) => (path.includes('after=') ? page([entry(5), entry(4)]) : page([entry(3), entry(2), entry(1)])))
+    mount()
+    await settle()
+    const before = screen.getAllByTestId('device-log-row')
+    const box = screen.getByTestId('device-logs-scroll')
+    Object.defineProperty(box, 'scrollTop', { value: 120, writable: true, configurable: true })
+    await fireEvent.scroll(box)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    const during = screen.getAllByTestId('device-log-row')
+    expect(during).toHaveLength(3)
+    during.forEach((row, i) => expect(row).toBe(before[i]))
+    expect(box.scrollTop).toBe(120)
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('2 new lines')
+
+    await fireEvent.click(screen.getByTestId('device-logs-new'))
+    expect(box.scrollTop).toBe(0)
+    const after = screen.getAllByTestId('device-log-row')
+    expect(after.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('/dcap/5'),
+      expect.stringContaining('/dcap/4'),
+      expect.stringContaining('/dcap/3'),
+      expect.stringContaining('/dcap/2'),
+      expect.stringContaining('/dcap/1'),
+    ])
+    // The lines that were shown are the same nodes, not re-rendered copies.
+    before.forEach((row, i) => expect(after[i + 2]).toBe(row))
+    expect(screen.queryByTestId('device-logs-new')).toBeNull()
+  })
+
+  it('shows polled lines in place while the reader is at the top', async () => {
+    serve((path) => (path.includes('after=') ? page([entry(2)]) : page([entry(1)])))
+    mount()
+    await settle()
+    const first = screen.getByTestId('device-log-row')
+    await vi.advanceTimersByTimeAsync(5000)
+    const rows = screen.getAllByTestId('device-log-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toBe(first)
+    expect(screen.queryByTestId('device-logs-new')).toBeNull()
+  })
+
+  it('shows the held lines once the reader scrolls back to the top, counting a repeated line once', async () => {
+    let n = 0
+    serve((path) => {
+      if (!path.includes('after=')) return page([entry(1)])
+      n++
+      return n === 1 ? page([entry(2)]) : page([entry(3), entry(2)])
+    })
+    mount()
+    await settle()
+    const box = screen.getByTestId('device-logs-scroll')
+    Object.defineProperty(box, 'scrollTop', { value: 50, writable: true, configurable: true })
+    await fireEvent.scroll(box)
+    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('2 new lines')
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
+
+    box.scrollTop = 0
+    await fireEvent.scroll(box)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(3)
+    expect(screen.queryByTestId('device-logs-new')).toBeNull()
+  })
+
+  it('drops held lines and disconnects the observer when the device changes', async () => {
+    const other = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+    const signals: AbortSignal[] = []
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string, opts) => {
+      if (opts?.signal) signals.push(opts.signal)
+      if (path.includes(other)) return page([entry(9)]) as never
+      return (path.includes('after=') ? page([entry(2)]) : page([entry(1)], { nextBefore: 'c1' })) as never
+    })
+    const view = mount()
+    await settle()
+    const firstObserver = FakeObserver.live()[0]
+    const box = screen.getByTestId('device-logs-scroll')
+    Object.defineProperty(box, 'scrollTop', { value: 50, writable: true, configurable: true })
+    await fireEvent.scroll(box)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.getByTestId('device-logs-new')).toBeInTheDocument()
+
+    await view.rerender({ lfdi: other, devices: DEVICES })
+    await settle()
+    expect(firstObserver.connected).toBe(false)
+    expect(signals[0].aborted).toBe(true)
+    expect(screen.queryByTestId('device-logs-new')).toBeNull()
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
+    expect(screen.getByTestId('device-log-row')).toHaveTextContent('/dcap/9')
+  })
+
+  it('aborts an older read and disconnects the observer when the log unmounts', async () => {
+    const signals: (AbortSignal | undefined)[] = []
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string, opts) => {
+      signals.push(opts?.signal)
+      if (path.includes('before=')) await new Promise(() => {})
+      return page([entry(1)], { nextBefore: 'c1' }) as never
+    })
+    const view = mount()
+    await settle()
+    FakeObserver.live()[0].see()
+    await settle()
+    view.unmount()
+    expect(signals.every((s) => s?.aborted)).toBe(true)
+    expect(FakeObserver.live()).toHaveLength(0)
   })
 
   it('says there is no log yet on 404 and shows the server reason on 503', async () => {
@@ -267,7 +546,7 @@ describe('DeviceLog', () => {
     await settle()
     await vi.advanceTimersByTimeAsync(5000)
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(200)
-    await fireEvent.click(screen.getByTestId('device-logs-older'))
+    FakeObserver.live()[0].see()
     await settle()
     expect(paths.at(-1)).toBe(`/api/device-logs/${LFDI}?limit=200&before=c201`)
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(201)

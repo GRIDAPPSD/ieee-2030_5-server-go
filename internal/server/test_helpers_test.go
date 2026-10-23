@@ -4,6 +4,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -52,5 +53,6 @@ func newTestStores() *server.Stores {
 	}
 	s.ProgramOrigins = origins
 	s.CommitmentLedger = server.NewCommitmentLedger(s)
+	s.EndDeviceDelete = assembly.EndDeviceDeleteHandler(server.NewCoreStores(s), nil)
 	return s
 }

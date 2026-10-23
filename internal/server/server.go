@@ -478,6 +478,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// The deferred Close runs on every exit, after the protocol listener has
 	// drained; the admin listener is drained first only on the shutdown path.
 	coreNotifier := adminplane.AdaptNotifier(notifier)
+	stores.EndDeviceDelete = assembly.EndDeviceDeleteHandler(NewCoreStores(stores), coreNotifier)
 	frNotifier := flowreservation.Notifier(coreNotifier)
 	stores.FlowReservationQueue = newFlowReservationQueue(stores, coreNotifier)
 	defer stores.FlowReservationQueue.Close()

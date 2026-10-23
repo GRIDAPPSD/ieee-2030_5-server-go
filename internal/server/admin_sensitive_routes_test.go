@@ -157,6 +157,11 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/derms/flow-reservations/{edevId}/{frqId}", method: http.MethodGet, path: "/api/derms/flow-reservations/4/frq-1", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/derms/grants", method: http.MethodGet, path: "/api/derms/grants", wantReachedStatus: http.StatusBadRequest},
 		{name: "GET /api/derms/commitments", method: http.MethodGet, path: "/api/derms/commitments", wantReachedStatus: http.StatusBadRequest},
+		// #1120: deleting a device is a write, so it needs a real credential
+		// like every write not on the nonSensitiveAdminWrites list. A
+		// credentialed request for an absent device reaches the handler and
+		// gets its own 404.
+		{name: "DELETE /api/devices/{id}", method: http.MethodDelete, path: "/api/devices/9", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/derms/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/derms/audit", wantReachedStatus: http.StatusNotFound},
 	}
 

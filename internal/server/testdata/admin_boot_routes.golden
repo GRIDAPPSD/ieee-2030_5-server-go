@@ -1,3 +1,4 @@
+    DELETE /api/devices/{id}
     DELETE /api/devices/{id}/der-programs/{derpId}
     DELETE /api/devices/{id}/fsa-assignment
     DELETE /api/fsas/{id}

@@ -195,6 +195,9 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		if !store.IsAbsent(stores.Registrations) {
 			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations, stores.DeviceProfiles, stores.EndDeviceManagers))
 		}
+		if stores.EndDeviceDelete != nil {
+			mountWrite("DELETE /api/devices/{id}", stores.EndDeviceDelete)
+		}
 	}
 
 	// #1032 device profiles: a name and kind per device, off

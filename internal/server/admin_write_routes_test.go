@@ -18,6 +18,7 @@ import (
 // optional service wired. A route added or removed changes this list on
 // purpose, so the coverage below is re-read rather than silently widened.
 var wantAdminWriteRoutes = []string{
+	"DELETE /api/devices/{id}",
 	"DELETE /api/devices/{id}/der-programs/{derpId}",
 	"DELETE /api/devices/{id}/fsa-assignment",
 	"DELETE /api/fsas/{id}",
@@ -71,6 +72,7 @@ var wantAdminBodyTypes = map[string][]string{
 	"PUT /api/fsas/{id}/der-programs/{derpId}":         {"application/json"},
 	"PUT /api/devices/{id}/der-programs/{derpId}":      {"application/json"},
 	"DELETE /api/fsas/{id}/der-programs/{derpId}":      nil,
+	"DELETE /api/devices/{id}":                         nil,
 	"DELETE /api/devices/{id}/der-programs/{derpId}":   nil,
 	"DELETE /api/fsas/{id}":                            nil,
 	"DELETE /api/fsas/{id}/programs":                   nil,

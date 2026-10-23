@@ -760,6 +760,19 @@ func OwnedEndDevices(stores *Stores) store.EndDeviceStore {
 	return ownedEndDevices(stores)
 }
 
+// EndDeviceDeleteHandler is the handler DELETE /edev/{id} serves, for a caller
+// outside this package that must delete a device the same way (the admin
+// plane's device delete): the owned-store cascade, the EndDeviceList
+// notification, then [EndDeviceCleanup]. It reads the device id from the
+// request's "id" path value.
+func EndDeviceDeleteHandler(stores *Stores, notifier ResourceNotifier) http.HandlerFunc {
+	return endDeviceDelete(ownedEndDevices(stores), stores, notifier)
+}
+
+func endDeviceDelete(edevs store.EndDeviceStore, stores *Stores, notifier ResourceNotifier) http.HandlerFunc {
+	return coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores))
+}
+
 func endDeviceAfterNotify(stores *Stores) coreedev.DeleteOption {
 	if fn := EndDeviceCleanup(stores); fn != nil {
 		return coreedev.WithAfterNotify(fn)
@@ -873,7 +886,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix, endDeviceBeforeCreate(stores)))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))
-	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores)))
+	mux.HandleFunc("DELETE /edev/{id}", endDeviceDelete(edevs, stores, notifier))
 
 	// Registration GET handler at /edev/{id}/rg
 	// (GRIDAPPSD/ieee-2030_5-server-go#170).

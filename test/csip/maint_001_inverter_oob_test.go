@@ -26,8 +26,10 @@
 //	                                          -> receiver.Wait(1)
 //	                                          -> GET /edev/{id} -> 404
 //
-// Build-tag: csip_test_hooks is required because Step 2 drives the test-
-// only mutation surface. Untagged builds skip this file entirely.
+// Steps 1 and 3 are shared with the admin-route variant (runMAINT001 in
+// maint_001_admin_delete_test.go). Build-tag: csip_test_hooks is required
+// because Step 2 drives the test-only mutation surface. Untagged builds skip
+// this file entirely.
 //
 // #155 / Phase 6.
 
@@ -36,113 +38,33 @@ package csip_test
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
-)
-
-const (
-	maint001EndDeviceID = "edev-maint001"
 )
 
 // TestMAINT_001_InverterMaintenanceOOB implements CSIP V1.2 section 11.1.
 func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 	t.Parallel()
+	runMAINT001(t, func(ctx context.Context, t *testing.T, srv *csiptest.BootedServer, mgr *coresub.Manager) {
+		// Step 2: OOB delete via the test mutation hook. A 404 here on
+		// an otherwise plumb wire means TestMain didn't set the env or
+		// the build was untagged; both are caught earlier in this file
+		// at the build-tag predicate.
+		status, body := postMutationJSON(t, srv, mutateEdevDeleteOOB, map[string]string{
+			"end_device_id": maint001EndDeviceID,
+		})
+		if status != http.StatusNoContent {
+			t.Fatalf("MAINT-001 Step 2: POST %s status = %d, want 204: %s",
+				mutateEdevDeleteOOB, status, string(body))
+		}
 
-	owner := csiptest.NewDeviceIdentity(t, "MAINT-001-DEVICE")
-	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
-	receiver := csiptest.NewNotificationReceiver(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16, csiptest.AllowLoopbackReceivers())
-	go mgr.Start(ctx)
-
-	// Step 1a: seed EndDevice the OOB mutation will delete.
-	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint001EndDeviceID, owner)
-
-	// Step 1b: aggregator subscribes to /edev (EndDeviceList).
-	sub := sep2.Subscription{
-		SubscribedResource: "/edev",
-		NotificationURI:    receiver.URL(),
-		Encoding:           sep2.EncodingXML,
-	}
-	location := postSubscriptionExpect201(t, srv, maint001EndDeviceID, &sub)
-	if location == "" {
-		t.Fatalf("MAINT-001 Step 1b: empty Location header")
-	}
-
-	// Sanity: Manager's ListByResource("/edev") sees this sub -
-	// otherwise Step 3's Notify would fan out to zero receivers.
-	listed, err := srv.Stores.Subscriptions.ListByResource(ctx, "/edev")
-	if err != nil {
-		t.Fatalf("MAINT-001 Step 1b: ListByResource: %v", err)
-	}
-	if len(listed) != 1 {
-		t.Fatalf("MAINT-001 Step 1b: ListByResource(/edev) returned %d, want 1", len(listed))
-	}
-
-	// Step 2: OOB delete via the test mutation hook. A 404 here on
-	// an otherwise plumb wire means TestMain didn't set the env or
-	// the build was untagged; both are caught earlier in this file
-	// at the build-tag predicate.
-	status, body := postMutationJSON(t, srv, mutateEdevDeleteOOB, map[string]string{
-		"end_device_id": maint001EndDeviceID,
+		// The hook does not emit notifications (its scope is the
+		// authoritative-store rewrite), so the manager fans out the
+		// status 0 Notification from here, the same way #151 layers
+		// Notify on top of the #27 mutation shape. The route variant
+		// asserts the delete itself notifies.
+		mgr.Notify(ctx, "/edev", 0)
 	})
-	if status != http.StatusNoContent {
-		t.Fatalf("MAINT-001 Step 2: POST %s status = %d, want 204: %s",
-			mutateEdevDeleteOOB, status, string(body))
-	}
-
-	// Verify the store actually dropped the device.
-	if _, err := srv.Stores.EndDevices.Get(context.Background(), maint001EndDeviceID); err == nil {
-		t.Errorf("MAINT-001 Step 2: EndDevice %q still present after OOB delete", maint001EndDeviceID)
-	}
-
-	// Step 3a: server fires Notification on /edev. The OOB mutation
-	// handler does not emit notifications (its scope is the
-	// authoritative-store rewrite); the #155 contract layered on
-	// top is to fan out a status 0 Notification from the test, the
-	// same way #151 layers Notify on top of the #27 mutation
-	// shape. The shape under test is the manager + receiver fan-out,
-	// not the bridge from mutation to Notify (that bridge is the
-	// in-band DELETE path's job, exercised in MAINT-002).
-	mgr.Notify(ctx, "/edev", 0)
-
-	got, ok := receiver.Wait(1, 2*time.Second)
-	if !ok {
-		t.Fatalf("MAINT-001 Step 3a: timed out waiting for Notification; received %d, want >=1", len(got))
-	}
-	rec := got[0]
-	if rec.Notification == nil {
-		t.Fatalf("MAINT-001 Step 3a: Notification body did not parse: %q", string(rec.Body))
-	}
-	if rec.Notification.SubscribedResource != "/edev" {
-		t.Errorf("MAINT-001 Step 3a: SubscribedResource = %q, want %q",
-			rec.Notification.SubscribedResource, "/edev")
-	}
-	if rec.Notification.Status != 0 {
-		t.Errorf("MAINT-001 Step 3a: Status = %d, want 0 (Default Status: the list changed)",
-			rec.Notification.Status)
-	}
-
-	// Step 3b: aggregator GETs the deleted href; expect 404.
-	deletedURL := srv.BaseURL + "/edev/" + maint001EndDeviceID
-	getResp := doSubRequest(t, srv, http.MethodGet, deletedURL, "", nil)
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusNotFound {
-		t.Errorf("MAINT-001 Step 3b: GET %s status = %d, want 404", deletedURL, getResp.StatusCode)
-	}
-
-	// Guard against unexpected Location-header echoes that would
-	// confuse a downstream test reading the same response. The
-	// production handler does not emit Location on 404; if a future
-	// regression added one we'd want to know.
-	if loc := getResp.Header.Get("Location"); strings.Contains(loc, maint001EndDeviceID) {
-		t.Errorf("MAINT-001 Step 3b: GET-after-delete returned Location=%q referencing deleted id", loc)
-	}
 }

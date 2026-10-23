@@ -198,6 +198,7 @@
                   }}
                 />
                 <select
+                  class="compact-select narrow"
                   aria-label="Kind of device {deviceLabel(device.lfdi, device.sfdi)}"
                   data-testid="device-kind-select"
                   bind:value={draftKind}
@@ -258,7 +259,7 @@
               {/if}
             </td>
             <td>
-              <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
+              <select class="compact-select narrow" id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
                 <option value="">(pick FSA)</option>
                 {#each fsas as fsa (fsa.mRID)}
                   <option value={'/api/fsas/' + fsa.mRID}>{fsaLabel(fsa.mRID)}</option>
@@ -288,14 +289,3 @@
     <div class="result err" role="alert" data-testid="device-rename-error">{renameError}</div>
   {/if}
 </div>
-
-<style>
-  select {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 2px 4px;
-    font-size: 12px;
-    max-width: 200px;
-  }
-</style>

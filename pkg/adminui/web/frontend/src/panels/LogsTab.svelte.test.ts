@@ -55,8 +55,8 @@ function serve(answer: (path: string, signal?: AbortSignal) => unknown | Promise
 
 const logCalls = (calls: { path: string; signal?: AbortSignal }[]) => calls.filter((c) => c.path.startsWith('/api/device-logs/'))
 
-function mount(ready = true, devices = DEVICES) {
-  return render(LogsTab, { props: { devices, ready } })
+function mount(ready = true, devices = DEVICES, error = '') {
+  return render(LogsTab, { props: { devices, ready, error } })
 }
 
 async function settle() {
@@ -119,6 +119,16 @@ describe('LogsTab', () => {
     await settle()
     expect(screen.queryByTestId('logs-not-found')).toBeNull()
     expect(logCalls(calls)).toHaveLength(1)
+  })
+
+  it('says the device list could not be read, not "not found", when the read failed', async () => {
+    window.history.replaceState({}, '', `/ui/logs?device=${A}`)
+    const calls = serve(() => logPage(A, []))
+    mount(true, [], 'dashboard read failed')
+    await settle()
+    expect(screen.queryByTestId('logs-not-found')).toBeNull()
+    expect(screen.getByTestId('logs-devices-error')).toHaveTextContent('dashboard read failed')
+    expect(logCalls(calls)).toHaveLength(0)
   })
 
   it('aborts the first device and drops its late reply when another device is picked', async () => {

@@ -1,7 +1,6 @@
 <script lang="ts">
-  // The log of one device: its log newest first, from
-  // GET /api/device-logs/{lfdi}. It polls for newer lines every 5 s while it
-  // is mounted, so closing the drawer is what stops the polling.
+  // The log of one device, newest first, from GET /api/device-logs/{lfdi}. It
+  // polls every 5 s while mounted, so leaving the tab stops the polling.
   import { untrack } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import { formatAge } from '../lib/comms'
@@ -156,7 +155,7 @@
     <strong>Logs</strong>
     <label>
       Kind
-      <select bind:value={kind} data-testid="device-logs-kind">
+      <select class="compact-select" bind:value={kind} data-testid="device-logs-kind">
         <option value="all">All</option>
         <option value="request">Requests</option>
         <option value="logevent">Log events</option>
@@ -245,13 +244,5 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  select {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 2px 4px;
-    font-size: 12px;
   }
 </style>

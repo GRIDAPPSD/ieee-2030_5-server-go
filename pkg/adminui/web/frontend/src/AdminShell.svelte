@@ -18,7 +18,7 @@
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
   import type { MintedCert } from './lib/deviceCert'
   import { isSameOriginPath, PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
-  import { currentPath, navigate, replace } from './lib/router'
+  import { currentPath, currentSearch, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
   import ServerInfo from './panels/ServerInfo.svelte'
@@ -104,7 +104,7 @@
     const path = $currentPath
     if (path === '/ui/' || !path.startsWith('/ui/') || !path.endsWith('/')) return
     const slug = path.slice('/ui/'.length, -1)
-    if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}`)
+    if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}${untrack(() => $currentSearch)}`)
   })
 
   // Panel paths normalize the same way, once the panel list is known.
@@ -289,7 +289,7 @@
       <LookupDevice />
       <ManagementPairs devices={data?.devices ?? []} ready={data !== null || probeError !== ''} />
     {:else if activeTab === 'logs'}
-      <LogsTab devices={data?.devices ?? []} ready={data !== null || probeError !== ''} />
+      <LogsTab devices={data?.devices ?? []} ready={data !== null || probeError !== ''} error={dashboardError} />
     {:else if activeTab === 'fsas'}
       <CreateFsa onCreated={refresh} />
       <FsaCatalog {fsas} onChanged={refresh} />

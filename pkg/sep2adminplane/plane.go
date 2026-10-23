@@ -253,9 +253,12 @@ func adminStores(cfg Config, edition handler.SEP2Edition, deadline, grace time.D
 	stores.FlowReservationRetentionGrace = grace
 	// AdaptNotifier is nil for a nil or typed-nil notifier, which would
 	// otherwise panic on the first admin write.
+	var notifier assembly.ResourceNotifier
 	if adminplane.AdaptNotifier(cfg.Notifier) != nil {
 		stores.AdminNotifier = cfg.Notifier
+		notifier = cfg.Notifier
 	}
+	stores.EndDeviceDelete = assembly.EndDeviceDeleteHandler(cfg.Stores, notifier)
 	return stores, nil
 }
 

@@ -1,6 +1,7 @@
 package adminplane
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -174,6 +175,12 @@ type Stores struct {
 	// the same reason as Sep2Edition: BuildAdminRouter's other parameters
 	// are routing and listener knobs.
 	AdminNotifier handler.ResourceNotifier
+
+	// EndDeviceDelete serves DELETE /api/devices/{id}. The caller builds it
+	// with assembly.EndDeviceDeleteHandler over the protocol router's own
+	// stores and notifier, so the admin delete is the protocol DELETE (#1120).
+	// Nil leaves the route unmounted.
+	EndDeviceDelete http.HandlerFunc
 }
 
 // NewCommitmentLedger builds the commitment ledger over s's own stores: the

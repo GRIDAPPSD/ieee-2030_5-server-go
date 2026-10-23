@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -85,7 +86,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores, notifier handl
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /test/mutations/edev-delete-oob", handleEdevDeleteOOB(stores))
+	mux.HandleFunc("POST /test/mutations/edev-delete-oob", handleEdevDeleteOOB(stores, notifier))
 	mux.HandleFunc("POST /test/mutations/derprog-primacy", handleDERProgPrimacy(stores))
 	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores, notifier))
 	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
@@ -138,20 +139,12 @@ type edevDeleteOOBRequest struct {
 	EndDeviceID string `json:"end_device_id"`
 }
 
-// handleEdevDeleteOOB deletes an EndDevice from the server's authoritative
-// store. Unlike the client-driven DELETE /edev/{id}, this is modeled as
-// an out-of-band server-side cleanup: no subscription notification is
-// emitted. Used by CSIP MAINT-001 (OOB delete path).
-//
-// It deletes through assembly.OwnedEndDevices, the chain DELETE /edev/{id}
-// uses, so the device's DERs do not outlive it, and runs the subscription
-// cleanup that keeps the device's own EndDeviceList subscription deliverable:
-// MAINT-001 notifies it after this returns, and the next registration of the
-// index sweeps it (GRIDAPPSD/ieee-2030_5-server-go#1100).
-func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
-	coreStores := NewCoreStores(stores)
-	edevs := assembly.OwnedEndDevices(coreStores)
-	cleanup := assembly.EndDeviceCleanupDeferringNotification(coreStores)
+// handleEdevDeleteOOB deletes an EndDevice out of band through
+// assembly.EndDeviceDeleteHandler, the handler DELETE /edev/{id} and the admin
+// plane's DELETE /api/devices/{id} serve: the cascade, the EndDeviceList
+// notification, then the subscription cleanup. Used by CSIP MAINT-001.
+func handleEdevDeleteOOB(stores *Stores, notifier handler.ResourceNotifier) http.HandlerFunc {
+	del := assembly.EndDeviceDeleteHandler(NewCoreStores(stores), adminplane.AdaptNotifier(notifier))
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req edevDeleteOOBRequest
 		if err := readJSON(r, &req); err != nil {
@@ -162,21 +155,12 @@ func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
 			http.Error(w, "bad request: end_device_id required", http.StatusBadRequest)
 			return
 		}
-		if err := edevs.Delete(r.Context(), req.EndDeviceID); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "end device not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if cleanup != nil {
-			if err := cleanup(r.Context(), req.EndDeviceID); err != nil {
-				http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
+		// The shared handler is a DELETE on /edev/{id}; this hook is a POST
+		// carrying the id in its body.
+		d := r.Clone(r.Context())
+		d.Method = http.MethodDelete
+		d.SetPathValue("id", req.EndDeviceID)
+		del(w, d)
 	}
 }
 

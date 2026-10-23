@@ -1674,10 +1674,10 @@ func TestEdevDeleteOOB_RemovesDERsAndSubscriptions(t *testing.T) {
 	if n, err := stores.DERStatuses.Count(ctx, "e1/1"); err != nil || n != 0 {
 		t.Errorf("DERStatuses under e1/1 = %d, %v, want 0", n, err)
 	}
-	// MAINT-001 notifies the device's own EndDeviceList subscription after
-	// this returns, so it stays until the index is registered again.
-	if recs, err := stores.Subscriptions.ListByResource(ctx, "/edev"); err != nil || len(recs) != 1 {
-		t.Errorf("e1's own EndDeviceList subscription = %d, %v, want 1 (kept for the notification)", len(recs), err)
+	// The hook notifies before it cleans up, so the device's own
+	// subscription is gone with the rest.
+	if recs, err := stores.Subscriptions.ListByResource(ctx, "/edev"); err != nil || len(recs) != 0 {
+		t.Errorf("e1's own EndDeviceList subscription = %d, %v, want 0", len(recs), err)
 	}
 	if recs, err := stores.Subscriptions.ListByResource(ctx, "/edev/e1/der/1/ders"); err != nil || len(recs) != 0 {
 		t.Errorf("e5's subscription on e1's resource = %d, %v, want 0", len(recs), err)

@@ -118,31 +118,3 @@ func TestSubscriptionStore_DeleteDevice_NothingRemovedWritesNoSnapshot(t *testin
 		t.Errorf("snapshot file after a no-op DeleteDevice: stat err = %v, want not-exist", err)
 	}
 }
-
-// DeleteDeviceResources keeps the device's own subscription to a resource
-// outside its tree so a later notification can reach it, and removes the rest.
-func TestSubscriptionStore_DeleteDeviceResources_KeepsOwnListSubscription(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	s := memory.NewSubscriptionStore()
-	for id, sub := range map[string]sep2.Subscription{
-		"ownList": mkSub("/edev/e1/sub/a", "/edev"),
-		"ownDER":  mkSub("/edev/e1/sub/b", "/edev/e1/der/1/ders"),
-		"others":  mkSub("/edev/e5/sub/c", "/edev/e1/der/1/ders"),
-	} {
-		if err := s.Create(ctx, id, sub); err != nil {
-			t.Fatalf("seed %s: %v", id, err)
-		}
-	}
-	if err := s.DeleteDeviceResources(ctx, "e1"); err != nil {
-		t.Fatalf("DeleteDeviceResources: %v", err)
-	}
-	if _, err := s.Get(ctx, "ownList"); err != nil {
-		t.Errorf("the device's EndDeviceList subscription was removed: %v", err)
-	}
-	for _, id := range []string{"ownDER", "others"} {
-		if _, err := s.Get(ctx, id); err == nil {
-			t.Errorf("subscription %s on the device's own tree survived", id)
-		}
-	}
-}

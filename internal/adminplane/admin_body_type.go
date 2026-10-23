@@ -25,6 +25,7 @@ var adminBodyTypes = map[string][]string{
 	"PUT /api/fsas/{id}/der-programs/{derpId}":         {"application/json"},
 	"PUT /api/devices/{id}/der-programs/{derpId}":      {"application/json"},
 	"DELETE /api/fsas/{id}/der-programs/{derpId}":      nil,
+	"DELETE /api/devices/{id}":                         nil,
 	"DELETE /api/devices/{id}/der-programs/{derpId}":   nil,
 	"DELETE /api/fsas/{id}":                            nil,
 	"DELETE /api/fsas/{id}/programs":                   nil,

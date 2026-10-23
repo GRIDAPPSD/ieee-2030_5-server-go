@@ -31,7 +31,8 @@ type Config struct {
 	// under /api/ui/panels. Run registers none.
 	Panels []sep2admin.Panel
 	// StreamsDone, when closed, ends every open panel stream with a final
-	// status event and refuses new ones. Close it before the listener's
+	// status event and refuses new ones, and ends every open dashboard
+	// stream. Close it before the listener's
 	// Shutdown: Shutdown does not cancel request contexts, so an open
 	// stream would otherwise hold it to its deadline.
 	StreamsDone <-chan struct{}
@@ -241,7 +242,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	}
 
 	// #440 management-pair API: who may manage which EndDevice.
-	if mgmtH := newAdminManagementHandler(stores); mgmtH != nil {
+	if mgmtH := newAdminManagementHandler(stores, cfg.Activity); mgmtH != nil {
 		mountWrite("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())
 		authed.HandleFunc("GET /api/management-pairs", mgmtH.HandleListManagementPairs())
 		mountWrite("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())
@@ -260,6 +261,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// fleet membership.
 	if fleetH := newAdminFleetHandler(stores); fleetH != nil {
 		authed.HandleFunc("GET /api/derms/fleets", handler.HandleListFleets(fleetH))
+		authed.HandleFunc("GET /api/derms/power", handler.HandlePower(fleetH, stores.MirrorReadingRetention))
 	}
 
 	// #764 DERMS read API: a fleet's flow reservation requests, their
@@ -331,7 +333,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// Admin dashboard: GET / serves the embedded admin UI, and the SSE and JSON
 	// routes feed it.
 	if stores != nil {
-		dashboard := NewDashboardHandler(stores, cfg.TLSMode).WithActivity(cfg.Activity, cfg.CommsOfflineAfter).WithDeviceColumns(cfg.DeviceColumns...)
+		dashboard := NewDashboardHandler(stores, cfg.TLSMode).WithActivity(cfg.Activity, cfg.CommsOfflineAfter).WithDeviceColumns(cfg.DeviceColumns...).WithStreamsDone(cfg.StreamsDone)
 		dashboard.RegisterRoutes(authed)
 	}
 

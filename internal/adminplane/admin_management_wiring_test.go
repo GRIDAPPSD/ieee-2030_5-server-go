@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -37,7 +38,7 @@ func TestNewAdminManagementHandler_NilStoreIsSilent(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(prevOut) })
 
-	if h := newAdminManagementHandler(&Stores{}); h != nil {
+	if h := newAdminManagementHandler(&Stores{}, nil); h != nil {
 		t.Fatalf("newAdminManagementHandler(nil EndDeviceManagers) = %v, want nil", h)
 	}
 	if buf.Len() != 0 {
@@ -57,7 +58,7 @@ func TestNewAdminManagementHandler_WrongConcreteTypeLogsOnce(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(prevOut) })
 
-	h := newAdminManagementHandler(&Stores{EndDeviceManagers: fakeManagementStore{}})
+	h := newAdminManagementHandler(&Stores{EndDeviceManagers: fakeManagementStore{}}, nil)
 	if h != nil {
 		t.Fatalf("newAdminManagementHandler(wrong concrete type) = %v, want nil", h)
 	}
@@ -76,11 +77,29 @@ func TestNewAdminManagementHandler_ConcreteTypeIsSilent(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(prevOut) })
 
-	h := newAdminManagementHandler(&Stores{EndDeviceManagers: memory.NewEndDeviceManagementStore()})
+	h := newAdminManagementHandler(&Stores{EndDeviceManagers: memory.NewEndDeviceManagementStore()}, nil)
 	if h == nil {
 		t.Fatal("newAdminManagementHandler(concrete type) = nil, want a handler")
 	}
 	if buf.Len() != 0 {
 		t.Errorf("log output = %q, want none: the production wiring shape must not log", buf.String())
+	}
+}
+
+// TestNewAdminManagementHandler_WiresRecordAndActivity pins that the pair
+// listing reads the same EndDevice store and activity recorder the rest of
+// the plane holds (#1087); without them it would report no health at all.
+func TestNewAdminManagementHandler_WiresRecordAndActivity(t *testing.T) {
+	devs := memory.NewEndDeviceStore()
+	rec := activity.New()
+	h := newAdminManagementHandler(&Stores{EndDeviceManagers: memory.NewEndDeviceManagementStore(), EndDevices: devs}, rec)
+	if h == nil {
+		t.Fatal("newAdminManagementHandler = nil, want a handler")
+	}
+	if h.EndDevices != store.EndDeviceReader(devs) {
+		t.Errorf("EndDevices = %v, want the Stores.EndDevices value", h.EndDevices)
+	}
+	if h.Activity != rec {
+		t.Errorf("Activity = %p, want the recorder passed in (%p)", h.Activity, rec)
 	}
 }

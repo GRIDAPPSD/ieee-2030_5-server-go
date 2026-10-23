@@ -59,6 +59,42 @@ func CurrentManagerOwns(ctx context.Context, managers store.EndDeviceManagementR
 	return OwnedBy(manager, caller), nil
 }
 
+// RecordState classifies the answer of [RecordFor].
+type RecordState int
+
+const (
+	// RecordMissing: no EndDevice has the LFDI.
+	RecordMissing RecordState = iota
+	// RecordPresent: a record was found whose stored LFDI equals the one asked
+	// for, by [OwnedBy].
+	RecordPresent
+	// RecordMismatched: the LFDI index returned a record that stores a
+	// different LFDI. It grants nothing.
+	RecordMismatched
+)
+
+// RecordFor looks up the EndDevice for lfdi and says whether it is really
+// that device's record. It is the one definition of "a managed device has a
+// record" shared by GET /edev and the /mup delegation rule, so a pair alone
+// grants nothing in either place.
+//
+// The record is returned for RecordPresent and RecordMismatched so a caller
+// can log what it found. A store failure other than a miss is returned as err
+// and no state is meaningful, so a caller can answer 500 rather than treat an
+// outage as a missing record.
+func RecordFor(ctx context.Context, devices store.EndDeviceReader, lfdi string) (sep2.EndDevice, RecordState, error) {
+	dev, err := devices.GetByLFDI(ctx, lfdi)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return sep2.EndDevice{}, RecordMissing, nil
+	case err != nil:
+		return sep2.EndDevice{}, RecordMissing, fmt.Errorf("look up an EndDevice by LFDI: %w", err)
+	case !OwnedBy(dev.LFDI, lfdi):
+		return dev, RecordMismatched, nil
+	}
+	return dev, RecordPresent, nil
+}
+
 // HandleEndDeviceListForCaller returns a handler for GET /edev that lists the
 // requesting certificate's own EndDevice and every EndDevice it manages.
 //
@@ -163,16 +199,17 @@ func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDe
 	var devices []listedDevice
 	for i, lfdi := range lfdis {
 		noRecord := "no-record:" + lfdi
-		dev, err := s.GetByLFDI(r.Context(), lfdi)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
+		dev, state, err := RecordFor(r.Context(), s, lfdi)
+		if err != nil {
+			return nil, err
+		}
+		switch state {
+		case RecordMissing:
 			if i > 0 {
 				reported.printf(noRecord, "enddevice: %s: managed LFDI %s has no EndDevice record; not listed", srverr.Route(r), lfdi)
 			}
 			continue
-		case err != nil:
-			return nil, fmt.Errorf("look up an EndDevice by LFDI: %w", err)
-		case !OwnedBy(dev.LFDI, lfdi):
+		case RecordMismatched:
 			// An index that drifted from its records lists nothing rather
 			// than another device.
 			key, _ := strings.CutPrefix(dev.Href, "/edev/")

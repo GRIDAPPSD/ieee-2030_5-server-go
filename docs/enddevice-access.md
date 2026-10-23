@@ -65,6 +65,16 @@ A manager may not:
 A write pattern added to the route table later is refused by default until
 an entry naming it, with its source, is added here and to the gate.
 
+## Mirroring for a managed device
+
+A `/mup` route admits a manager acting for a managed device only when that
+device also has an EndDevice record, the same pair-plus-record rule `GET /edev`
+applies. A pair whose managed LFDI has no record is refused with 403, and the
+refusal log line names the reason `managed-device-unregistered` on every
+`/mup` route. A device mirroring for itself needs no record. An embedder gets
+the check by passing `metering.RequireDeviceRecords(endDevices)` as an option
+to each of the `/mup` handlers; without it a pair alone admits the manager.
+
 ## GET /edev and PUT /edev/{id}
 
 `GET /edev` lists the caller's own EndDevice and every EndDevice it manages,
@@ -179,6 +189,22 @@ configured, and staying pure in-memory otherwise.
   already manages other devices, `RekeyManaged` when the new managed LFDI
   already has a manager): a rekey never silently merges two fleets or
   overwrites an existing pair.
+- A certificate rotation is refused, never followed (#1087). A rotated
+  certificate presents an LFDI no pair names, and IEEE 2030.5 gives the
+  server no way to tell a rotation from another holder of a valid
+  certificate claiming the old device's grant. That caller is an ordinary
+  device: every delegated route answers 403 with the fixed `forbidden` body,
+  and the denial log line names the caller and `reason=not-owner-or-manager`.
+  A pair moves only when an operator rekeys it. After a manager rekey the
+  new LFDI holds the grant and the old one loses it on the next request.
+  After a managed-side rekey the pair names the new LFDI, which has no
+  record, so the manager loses the record; the old certificate still owns
+  its own record, because the record keeps the old LFDI.
+  `GET /api/management-pairs` shows the signal: each LFDI in the answer
+  carries `hasRecord` (an EndDevice record exists for it; omitted when the
+  handler has no EndDevice reader) and `lastSeen` (RFC 3339 UTC time of its
+  last request since the server started, or null). A manager that is quiet
+  while an unpaired LFDI starts connecting is the rotation to rekey.
 - A write is durable before it is live: a create, remove, or rekey writes
   the candidate snapshot to disk first, and only then updates the in-memory
   pairs. A write reported as failed is therefore never granting access in

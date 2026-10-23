@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/ssedeadline"
 )
 
 // sseWriteDeadlineExtension and sseHeartbeatInterval are package vars, not
@@ -104,9 +106,7 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
-		s.logSSEDeadlineErr(err)
-	}
+	ssedeadline.Extend(rc, sseWriteDeadlineExtension, s.logSSEDeadlineErr)
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -168,9 +168,7 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-ticker.C:
-			if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
-				s.logSSEDeadlineErr(err)
-			}
+			ssedeadline.Extend(rc, sseWriteDeadlineExtension, s.logSSEDeadlineErr)
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
@@ -260,9 +258,7 @@ func parseResume(r *http.Request, epoch uint64) (*resumePoint, error) {
 // the stream resumes on Seq instead of the exchange id carried in the
 // JSON body's own "id" field.
 func (s *Store) writeSSEEvent(w http.ResponseWriter, rc *http.ResponseController, flusher http.Flusher, sum Summary) bool {
-	if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
-		s.logSSEDeadlineErr(err)
-	}
+	ssedeadline.Extend(rc, sseWriteDeadlineExtension, s.logSSEDeadlineErr)
 	body, err := json.Marshal(toSummaryJSON(sum))
 	if err != nil {
 		return true // a marshal failure is not a connection failure; skip this event and keep the stream open

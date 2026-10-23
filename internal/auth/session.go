@@ -29,6 +29,9 @@ type SessionStore struct {
 	sessions map[string]session
 	idle     time.Duration
 	absolute time.Duration
+	// now is the only place the store reads time; tests replace it so expiry
+	// is decided by a stepped clock rather than by how loaded the host is.
+	now func() time.Time
 }
 
 type session struct {
@@ -49,6 +52,7 @@ func NewSessionStore(idle, absolute time.Duration) *SessionStore {
 		sessions: make(map[string]session),
 		idle:     idle,
 		absolute: absolute,
+		now:      time.Now,
 	}
 }
 
@@ -61,7 +65,7 @@ func (s *SessionStore) Issue() (string, error) {
 		return "", err
 	}
 
-	now := time.Now()
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.purgeExpiredLocked(now)
@@ -97,7 +101,7 @@ func (s *SessionStore) Validate(id string) bool {
 	if id == "" {
 		return false
 	}
-	now := time.Now()
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

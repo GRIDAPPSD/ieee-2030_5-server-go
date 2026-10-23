@@ -3,7 +3,9 @@ package handler
 import (
 	"cmp"
 	"container/heap"
+	"math"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -459,7 +461,27 @@ func resolveSeries(spans []powerSpan) []piece {
 // its instantaneous one otherwise; phases never overlap, so mixing qualifiers
 // cannot double count. It covers a second only when every phase does: a
 // dropped phase uncovers the second and is never read as 0 W.
+//
+// integrate is the one-bucket case of integrateBuckets.
 func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float64, covered int64, used []powerSpan) {
+	sums, used := integrateBuckets(spans, seen, []int64{math.MinInt64, math.MaxInt64})
+	return sums[0].wattSeconds, sums[0].covered, used
+}
+
+// bucketSum is the energy and covered time integrateBuckets finds in one bucket.
+type bucketSum struct {
+	wattSeconds float64
+	covered     int64
+}
+
+// integrateBuckets is integrate over consecutive buckets: bucket k is
+// [bounds[k], bounds[k+1]) and bounds is ascending with at least two entries.
+// Each second is valued once by the path integrate describes, and credited to
+// the bucket holding it; seconds outside every bucket are dropped. A bucket
+// with no covered second has zero covered and is a gap, never 0 W. used holds
+// the spans that valued a second inside some bucket.
+func integrateBuckets(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int64) (sums []bucketSum, used []powerSpan) {
+	sums = make([]bucketSum, len(bounds)-1)
 	type edge struct {
 		at    int64
 		leg   leg
@@ -505,17 +527,24 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 		if len(path) == 0 {
 			continue
 		}
-		seconds := edges[i].at - x
-		covered += seconds
-		for _, sp := range path {
-			wattSeconds += sp.watts * float64(seconds)
-			if !usedOrder[sp.order] {
-				usedOrder[sp.order] = true
-				used = append(used, sp)
+		end := edges[i].at
+		// First bucket ending after x; later ones follow while they start before end.
+		for k := sort.Search(len(sums), func(k int) bool { return bounds[k+1] > x }); k < len(sums) && bounds[k] < end; k++ {
+			seconds := min(end, bounds[k+1]) - max(x, bounds[k])
+			if seconds <= 0 {
+				continue
+			}
+			sums[k].covered += seconds
+			for _, sp := range path {
+				sums[k].wattSeconds += sp.watts * float64(seconds)
+				if !usedOrder[sp.order] {
+					usedOrder[sp.order] = true
+					used = append(used, sp)
+				}
 			}
 		}
 	}
-	return wattSeconds, covered, used
+	return sums, used
 }
 
 func boolInt(b bool) int {

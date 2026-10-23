@@ -292,3 +292,86 @@ func TestChartPointsAreNotRows(t *testing.T) {
 		t.Fatalf("RowCount = %d, want 6: 2 table rows and 4 definition entries, no chart points", got)
 	}
 }
+
+// chartBodyJSON returns the body of chart section i from an encoded
+// Descriptor, as the bytes the encoder wrote.
+func chartBodyJSON(t *testing.T, descriptor []byte, i int) []byte {
+	t.Helper()
+	var got struct {
+		Sections []struct {
+			Body json.RawMessage `json:"body"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(descriptor, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	return got.Sections[i].Body
+}
+
+// TestMarshalChartMatchesDescriptorSection requires the exported encoder
+// to write, for each accepted shared case, exactly the body a Descriptor
+// carries, and to refuse each refused chart with the Descriptor's error.
+func TestMarshalChartMatchesDescriptorSection(t *testing.T) {
+	raw, err := os.ReadFile("testdata/chart_cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Cases []chartCase `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	accepted, refused := 0, 0
+	for _, c := range doc.Cases {
+		if c.RendererOnly {
+			continue
+		}
+		t.Run(c.Name, func(t *testing.T) {
+			d := chartCaseDescriptor(t, c)
+			whole, werr := json.Marshal(d)
+			for i, s := range d.Sections {
+				got, err := MarshalChart(s.Body.chart)
+				if c.Refusal == "" {
+					if err != nil {
+						t.Fatalf("section %d: MarshalChart: %v, want accepted", i, err)
+					}
+					if want := chartBodyJSON(t, whole, i); !bytes.Equal(got, want) {
+						t.Fatalf("section %d: MarshalChart = %s, want %s", i, got, want)
+					}
+					accepted++
+				}
+			}
+			if c.Refusal == "" {
+				if werr != nil {
+					t.Fatalf("Marshal: %v", werr)
+				}
+				return
+			}
+			want := chartRefusals[c.Refusal]
+			if want == nil || !errors.Is(werr, want) {
+				t.Fatalf("Descriptor Marshal = %v, want %v", werr, want)
+			}
+			// The per-Descriptor caps (sections, summed points) need several
+			// sections; a single chart is refused only for its own faults.
+			for _, s := range d.Sections {
+				if _, err := MarshalChart(s.Body.chart); err != nil {
+					if !errors.Is(err, want) {
+						t.Fatalf("MarshalChart = %v, want %v", err, want)
+					}
+					refused++
+				}
+			}
+		})
+	}
+	if accepted == 0 || refused == 0 {
+		t.Fatalf("exercised %d accepted and %d refused charts; want both nonzero", accepted, refused)
+	}
+}
+
+func TestMarshalChartRefusesWithNilBytes(t *testing.T) {
+	b, err := MarshalChart(ChartBody{Series: []ChartSeries{{Name: ""}}})
+	if !errors.Is(err, ErrChartSeriesNoName) || b != nil {
+		t.Fatalf("MarshalChart = %d bytes, %v; want nil bytes and %v", len(b), err, ErrChartSeriesNoName)
+	}
+}

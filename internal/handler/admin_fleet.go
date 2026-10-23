@@ -241,13 +241,10 @@ func HandleListFleets(h *AdminFleetHandler) http.HandlerFunc {
 // buildFleet assembles one aggregator's fleet: its own EndDevice plus every
 // device it manages (design doc: a fleet is keyed by the aggregator's LFDI).
 func (h *AdminFleetHandler) buildFleet(ctx context.Context, aggregatorLFDI string) (Fleet, error) {
-	managed, err := h.Managers.ManagedBy(ctx, aggregatorLFDI)
+	memberLFDIs, err := fleetMembers(ctx, h.Managers, aggregatorLFDI)
 	if err != nil {
-		return Fleet{}, fmt.Errorf("ManagedBy(%q): %w", aggregatorLFDI, err)
+		return Fleet{}, err
 	}
-	memberLFDIs := make([]string, 0, len(managed)+1)
-	memberLFDIs = append(memberLFDIs, aggregatorLFDI)
-	memberLFDIs = append(memberLFDIs, managed...)
 
 	devices := make([]FleetDevice, 0, len(memberLFDIs))
 	now := nowUnix()
@@ -262,6 +259,19 @@ func (h *AdminFleetHandler) buildFleet(ctx context.Context, aggregatorLFDI strin
 	}
 
 	return Fleet{AggregatorLFDI: aggregatorLFDI, Devices: devices, Rollup: rollup}, nil
+}
+
+// fleetMembers is the aggregator's own LFDI followed by every device the
+// management pairs store says it manages: the one definition of fleet
+// membership, shared by the fleets and power routes.
+func fleetMembers(ctx context.Context, managers fleetManagerReader, aggregatorLFDI string) ([]string, error) {
+	managed, err := managers.ManagedBy(ctx, aggregatorLFDI)
+	if err != nil {
+		return nil, fmt.Errorf("ManagedBy(%q): %w", aggregatorLFDI, err)
+	}
+	members := make([]string, 0, len(managed)+1)
+	members = append(members, aggregatorLFDI)
+	return append(members, managed...), nil
 }
 
 // nowUnix is a var so a test can pin the clock without threading time
@@ -442,9 +452,12 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 // deviceMirror is one MirrorUsagePoint attributed to a device, with its
 // inline and out-of-band readings gathered and their ReadingType inherited.
 type deviceMirror struct {
-	isDER    bool
-	postRate *uint32
-	readings []sep2.MirrorMeterReading
+	// deviceLFDI is the mirror's stored DeviceLFDI in canonical form, or as
+	// stored when it is not 40 hex digits.
+	deviceLFDI string
+	isDER      bool
+	postRate   *uint32
+	readings   []sep2.MirrorMeterReading
 }
 
 // mirrorReadingsFor gathers every mirror whose stored deviceLFDI satisfies
@@ -483,7 +496,7 @@ func mirrorReadingsFor(ctx context.Context, logPrefix string, mups store.Resourc
 			readings = append(readings, page.Items...)
 		}
 		inheritReadingTypeByMRID(readings)
-		out = append(out, deviceMirror{isDER: mup.RoleFlags&roleFlagIsDER != 0, postRate: mup.PostRate, readings: readings})
+		out = append(out, deviceMirror{deviceLFDI: canonicalLFDI(mup.DeviceLFDI), isDER: mup.RoleFlags&roleFlagIsDER != 0, postRate: mup.PostRate, readings: readings})
 	}
 	return out, nil
 }

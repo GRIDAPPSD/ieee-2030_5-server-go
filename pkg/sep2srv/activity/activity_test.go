@@ -141,3 +141,21 @@ func TestLastTimeNeverGoesBackwards(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestLastRFC3339(t *testing.T) {
+	t.Parallel()
+	local := time.FixedZone("x", 3*3600)
+	at := time.Date(2026, 10, 23, 12, 30, 5, 0, local)
+	r := activity.NewWithClock(func() time.Time { return at })
+	r.Record("AB")
+	if got := r.LastRFC3339("ab"); got == nil || *got != "2026-10-23T09:30:05Z" {
+		t.Errorf("LastRFC3339(seen, any case) = %v, want 2026-10-23T09:30:05Z (UTC)", got)
+	}
+	if got := r.LastRFC3339("CD"); got != nil {
+		t.Errorf("LastRFC3339(unseen) = %q, want nil", *got)
+	}
+	var nilRec *activity.Recorder
+	if got := nilRec.LastRFC3339("AB"); got != nil {
+		t.Errorf("LastRFC3339 on a nil Recorder = %q, want nil", *got)
+	}
+}

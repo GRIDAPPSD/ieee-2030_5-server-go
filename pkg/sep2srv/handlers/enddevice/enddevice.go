@@ -13,10 +13,15 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	lfdiform "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -47,10 +52,29 @@ const deviceSFDIConflictMessage = "device SFDI conflict"
 // semantics into this 409 path.
 const conflictLogPrefix = "sep2srv: 409 on "
 
+// deviceLFDIConflictMessage is the client-visible body for the 409 answered
+// when a manager's POST names an LFDI that a stored record already holds in a
+// different letter case.
+const deviceLFDIConflictMessage = "device LFDI conflict"
+
+// notManagedMessage is the client-visible body for the 403 answered when a
+// POST names an lFDI other than the caller's that the caller does not manage,
+// or when in-band management is switched off.
+const notManagedMessage = "lFDI is not managed by this certificate"
+
+// inBandOffMessage is the client-visible body for the 403 answered when the
+// server option refuses manager registration, so a real manager can tell it
+// from a missing pair.
+const inBandOffMessage = "in-band management is off"
+
+// managedLogPrefix begins the line logged for each manager-registered device,
+// naming the caller and the managed LFDI so the add is attributable.
+const managedLogPrefix = "sep2srv: manager registered a managed device: "
+
 // logConflict records that a POST /edev was refused, naming the route and
 // the kind of conflict, and nothing about either identity involved.
 func logConflict(r *http.Request, kind string) {
-	log.Printf("%s%s: %s", conflictLogPrefix, srverr.Route(r), kind)
+	log.Printf("%s%s: %s", conflictLogPrefix, logsafe.Str(srverr.Route(r)), logsafe.Str(kind))
 }
 
 // ResourceNotifier dispatches subscription notifications for a resource
@@ -184,6 +208,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 	if store.IsAbsent(idx) {
 		panic("enddevice: HandleCreateEndDevice: idx (EndDeviceIndexer) must not be nil")
 	}
+	var mu sync.Mutex
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -210,12 +235,55 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 			}
 		}
 
-		// Override identity from cert (never trust client-supplied SFDI/LFDI)
+		// Resolve whose identity the record carries. It is the certificate's
+		// unless the caller is the manager of the lFDI the body names.
+		target, ok := resolveTarget(w, r, &cfg, dev, lfdi, sfdi)
+		if !ok {
+			return
+		}
+		callerLFDI := lfdi
+		managed := target.lfdi != callerLFDI
+		lfdi, sfdi = target.lfdi, target.sfdi
+
+		// Never trust a client-supplied SFDI/LFDI beyond what resolveTarget
+		// accepted.
 		dev.SFDI = sfdi
 		dev.LFDI = lfdi
 		dev.ChangedTime = time.Now().Unix()
 		enabled := true
 		dev.Enabled = &enabled
+
+		// The checks below and the Create at the end are one step: two
+		// concurrent POSTs for colliding identities would otherwise both pass
+		// the lookups and both create. The store enforces uniqueness on the id
+		// only, and changing that would change every other writer of the
+		// store (admin creates, boot seeding), so the handler serializes its
+		// own check-and-create. The lock is released before the response is
+		// written.
+		mu.Lock()
+		unlock := sync.OnceFunc(mu.Unlock)
+		defer unlock()
+
+		// A minted record must not duplicate or shadow an LFDI the store
+		// already holds, whatever its SFDI or letter case: the same LFDI
+		// returns the record, another case of it is someone else's.
+		if managed {
+			held, exact, found, err := findByLFDIFold(r.Context(), s, lfdi)
+			switch {
+			case err != nil:
+				srverr.Internal(w, r, fmt.Errorf("the registration lookup by LFDI failed, so no device was provisioned: %w", err))
+				return
+			case found && exact:
+				unlock()
+				w.Header().Set("Location", held.Href)
+				encoding.WriteXML(w, http.StatusOK, &held)
+				return
+			case found:
+				logConflict(r, "lfdi conflict")
+				http.Error(w, deviceLFDIConflictMessage, http.StatusConflict)
+				return
+			}
+		}
 
 		// Check if already registered.
 		//
@@ -242,6 +310,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 				return
 			}
 			// Already exists under this identity: return 200 with existing device
+			unlock()
 			w.Header().Set("Location", existing.Href)
 			encoding.WriteXML(w, http.StatusOK, &existing)
 			return
@@ -307,6 +376,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 				}
 				// Same identity raced its own registration: serve the record
 				// it already has.
+				unlock()
 				w.Header().Set("Location", existing.Href)
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return
@@ -328,9 +398,129 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 			return
 		}
 
+		if managed {
+			log.Printf("%s%s: caller %s, managed %s", managedLogPrefix, logsafe.Str(srverr.Route(r)), logsafe.Str(callerLFDI), logsafe.Str(lfdi))
+		}
+
+		unlock()
 		w.Header().Set("Location", created.Href)
 		encoding.WriteXML(w, http.StatusCreated, &created)
 	}
+}
+
+// ResolveClaimedLFDI canonicalizes a client-claimed LFDI (a MirrorUsagePoint
+// deviceLFDI or an EndDevice lFDI), or falls back to fallback when the client
+// left it absent. It is the one owner of that rule: POST /edev and the /mup
+// handlers both call it.
+//
+// raw is trimmed of surrounding whitespace before anything else. sep.xsd
+// types deviceLFDI as xs:hexBinary, whose whiteSpace facet is "collapse":
+// leading and trailing whitespace is stripped before the value is compared,
+// so " 00AABB...\n" is schema-valid and names the same value as
+// "00AABB...". Go's encoding/xml has no XSD facet awareness and hands back
+// the text node verbatim, so this server has to apply the facet itself
+// rather than refuse a document the standard accepts.
+//
+// IEEE 2030.5-2023 UsagePointBase.deviceLFDI SHALL be present when mirroring
+// (extraction line 12584-12585), but tolerating absence keeps every existing
+// client that posts only an mRID working: absence is not itself malformed. A
+// claim that is whitespace only collapses to empty under the same facet, so
+// it is treated exactly like an absent element, not like a malformed one.
+//
+// ok is false when the trimmed claim is non-empty but cannot be a valid
+// HexBinary160 value (see lfdiform.CanonicalPadded); the caller answers 400 in
+// that case, never a silent fallback to fallback, because a malformed claim
+// is a client error, not an absent one.
+func ResolveClaimedLFDI(raw, fallback string) (device string, ok bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback, true
+	}
+	return lfdiform.CanonicalPadded(trimmed)
+}
+
+// createTarget is the identity a POST /edev record is stored under.
+type createTarget struct{ lfdi, sfdi string }
+
+// resolveTarget decides whose identity a POST /edev stores, and answers the
+// refusal itself when there is none. A body with no lFDI, or one that names
+// the caller's own LFDI once resolved by ResolveClaimedLFDI, registers the
+// caller as it always has. Any other canonical lFDI is accepted only when the
+// caller is its current manager (CurrentManagerOwns) and in-band management is
+// on; the sFDI is then derived, and a body sFDI that differs from the derived
+// one is refused rather than stored.
+func resolveTarget(w http.ResponseWriter, r *http.Request, cfg *createConfig, dev sep2.EndDevice, callerLFDI, callerSFDI string) (createTarget, bool) {
+	self := createTarget{callerLFDI, callerSFDI}
+	claimed, ok := ResolveClaimedLFDI(dev.LFDI, callerLFDI)
+	if !ok {
+		cfg.refuse(w, r, callerLFDI, http.StatusBadRequest, "invalid-lfdi", "invalid lFDI")
+		return createTarget{}, false
+	}
+	if claimed == callerLFDI {
+		return self, true
+	}
+	manages := false
+	if !cfg.inBandOff && !store.IsAbsent(cfg.managers) {
+		var err error
+		manages, err = CurrentManagerOwns(r.Context(), cfg.managers, claimed, callerLFDI)
+		if err != nil {
+			srverr.Internal(w, r, fmt.Errorf("the management lookup failed, so no device was provisioned: %w", err))
+			return createTarget{}, false
+		}
+	}
+	if !manages {
+		if cfg.inBandOff {
+			cfg.refuse(w, r, callerLFDI, http.StatusForbidden, "in-band-off", inBandOffMessage)
+		} else {
+			cfg.refuse(w, r, callerLFDI, http.StatusForbidden, "not-manager", notManagedMessage)
+		}
+		return createTarget{}, false
+	}
+	derived, err := sep2tls.SFDIFromLFDI(claimed)
+	if err != nil {
+		cfg.refuse(w, r, callerLFDI, http.StatusBadRequest, "invalid-lfdi", "invalid lFDI")
+		return createTarget{}, false
+	}
+	if dev.SFDI != "" && dev.SFDI != derived {
+		cfg.refuse(w, r, callerLFDI, http.StatusBadRequest, "sfdi-mismatch", "sFDI does not match the lFDI")
+		return createTarget{}, false
+	}
+	return createTarget{claimed, derived}, true
+}
+
+// refuse answers a POST /edev refusal and reports it to the bounded refusal
+// log when one is wired; the same limiter that bounds the ownership gate's
+// denial lines then bounds these.
+func (c *createConfig) refuse(w http.ResponseWriter, r *http.Request, caller string, status int, reason, msg string) {
+	if c.refusals != nil {
+		c.refusals(r, caller, reason)
+	}
+	http.Error(w, msg, status)
+}
+
+// findByLFDIFold looks for a record whose LFDI equals lfdi ignoring case. It
+// reports the record and whether its LFDI is exactly lfdi. The exact index is
+// tried first, then the whole list is scanned, because the store indexes only
+// the exact string and a record added by an operator or an older version may
+// hold any letter case.
+func findByLFDIFold(ctx context.Context, s store.EndDeviceReader, lfdi string) (found sep2.EndDevice, exact, ok bool, err error) {
+	dev, state, err := RecordFor(ctx, s, lfdi)
+	if err != nil {
+		return sep2.EndDevice{}, false, false, err
+	}
+	if state == RecordPresent {
+		return dev, true, true, nil
+	}
+	all, err := s.List(ctx, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return sep2.EndDevice{}, false, false, err
+	}
+	for _, d := range all.Items {
+		if strings.EqualFold(d.LFDI, lfdi) {
+			return d, d.LFDI == lfdi, true, nil
+		}
+	}
+	return sep2.EndDevice{}, false, false, nil
 }
 
 // HandleUpdateEndDevice returns a handler for PUT /edev/{id}.
@@ -399,6 +589,30 @@ type CreateOption func(*createConfig)
 
 type createConfig struct {
 	beforeCreate func(ctx context.Context, id string) error
+	managers     store.EndDeviceManagementReader
+	inBandOff    bool
+	refusals     func(r *http.Request, caller, reason string)
+}
+
+// WithRefusalLog sends each 403 and 400 a POST /edev refuses on the caller's
+// identity claim to fn, with the caller's LFDI and a short reason. fn owns the
+// bounding of what it writes; without it these refusals are answered and not
+// logged.
+func WithRefusalLog(fn func(r *http.Request, caller, reason string)) CreateOption {
+	return func(c *createConfig) { c.refusals = fn }
+}
+
+// WithManagers lets a caller register the EndDevices it manages: a POST whose
+// body names another lFDI is accepted when managers says the caller is that
+// LFDI's current manager. Without it, such a POST answers 403.
+func WithManagers(managers store.EndDeviceManagementReader) CreateOption {
+	return func(c *createConfig) { c.managers = managers }
+}
+
+// WithInBandManagementOff refuses every manager registration with 403, the
+// server option that leaves device registration to the device or an operator.
+func WithInBandManagementOff() CreateOption {
+	return func(c *createConfig) { c.inBandOff = true }
 }
 
 // WithBeforeCreate runs fn with the allocated id just before a new device is

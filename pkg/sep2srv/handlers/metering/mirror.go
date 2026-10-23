@@ -22,7 +22,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
-	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -421,35 +420,6 @@ func MirrorHref(id string) string {
 	return "/mup/" + id
 }
 
-// resolveMirroredDevice canonicalizes a client-claimed deviceLFDI, or falls
-// back to fallback when the client left it absent.
-//
-// raw is trimmed of surrounding whitespace before anything else. sep.xsd
-// types deviceLFDI as xs:hexBinary, whose whiteSpace facet is "collapse":
-// leading and trailing whitespace is stripped before the value is compared,
-// so " 00AABB...\n" is schema-valid and names the same value as
-// "00AABB...". Go's encoding/xml has no XSD facet awareness and hands back
-// the text node verbatim, so this server has to apply the facet itself
-// rather than refuse a document the standard accepts.
-//
-// IEEE 2030.5-2023 UsagePointBase.deviceLFDI SHALL be present when mirroring
-// (extraction line 12584-12585), but tolerating absence keeps every existing
-// client that posts only an mRID working: absence is not itself malformed. A
-// claim that is whitespace only collapses to empty under the same facet, so
-// it is treated exactly like an absent element, not like a malformed one.
-//
-// ok is false when the trimmed claim is non-empty but cannot be a valid
-// HexBinary160 value (see sep2lfdi.CanonicalPadded); the caller answers 400 in
-// that case, never a silent fallback to fallback, because a malformed claim
-// is a client error, not an absent one.
-func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return fallback, true
-	}
-	return sep2lfdi.CanonicalPadded(trimmed)
-}
-
 // mirrorDecision is the outcome of a mirrorActor check.
 type mirrorDecision int
 
@@ -752,7 +722,7 @@ func (d *mirrorDenialLog) closeExpiredLocked(now time.Time) string {
 // means the caller itself; present must be valid HexBinary160 hex (400
 // otherwise) and is canonicalized to upper case before any comparison. The
 // caller must be D or D's current manager, or the request is refused with 403
-// and nothing is stored; see resolveMirroredDevice and newMirrorActor.
+// and nothing is stored; see coreedev.ResolveClaimedLFDI and newMirrorActor.
 //
 // The created resource's id is derived from D and the client's mRID together
 // (see MirrorStoreID), so two distinct devices posting the same mRID (whether
@@ -825,7 +795,7 @@ func HandleCreateMirrorUsagePoint(
 		// hex and claimable by the caller (itself, or a device it currently
 		// manages), or the request is refused before anything is derived or
 		// stored.
-		device, ok := resolveMirroredDevice(mup.DeviceLFDI, lfdi)
+		device, ok := coreedev.ResolveClaimedLFDI(mup.DeviceLFDI, lfdi)
 		if !ok {
 			http.Error(w, "MirrorUsagePoint deviceLFDI is not a valid HexBinary160", http.StatusBadRequest)
 			return
@@ -1102,7 +1072,7 @@ func HandlePutMirrorUsagePoint(
 		// #720: deviceLFDI absent on a PUT defaults to the STORED device, not
 		// the caller, so a manager PUTting a managed device's mirror does not
 		// accidentally reassign it to itself. Present must still be valid hex.
-		device, ok := resolveMirroredDevice(mup.DeviceLFDI, storedMup.DeviceLFDI)
+		device, ok := coreedev.ResolveClaimedLFDI(mup.DeviceLFDI, storedMup.DeviceLFDI)
 		if !ok {
 			http.Error(w, "MirrorUsagePoint deviceLFDI is not a valid HexBinary160", http.StatusBadRequest)
 			return

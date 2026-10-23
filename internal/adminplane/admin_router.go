@@ -242,7 +242,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	}
 
 	// #440 management-pair API: who may manage which EndDevice.
-	if mgmtH := newAdminManagementHandler(stores); mgmtH != nil {
+	if mgmtH := newAdminManagementHandler(stores, cfg.Activity); mgmtH != nil {
 		mountWrite("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())
 		authed.HandleFunc("GET /api/management-pairs", mgmtH.HandleListManagementPairs())
 		mountWrite("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())

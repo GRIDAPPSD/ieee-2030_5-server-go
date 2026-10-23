@@ -270,11 +270,7 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 			v := *dev.Enabled
 			enabled = &v
 		}
-		var lastRequest *string
-		if at, _, ok := d.activity.Last(dev.LFDI); ok {
-			v := at.UTC().Format(time.RFC3339)
-			lastRequest = &v
-		}
+		lastRequest := d.activity.LastRFC3339(dev.LFDI)
 		comms := d.activity.State(dev.LFDI, now, d.offlineAfter)
 		ders, err := d.collectDERs(ctx, dev.Href, now.Unix())
 		var derError string

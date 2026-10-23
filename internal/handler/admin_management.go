@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -42,6 +43,46 @@ type AdminManagementHandler struct {
 	// kind gate. Nil leaves only the stored-kind rules off; the rules that
 	// read pairs alone still run.
 	Profiles store.DeviceProfileReader
+
+	// EndDevices and Activity feed the per-LFDI health a pair listing
+	// carries: whether the LFDI has an EndDevice record and when it last
+	// made a request. A pair is keyed on the LFDI, which changes when a
+	// certificate rotates, so a pair whose LFDI has no record or has gone
+	// quiet is the operator's rotation signal. Nil EndDevices omits
+	// hasRecord; nil Activity leaves lastSeen null.
+	EndDevices store.EndDeviceReader
+	Activity   *activity.Recorder
+}
+
+// pairMemberHealth is one side of a pair as the listing reports it.
+// HasRecord is nil when the handler holds no EndDevice reader, so "unknown"
+// is not read as "no record". LastSeen is an RFC 3339 UTC time, or null when
+// the LFDI has made no request since the server started.
+type pairMemberHealth struct {
+	LFDI      string  `json:"lfdi"`
+	HasRecord *bool   `json:"hasRecord,omitempty"`
+	LastSeen  *string `json:"lastSeen"`
+}
+
+// memberHealth reads one LFDI's record presence and last request. A lookup
+// failure other than ErrNotFound is returned, never reported as "no record".
+func (h *AdminManagementHandler) memberHealth(ctx context.Context, lfdi string) (pairMemberHealth, error) {
+	m := pairMemberHealth{LFDI: lfdi}
+	if h.EndDevices != nil {
+		_, err := h.EndDevices.GetByLFDI(ctx, lfdi)
+		switch {
+		case err == nil:
+			has := true
+			m.HasRecord = &has
+		case errors.Is(err, store.ErrNotFound):
+			has := false
+			m.HasRecord = &has
+		default:
+			return pairMemberHealth{}, err
+		}
+	}
+	m.LastSeen = h.Activity.LastRFC3339(lfdi)
+	return m, nil
 }
 
 // managementPairRequest is the body for POST /api/management-pairs.
@@ -102,7 +143,9 @@ func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 // HandleListManagementPairs returns a handler for GET /api/management-pairs.
 // Exactly one of "manager" or "managed" selects the direction: by manager
 // lists every device it manages (possibly empty), by managed device returns
-// its single manager (404 if unmanaged).
+// its single manager (404 if unmanaged). Each LFDI in the answer also gets a
+// health entry (record presence, last request), the operator's signal that a
+// certificate rotated and a pair needs the rekey endpoint.
 func (h *AdminManagementHandler) HandleListManagementPairs() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		managerQ := strings.TrimSpace(r.URL.Query().Get("manager"))
@@ -122,9 +165,25 @@ func (h *AdminManagementHandler) HandleListManagementPairs() http.HandlerFunc {
 				writeManagementInternalError(w, "list", err)
 				return
 			}
+			mgr, err := h.memberHealth(r.Context(), manager)
+			if err != nil {
+				writeManagementInternalError(w, "list", err)
+				return
+			}
+			members := make([]pairMemberHealth, 0, len(managed))
+			for _, m := range managed {
+				health, err := h.memberHealth(r.Context(), m)
+				if err != nil {
+					writeManagementInternalError(w, "list", err)
+					return
+				}
+				members = append(members, health)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"managerLFDI":  manager,
 				"managedLFDIs": managed,
+				"manager":      mgr,
+				"managed":      members,
 			})
 		case managedQ != "":
 			managed, err := normalizeLFDI(managedQ)
@@ -141,7 +200,22 @@ func (h *AdminManagementHandler) HandleListManagementPairs() http.HandlerFunc {
 				writeManagementInternalError(w, "lookup", err)
 				return
 			}
-			writeJSON(w, http.StatusOK, managementPairResponse{ManagerLFDI: manager, ManagedLFDI: managed})
+			mgr, err := h.memberHealth(r.Context(), manager)
+			if err != nil {
+				writeManagementInternalError(w, "lookup", err)
+				return
+			}
+			dev, err := h.memberHealth(r.Context(), managed)
+			if err != nil {
+				writeManagementInternalError(w, "lookup", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"managerLFDI": manager,
+				"managedLFDI": managed,
+				"manager":     mgr,
+				"managed":     dev,
+			})
 		default:
 			writeError(w, http.StatusBadRequest, "manager or managed query param required")
 		}

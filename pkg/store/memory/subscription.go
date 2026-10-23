@@ -80,21 +80,8 @@ func (s *SubscriptionStore) removeOne(ctx context.Context, id string) error {
 // snapshot, so a persistence fault cannot fail a delete that had nothing to
 // clean.
 func (s *SubscriptionStore) DeleteDevice(ctx context.Context, deviceID string) error {
-	return s.deleteDevice(ctx, deviceID, false)
-}
-
-// DeleteDeviceResources is [SubscriptionStore.DeleteDevice] for a delete whose
-// notification is sent later by someone else (the out-of-band delete): it
-// keeps the deleted device's own subscriptions to resources outside its own
-// tree, such as the EndDeviceList, so they can still be notified. Those are
-// removed when the index is next given to a device.
-func (s *SubscriptionStore) DeleteDeviceResources(ctx context.Context, deviceID string) error {
-	return s.deleteDevice(ctx, deviceID, true)
-}
-
-func (s *SubscriptionStore) deleteDevice(ctx context.Context, deviceID string, keepNotifiable bool) error {
 	removed := 0
-	for _, id := range s.deviceSubscriptionIDs(deviceID, keepNotifiable) {
+	for _, id := range s.deviceSubscriptionIDs(deviceID) {
 		err := s.removeOne(ctx, id)
 		switch {
 		case err == nil:
@@ -111,9 +98,8 @@ func (s *SubscriptionStore) deleteDevice(ctx context.Context, deviceID string, k
 
 // deviceSubscriptionIDs returns the ids of the subscriptions scoped to
 // deviceID plus those, held by any device, whose subscribed resource is the
-// device or lies beneath it. With keepNotifiable, the device's own
-// subscriptions to resources outside its tree are left out.
-func (s *SubscriptionStore) deviceSubscriptionIDs(deviceID string, keepNotifiable bool) []string {
+// device or lies beneath it.
+func (s *SubscriptionStore) deviceSubscriptionIDs(deviceID string) []string {
 	self := "/edev/" + deviceID
 	inTree := func(res string) bool { return res == self || strings.HasPrefix(res, self+"/") }
 	s.idxMu.RLock()
@@ -128,14 +114,7 @@ func (s *SubscriptionStore) deviceSubscriptionIDs(deviceID string, keepNotifiabl
 			}
 		}
 	}
-	for _, id := range s.deviceIndex[deviceID] {
-		if keepNotifiable {
-			if sub, err := s.Store.Get(context.Background(), id); err == nil && !inTree(sub.SubscribedResource) {
-				continue
-			}
-		}
-		add([]string{id})
-	}
+	add(s.deviceIndex[deviceID])
 	for res, list := range s.resourceIndex {
 		if inTree(res) {
 			add(list)

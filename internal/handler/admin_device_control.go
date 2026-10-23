@@ -168,6 +168,10 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		// if the issue fails, and nothing else may see or edit them meanwhile.
 		fh.programMu.Lock()
 		defer fh.programMu.Unlock()
+		// The check above ran before the lock a device delete also holds.
+		if _, ok := h.Controls.loadDevice(w, r, deviceID); !ok {
+			return
+		}
 		tx := &deviceTxn{}
 		defer tx.finish(fh, r)
 

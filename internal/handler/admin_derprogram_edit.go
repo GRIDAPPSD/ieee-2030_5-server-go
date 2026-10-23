@@ -441,15 +441,8 @@ func (h *AdminFSAHandler) HandleDeleteDeviceProgram() http.HandlerFunc {
 // or answers and returns false. A template copy is refused with
 // edit_the_template.
 func (h *AdminFSAHandler) lookupDeviceProgram(w http.ResponseWriter, r *http.Request, deviceID, id, verb string) (sep2.DERProgram, string, bool) {
-	if h.EndDevices != nil {
-		if _, err := h.EndDevices.Get(r.Context(), deviceID); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "device not found")
-				return sep2.DERProgram{}, "", false
-			}
-			h.templateFailed(w, r, "device_lookup", err)
-			return sep2.DERProgram{}, "", false
-		}
+	if !h.deviceExists(w, r, deviceID) {
+		return sep2.DERProgram{}, "", false
 	}
 	prog, err := h.Copies.Programs.Get(r.Context(), deviceID, id)
 	if errors.Is(err, store.ErrNotFound) {

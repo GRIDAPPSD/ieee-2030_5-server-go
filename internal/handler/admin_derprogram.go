@@ -394,15 +394,8 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			return
 		}
 
-		if h.EndDevices != nil {
-			if _, err := h.EndDevices.Get(r.Context(), deviceID); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					writeError(w, http.StatusNotFound, "device not found")
-					return
-				}
-				h.templateFailed(w, r, "device_lookup", err)
-				return
-			}
+		if !h.deviceExists(w, r, deviceID) {
+			return
 		}
 		if !h.storesWired(w, r, h.DeviceFSAs != nil && h.Copies != nil) {
 			return
@@ -415,8 +408,11 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 		h.programMu.Lock()
 		defer h.programMu.Unlock()
 
-		// Under the lock, so an unassign cannot remove the device's FSA
-		// between this check and the write.
+		// Under the lock, so an unassign cannot remove the device's FSA, nor
+		// a delete the device, between these checks and the write.
+		if !h.deviceExists(w, r, deviceID) {
+			return
+		}
 		if _, err := h.DeviceFSAs.Get(r.Context(), deviceID, fsaID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "fsa not found on this device")

@@ -347,15 +347,8 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 		}
 
 		// Confirm device exists.
-		if h.EndDevices != nil {
-			if _, err := h.EndDevices.Get(r.Context(), deviceID); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					writeError(w, http.StatusNotFound, "device not found")
-					return
-				}
-				writeError(w, http.StatusInternalServerError, "device lookup: "+err.Error())
-				return
-			}
+		if !h.deviceExists(w, r, deviceID) {
+			return
 		}
 
 		// Confirm admin FSA exists.
@@ -371,6 +364,12 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 
 		h.programMu.Lock()
 		defer h.programMu.Unlock()
+
+		// The delete of a device holds this lock, so a device found here
+		// stays until the assignment is written.
+		if !h.deviceExists(w, r, deviceID) {
+			return
+		}
 
 		// Every template copy is checked before anything is written, so a
 		// conflict refuses the assignment with nothing to undo.
@@ -441,6 +440,26 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			"fsaHref": req.FSAHref,
 		})
 	}
+}
+
+// deviceExists answers 404 and returns false when the device is gone. A
+// program writer that targets a device calls it after taking programMu: the
+// device delete holds that lock, so a check before the lock can be stale by
+// the time the write lands (#1120). A nil EndDevices store checks nothing.
+func (h *AdminFSAHandler) deviceExists(w http.ResponseWriter, r *http.Request, deviceID string) bool {
+	if h.EndDevices == nil {
+		return true
+	}
+	_, err := h.EndDevices.Get(r.Context(), deviceID)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "device not found")
+	default:
+		h.templateFailed(w, r, "device_lookup", err)
+	}
+	return false
 }
 
 // HandleUnassignDeviceFSA returns a handler for DELETE /api/devices/{id}/fsa-assignment?fsaHref=...

@@ -504,12 +504,12 @@ func (c *createConfig) refuse(w http.ResponseWriter, r *http.Request, caller str
 // the exact string and a record added by an operator or an older version may
 // hold any letter case.
 func findByLFDIFold(ctx context.Context, s store.EndDeviceReader, lfdi string) (found sep2.EndDevice, exact, ok bool, err error) {
-	dev, err := s.GetByLFDI(ctx, lfdi)
-	switch {
-	case err == nil && dev.LFDI == lfdi:
-		return dev, true, true, nil
-	case err != nil && !errors.Is(err, store.ErrNotFound):
+	dev, state, err := RecordFor(ctx, s, lfdi)
+	if err != nil {
 		return sep2.EndDevice{}, false, false, err
+	}
+	if state == RecordPresent {
+		return dev, true, true, nil
 	}
 	all, err := s.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {

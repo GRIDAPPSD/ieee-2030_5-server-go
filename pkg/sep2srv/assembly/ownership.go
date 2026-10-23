@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -210,7 +211,7 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 			http.Error(w, "not found", http.StatusNotFound)
 		default:
 			g.denials.record(r, v)
-			noteRefusal(r.Context(), v.reason)
+			devicelog.NoteFrom(r.Context()).Refuse(v.reason)
 			http.Error(w, "forbidden", http.StatusForbidden)
 		}
 	}

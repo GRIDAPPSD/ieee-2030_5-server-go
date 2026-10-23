@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -185,5 +186,36 @@ func TestParkKeepsADevicesOrderAndDoesNotDelayOthers(t *testing.T) {
 	got := readLines(t, filepath.Join(dir, lfdiA+".jsonl"))
 	if len(got) != 2 || got[0].N != 1 || got[1].N != 2 || got[0].Seq != 1 || got[1].Seq != 2 {
 		t.Errorf("A's lines = %+v; want n=1 then n=2 with seq 1 then 2", got)
+	}
+}
+
+// A target a note supplied survives when the resolver found none, and the
+// resolver's own target replaces it when it found one.
+func TestWriterTargetPrecedenceNoteVersusResolver(t *testing.T) {
+	cases := []struct{ name, resolved, want string }{
+		{"note kept when the resolver has none", "", "NOTETARGET"},
+		{"resolver wins over the note", "RESOLVEDTARGET", "RESOLVEDTARGET"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			w := newTestWriter(t, dir, Config{})
+			actor := fmt.Sprintf("%040X", 1)
+			res := func(string, string) Resolution {
+				return Resolution{Known: true, Registered: true, Target: c.resolved}
+			}
+			e := Entry{Kind: "request", Fields: map[string]any{"target": "NOTETARGET"}}
+			if err := w.AppendResolved(actor, "", res, e); err != nil {
+				t.Fatal(err)
+			}
+			closeWriter(t, w)
+			raw, err := os.ReadFile(filepath.Join(dir, actor+".jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Count(string(raw), "\n") != 1 || !strings.Contains(string(raw), `"target":"`+c.want+`"`) {
+				t.Errorf("file = %q, want one line with target %s", raw, c.want)
+			}
+		})
 	}
 }

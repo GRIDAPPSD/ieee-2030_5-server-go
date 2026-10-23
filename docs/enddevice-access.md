@@ -65,6 +65,16 @@ A manager may not:
 A write pattern added to the route table later is refused by default until
 an entry naming it, with its source, is added here and to the gate.
 
+## Mirroring for a managed device
+
+A `/mup` route admits a manager acting for a managed device only when that
+device also has an EndDevice record, the same pair-plus-record rule `GET /edev`
+applies. A pair whose managed LFDI has no record is refused with 403, and the
+refusal log line names the reason `managed-device-unregistered` on every
+`/mup` route. A device mirroring for itself needs no record. An embedder gets
+the check by passing `metering.RequireDeviceRecords(endDevices)` as an option
+to each of the `/mup` handlers; without it a pair alone admits the manager.
+
 ## GET /edev and PUT /edev/{id}
 
 `GET /edev` lists the caller's own EndDevice and every EndDevice it manages,

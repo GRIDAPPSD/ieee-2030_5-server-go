@@ -17,6 +17,7 @@
     GET /api/derms/flow-reservations
     GET /api/derms/flow-reservations/{edevId}/{frqId}
     GET /api/derms/grants
+    GET /api/derms/power
     GET /api/device-logs/{lfdi}
     GET /api/device-logs/{lfdi}/download
     GET /api/device-profiles

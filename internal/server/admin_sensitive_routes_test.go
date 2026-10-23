@@ -162,6 +162,9 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		// credentialed request for an absent device reaches the handler and
 		// gets its own 404.
 		{name: "DELETE /api/devices/{id}", method: http.MethodDelete, path: "/api/devices/9", wantReachedStatus: http.StatusNotFound},
+		// #1114: per-device power is metering data. A credentialed request with
+		// no query reaches the handler and answers its own 400.
+		{name: "GET /api/derms/power", method: http.MethodGet, path: "/api/derms/power", wantReachedStatus: http.StatusBadRequest},
 		{name: "GET /api/derms/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/derms/audit", wantReachedStatus: http.StatusNotFound},
 	}
 

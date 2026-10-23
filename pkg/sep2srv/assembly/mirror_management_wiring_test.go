@@ -32,6 +32,8 @@ const (
 func mupWiringRouter(t *testing.T) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
 	stores := testStores()
+	// A manager acts for a managed device only if its EndDevice record exists.
+	seedDevice(t, stores.EndDevices, "88", wiringDeviceLFDI, "")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{}, stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil,
 	)
@@ -121,9 +123,9 @@ func TestAssembly_MirrorUnmanagedClaimRefusedThroughTheRouter(t *testing.T) {
 
 // mupWiringInstanceRoutes is every /mup route BESIDES POST /mup (the two
 // tests above already cover creation): the five separate HandleFunc calls in
-// registerMirrorRoutes (assembly.go), each its own line passing
-// stores.EndDeviceManagers, so a mutation on any ONE line is a defect this
-// table must catch on that line's own row. path is relative to the created
+// registerMirrorRoutes (assembly.go), each its own call passing
+// stores.EndDeviceManagers and the RequireDeviceRecords option, so a mutation
+// on any ONE call is a defect this table must catch on that call's own row. path is relative to the created
 // mirror's Location; wantStatus is the response on the admitted case.
 var mupWiringInstanceRoutes = []struct {
 	name       string
@@ -250,6 +252,36 @@ func TestAssembly_MirrorInstanceRoutesManagerWiring(t *testing.T) {
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusForbidden {
 				t.Fatalf("unassigned manager %s %s: status = %d, want 403; body = %s", rt.method, rt.path(loc), resp.StatusCode, respBody)
+			}
+		})
+	}
+}
+
+// TestAssembly_MirrorInstanceRoutesNeedTheManagedRecord pins the record rule
+// on each /mup instance registration of its own: the manager and the pair are
+// in place, the mirror exists, and only the managed device's EndDevice record
+// is gone. Every route must then refuse the manager, so a registration built
+// without the record check is caught on that route's own row.
+func TestAssembly_MirrorInstanceRoutesNeedTheManagedRecord(t *testing.T) {
+	t.Parallel()
+	for _, rt := range mupWiringInstanceRoutes {
+		t.Run(rt.name, func(t *testing.T) {
+			t.Parallel()
+			srv, stores := mupWiringRouter(t)
+			const mrid = "WIRING_RECORD"
+			if err := stores.EndDeviceManagers.Assign(context.Background(), wiringManagerLFDI, wiringDeviceLFDI); err != nil {
+				t.Fatalf("assign manager: %v", err)
+			}
+			loc := mupWiringCreateAsManager(t, srv, wiringManagerLFDI, mrid)
+			if err := stores.EndDevices.Delete(context.Background(), "88"); err != nil {
+				t.Fatalf("remove the managed device's record: %v", err)
+			}
+
+			resp := mupWiringRequest(t, rt.method, srv.URL+rt.path(loc), wiringManagerLFDI, rt.body(mrid))
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("manager %s %s with no EndDevice record: status = %d, want 403; body = %s", rt.method, rt.path(loc), resp.StatusCode, respBody)
 			}
 		})
 	}

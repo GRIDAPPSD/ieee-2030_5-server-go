@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,4 +109,78 @@ func TestDashboardSSE_KeepsDeliveringPastServerWriteTimeout(t *testing.T) {
 // handlerForTest serves only the SSE route.
 func (d *DashboardHandler) handlerForTest() http.Handler {
 	return http.HandlerFunc(d.handleSSE)
+}
+
+// stallWriter is a ResponseWriter whose Write, after the first, blocks until
+// the write deadline set through SetWriteDeadline passes: a reader that
+// stopped reading.
+type stallWriter struct {
+	hdr    http.Header
+	mu     sync.Mutex
+	dl     time.Time
+	writes int
+}
+
+func (s *stallWriter) Header() http.Header { return s.hdr }
+func (s *stallWriter) WriteHeader(int)     {}
+func (s *stallWriter) Flush()              {}
+
+func (s *stallWriter) SetWriteDeadline(t time.Time) error {
+	s.mu.Lock()
+	s.dl = t
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *stallWriter) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	s.writes++
+	first := s.writes == 1
+	s.mu.Unlock()
+	if first {
+		return len(b), nil
+	}
+	for {
+		s.mu.Lock()
+		dl := s.dl
+		s.mu.Unlock()
+		if !dl.IsZero() && !time.Now().Before(dl) {
+			return 0, os.ErrDeadlineExceeded
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (s *stallWriter) blocked() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writes >= 2
+}
+
+func TestDashboardSSE_StreamsDoneCutsAStalledWrite(t *testing.T) {
+	oldInterval, oldGrace := dashboardStreamInterval, panelStreamShutdownGrace
+	dashboardStreamInterval, panelStreamShutdownGrace = 20*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { dashboardStreamInterval, panelStreamShutdownGrace = oldInterval, oldGrace })
+
+	done := make(chan struct{})
+	sw := &stallWriter{hdr: http.Header{}}
+	h := streamTestHandler(t, done)
+	returned := make(chan struct{})
+	go func() {
+		h.handleSSE(sw, httptest.NewRequest(http.MethodGet, "/dashboard/events", nil))
+		close(returned)
+	}()
+	for start := time.Now(); !sw.blocked(); {
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("handler never blocked in a write")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(done)
+	select {
+	case <-returned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler still blocked in a write 3s after StreamsDone closed")
+	}
 }

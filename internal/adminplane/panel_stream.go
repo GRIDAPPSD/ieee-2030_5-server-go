@@ -298,30 +298,8 @@ func (ps *panelSet) openStream(ctx context.Context, w http.ResponseWriter, r *ht
 }
 
 func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher http.Flusher, id string, q *streamQueue) {
-	rc := http.NewResponseController(w)
-	var (
-		dlMu           sync.Mutex
-		closing        bool
-		deadlineLogged bool
-	)
-	// extend sets the next write's deadline. Under dlMu so it cannot undo
-	// the shutdown watcher's shorter deadline set from another goroutine.
-	extend := func() {
-		dlMu.Lock()
-		defer dlMu.Unlock()
-		d := panelStreamWriteDeadline
-		if closing {
-			d = panelStreamShutdownGrace
-		}
-		ssedeadline.Extend(rc, d, func(err error) {
-			// Without the extension the listener's WriteTimeout ends the
-			// stream; logged once per stream rather than per write.
-			if !deadlineLogged {
-				deadlineLogged = true
-				log.Printf("admin: panel %q: stream write-deadline extension failed: %v", id, err)
-			}
-		})
-	}
+	dl := ssedeadline.NewStream(w, fmt.Sprintf("admin: panel %q", id), panelStreamWriteDeadline, panelStreamShutdownGrace)
+	extend := dl.Extend
 	write := func(b []byte) bool {
 		extend()
 		if _, err := w.Write(b); err != nil {
@@ -330,29 +308,7 @@ func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher 
 		flusher.Flush()
 		return true
 	}
-
-	if ps.streamsDone != nil {
-		// A write already blocked on a reader that stopped reading would
-		// otherwise hold Shutdown for the full write deadline.
-		watchDone := make(chan struct{})
-		var watcher sync.WaitGroup
-		watcher.Add(1)
-		go func() {
-			defer watcher.Done()
-			select {
-			case <-ps.streamsDone:
-				dlMu.Lock()
-				closing = true
-				dlMu.Unlock()
-				extend()
-			case <-watchDone:
-			}
-		}()
-		defer func() {
-			close(watchDone)
-			watcher.Wait()
-		}()
-	}
+	defer dl.Watch(ps.streamsDone)()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/ssedeadline"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
@@ -206,17 +205,10 @@ func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc := http.NewResponseController(w)
-	deadlineLogged := false
+	dl := ssedeadline.NewStream(w, "dashboard", dashboardStreamWriteDeadline, panelStreamShutdownGrace)
+	defer dl.Watch(d.streamsDone)()
 	send := func(ctx context.Context) bool {
-		ssedeadline.Extend(rc, dashboardStreamWriteDeadline, func(err error) {
-			// Without the extension the listener's WriteTimeout ends the
-			// stream; logged once per stream rather than per write.
-			if !deadlineLogged {
-				deadlineLogged = true
-				log.Printf("dashboard: stream write-deadline extension failed: %s", logsafe.Str(err.Error()))
-			}
-		})
+		dl.Extend()
 		jsonData, _ := json.Marshal(d.collectData(ctx))
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
 			return false

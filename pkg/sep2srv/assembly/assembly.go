@@ -1585,7 +1585,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 				inner, coreflowrsv.BuildResponseList, 900,
 			)(w, r)
 		})
-		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(responses, responseSenderAuthorizer(identity, stores.EndDeviceManagers)))
+		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(devicelog.NewResponseStore(responses, identity), responseSenderAuthorizer(identity, stores.EndDeviceManagers)))
 		mux.HandleFunc("GET /rsps/{rspsId}/rsp/{rspId}", coreresponse.HandleResponse(responses))
 	}
 }

@@ -11,11 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -304,5 +306,55 @@ func TestPatternsIsACopy(t *testing.T) {
 	first[0] = "edited"
 	if got := p.Patterns()[0]; got != want {
 		t.Fatalf("Patterns()[0] = %q after editing a returned slice, want %q", got, want)
+	}
+}
+
+type listNotifier struct{ hrefs []string }
+
+func (n *listNotifier) Notify(_ context.Context, href string, _ uint8) {
+	n.hrefs = append(n.hrefs, href)
+}
+
+// #1120: an embedder-built plane mounts the admin EndDevice delete and runs
+// the protocol DELETE's cleanup through the embedder's own stores and notifier.
+func TestPlaneDeletesAnEndDeviceThroughTheFullCleanup(t *testing.T) {
+	ctx := context.Background()
+	cfg := baseConfig()
+	notifier := &listNotifier{}
+	cfg.Notifier = notifier
+	if err := cfg.Stores.EndDevices.Create(ctx, "7", sep2.EndDevice{LFDI: "0000000000000000000000000000000000000007"}); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+	if err := cfg.Stores.DERs.Create(ctx, "7", "d1", sep2.DER{}); err != nil {
+		t.Fatalf("seed DER: %v", err)
+	}
+	sub := sep2.Subscription{SubscribedResource: "/edev/7/der", NotificationURI: "https://127.0.0.1:1/n"}
+	sub.Href = "/edev/7/sub/own"
+	if err := cfg.Stores.Subscriptions.Create(ctx, "own", sub); err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+	p := newPlane(t, cfg)
+
+	if rec := send(p, http.MethodDelete, "/api/devices/7", "", false); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("DELETE with no credential = %d, want 401", rec.Code)
+	}
+	if _, err := cfg.Stores.EndDevices.Get(ctx, "7"); err != nil {
+		t.Fatalf("device gone after a refused delete: %v", err)
+	}
+
+	if rec := send(p, http.MethodDelete, "/api/devices/7", "", true); rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE /api/devices/7 = %d, want 204: %s", rec.Code, rec.Body)
+	}
+	if _, err := cfg.Stores.EndDevices.Get(ctx, "7"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("EndDevice 7 after delete: err = %v, want ErrNotFound", err)
+	}
+	if _, err := cfg.Stores.DERs.Get(ctx, "7", "d1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("DER d1 after delete: err = %v, want ErrNotFound (the cascade)", err)
+	}
+	if _, err := cfg.Stores.Subscriptions.Get(ctx, "own"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("subscription own after delete: err = %v, want ErrNotFound (the sweep)", err)
+	}
+	if !slices.Equal(notifier.hrefs, []string{"/edev"}) {
+		t.Errorf("notified %q, want [/edev]", notifier.hrefs)
 	}
 }

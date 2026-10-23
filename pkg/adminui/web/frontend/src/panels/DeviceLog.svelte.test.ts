@@ -105,12 +105,25 @@ function mount() {
   return render(DeviceLog, { props: { lfdi: LFDI, devices: DEVICES } })
 }
 
+// jsdom has no layout, so a test gives the box the geometry it needs. The
+// reader is at the bottom when top + client is within a few pixels of height.
+function geometry(box: HTMLElement, top: number, height = 1000, client = 300) {
+  Object.defineProperty(box, 'scrollHeight', { value: height, configurable: true })
+  Object.defineProperty(box, 'clientHeight', { value: client, configurable: true })
+  Object.defineProperty(box, 'scrollTop', { value: top, writable: true, configurable: true })
+}
+
+async function scrollTo(box: HTMLElement, top: number) {
+  box.scrollTop = top
+  await fireEvent.scroll(box)
+}
+
 async function settle() {
   await vi.advanceTimersByTimeAsync(0)
 }
 
 describe('DeviceLog', () => {
-  it('shows each line newest first with its status, duration and detail', async () => {
+  it('shows each line oldest first with its status, duration and detail', async () => {
     serve(() =>
       page([
         entry(3, { kind: 'logevent', method: undefined, path: undefined, status: undefined, functionSet: 9, logEventCode: 4, details: 'low battery' }),
@@ -122,13 +135,18 @@ describe('DeviceLog', () => {
     await settle()
     const rows = screen.getAllByTestId('device-log-row')
     expect(rows).toHaveLength(3)
-    expect(within(rows[0]).getByText('logevent')).toBeInTheDocument()
-    expect(rows[0]).toHaveTextContent('function set 9, code 4, low battery')
+    expect(within(rows[2]).getByText('logevent')).toBeInTheDocument()
+    expect(rows[2]).toHaveTextContent('function set 9, code 4, low battery')
     expect(rows[1]).toHaveTextContent('GET /dcap/missing')
     expect(within(rows[1]).getByTestId('device-log-status')).toHaveTextContent('404')
     expect(within(rows[1]).getByTestId('device-log-status')).toHaveClass('offline')
-    expect(within(rows[2]).getByTestId('device-log-status')).not.toHaveClass('offline')
-    expect(rows[2]).toHaveTextContent('1.5')
+    expect(within(rows[0]).getByTestId('device-log-status')).not.toHaveClass('offline')
+    expect(rows[0]).toHaveTextContent('1.5')
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('/dcap/1'),
+      expect.stringContaining('/dcap/missing'),
+      expect.stringContaining('function set 9'),
+    ])
   })
 
   it('labels a line made by another actor with via and that device label', async () => {
@@ -136,8 +154,8 @@ describe('DeviceLog', () => {
     mount()
     await settle()
     const rows = screen.getAllByTestId('device-log-row')
-    expect(within(rows[0]).getByTestId('device-log-via')).toHaveTextContent('via 10000000002')
-    expect(within(rows[1]).getByTestId('device-log-via').textContent?.trim()).toBe('')
+    expect(within(rows[1]).getByTestId('device-log-via')).toHaveTextContent('via 10000000002')
+    expect(within(rows[0]).getByTestId('device-log-via').textContent?.trim()).toBe('')
   })
 
   it('renders line fields as text, never markup', async () => {
@@ -169,8 +187,8 @@ describe('DeviceLog', () => {
     expect(paths[2]).toBe(`/api/device-logs/${LFDI}?limit=200&after=c3`)
     const paths4 = screen.getAllByTestId('device-log-row').map((r) => r.textContent)
     expect(paths4).toHaveLength(4)
-    expect(paths4[0]).toContain('/dcap/4')
-    expect(paths4[3]).toContain('/dcap/1')
+    expect(paths4[3]).toContain('/dcap/4')
+    expect(paths4[0]).toContain('/dcap/1')
   })
 
   it('stops polling and aborts the request in flight when the log unmounts', async () => {
@@ -217,10 +235,10 @@ describe('DeviceLog', () => {
     release()
     await settle()
     expect(screen.getAllByTestId('device-log-row').map((r) => r.textContent)).toEqual([
-      expect.stringContaining('/dcap/4'),
-      expect.stringContaining('/dcap/3'),
-      expect.stringContaining('/dcap/2'),
       expect.stringContaining('/dcap/1'),
+      expect.stringContaining('/dcap/2'),
+      expect.stringContaining('/dcap/3'),
+      expect.stringContaining('/dcap/4'),
     ])
     expect(FakeObserver.live()).toHaveLength(0)
     expect(screen.getByTestId('device-logs-start')).toBeInTheDocument()
@@ -320,7 +338,7 @@ describe('DeviceLog', () => {
     await settle()
     await fireEvent.click(screen.getByTestId('device-logs-errors'))
     const box = screen.getByTestId('device-logs-scroll')
-    Object.defineProperty(box, 'scrollTop', { value: 40, writable: true, configurable: true })
+    geometry(box, 40)
     await fireEvent.scroll(box)
     await vi.advanceTimersByTimeAsync(5000)
     expect(screen.getByTestId('device-logs-new')).toHaveTextContent('1 new line')
@@ -352,13 +370,13 @@ describe('DeviceLog', () => {
     expect(screen.getByTestId('device-logs-older-error')).toHaveTextContent('boom')
   })
 
-  it('keeps the rows under the reader still while a poll delivers lines', async () => {
+  it('keeps the rows under the reader still while a poll delivers lines, and the jump lands at the bottom', async () => {
     serve((path) => (path.includes('after=') ? page([entry(5), entry(4)]) : page([entry(3), entry(2), entry(1)])))
     mount()
     await settle()
     const before = screen.getAllByTestId('device-log-row')
     const box = screen.getByTestId('device-logs-scroll')
-    Object.defineProperty(box, 'scrollTop', { value: 120, writable: true, configurable: true })
+    geometry(box, 120)
     await fireEvent.scroll(box)
 
     await vi.advanceTimersByTimeAsync(5000)
@@ -369,33 +387,47 @@ describe('DeviceLog', () => {
     expect(screen.getByTestId('device-logs-new')).toHaveTextContent('2 new lines')
 
     await fireEvent.click(screen.getByTestId('device-logs-new'))
-    expect(box.scrollTop).toBe(0)
+    await settle()
+    expect(box.scrollTop).toBe(1000)
     const after = screen.getAllByTestId('device-log-row')
     expect(after.map((r) => r.textContent)).toEqual([
-      expect.stringContaining('/dcap/5'),
-      expect.stringContaining('/dcap/4'),
-      expect.stringContaining('/dcap/3'),
-      expect.stringContaining('/dcap/2'),
       expect.stringContaining('/dcap/1'),
+      expect.stringContaining('/dcap/2'),
+      expect.stringContaining('/dcap/3'),
+      expect.stringContaining('/dcap/4'),
+      expect.stringContaining('/dcap/5'),
     ])
     // The lines that were shown are the same nodes, not re-rendered copies.
-    before.forEach((row, i) => expect(after[i + 2]).toBe(row))
+    before.forEach((row, i) => expect(after[i]).toBe(row))
     expect(screen.queryByTestId('device-logs-new')).toBeNull()
   })
 
-  it('shows polled lines in place while the reader is at the top', async () => {
+  it('opens scrolled to the bottom', async () => {
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(1000)
+    serve(() => page([entry(3), entry(2), entry(1)]))
+    mount()
+    await settle()
+    expect(screen.getByTestId('device-logs-scroll').scrollTop).toBe(1000)
+  })
+
+  it('appends polled lines at the bottom and keeps the view pinned there', async () => {
     serve((path) => (path.includes('after=') ? page([entry(2)]) : page([entry(1)])))
     mount()
     await settle()
     const first = screen.getByTestId('device-log-row')
+    const box = screen.getByTestId('device-logs-scroll')
+    geometry(box, 700)
+    await fireEvent.scroll(box)
     await vi.advanceTimersByTimeAsync(5000)
     const rows = screen.getAllByTestId('device-log-row')
     expect(rows).toHaveLength(2)
-    expect(rows[1]).toBe(first)
+    expect(rows[0]).toBe(first)
+    expect(rows[1]).toHaveTextContent('/dcap/2')
+    expect(box.scrollTop).toBe(1000)
     expect(screen.queryByTestId('device-logs-new')).toBeNull()
   })
 
-  it('shows the held lines once the reader scrolls back to the top, counting a repeated line once', async () => {
+  it('shows the held lines once the reader scrolls back to the bottom, counting a repeated line once', async () => {
     let n = 0
     serve((path) => {
       if (!path.includes('after=')) return page([entry(1)])
@@ -405,17 +437,42 @@ describe('DeviceLog', () => {
     mount()
     await settle()
     const box = screen.getByTestId('device-logs-scroll')
-    Object.defineProperty(box, 'scrollTop', { value: 50, writable: true, configurable: true })
+    geometry(box, 50)
     await fireEvent.scroll(box)
     await vi.advanceTimersByTimeAsync(5000)
     await vi.advanceTimersByTimeAsync(5000)
     expect(screen.getByTestId('device-logs-new')).toHaveTextContent('2 new lines')
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
 
-    box.scrollTop = 0
-    await fireEvent.scroll(box)
+    await scrollTo(box, 700)
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(3)
     expect(screen.queryByTestId('device-logs-new')).toBeNull()
+  })
+
+  it('keeps the line under the reader where it was when older lines load above it', async () => {
+    let release: () => void = () => {}
+    serve(async (path) => {
+      if (!path.includes('before=')) return page([entry(4), entry(3)], { nextBefore: 'c3' })
+      await new Promise<void>((r) => (release = r))
+      return page([entry(2), entry(1)], { nextBefore: null })
+    })
+    mount()
+    await settle()
+    const box = screen.getByTestId('device-logs-scroll')
+    // Each row is 200 px tall; the reader is at the top with the sentinel in view.
+    geometry(box, 0)
+    Object.defineProperty(box, 'scrollHeight', {
+      get: () => box.querySelectorAll('[data-testid="device-log-row"]').length * 200,
+      configurable: true,
+    })
+    await fireEvent.scroll(box)
+    const reading = screen.getAllByTestId('device-log-row')[0]
+    FakeObserver.live()[0].see()
+    await settle()
+    release()
+    await settle()
+    expect(box.scrollTop).toBe(400)
+    expect(screen.getAllByTestId('device-log-row')[2]).toBe(reading)
   })
 
   it('drops held lines and disconnects the observer when the device changes', async () => {
@@ -430,7 +487,7 @@ describe('DeviceLog', () => {
     await settle()
     const firstObserver = FakeObserver.live()[0]
     const box = screen.getByTestId('device-logs-scroll')
-    Object.defineProperty(box, 'scrollTop', { value: 50, writable: true, configurable: true })
+    geometry(box, 50)
     await fireEvent.scroll(box)
     await vi.advanceTimersByTimeAsync(5000)
     expect(screen.getByTestId('device-logs-new')).toBeInTheDocument()
@@ -599,11 +656,12 @@ describe('DeviceLog', () => {
     const rows = screen.getAllByTestId('device-log-row')
     expect(rows).toHaveLength(2)
     expect(screen.getByRole('columnheader', { name: 'Device' })).toBeInTheDocument()
-    expect(within(rows[0]).getByTestId('device-log-device')).toHaveTextContent('10000000002')
-    expect(within(rows[1]).getByTestId('device-log-device')).toHaveTextContent('Agg')
-    expect(within(rows[1]).getByTestId('device-log-device')).toHaveTextContent('Agg (unregistered)')
-    expect(within(rows[0]).getByTestId('device-log-device')).not.toHaveTextContent('unregistered')
-    expect(within(rows[0]).getByTestId('device-log-via').textContent?.trim() ?? '').toBe('')
+    expect(within(rows[1]).getByTestId('device-log-device')).toHaveTextContent('10000000002')
+    expect(within(rows[0]).getByTestId('device-log-device')).toHaveTextContent('Agg')
+    expect(within(rows[0]).getByTestId('device-log-device')).toHaveTextContent('Agg (unregistered)')
+    expect(within(rows[1]).getByTestId('device-log-device')).not.toHaveTextContent('unregistered')
+    expect(within(rows[1]).getByTestId('device-log-via').textContent?.trim() ?? '').toBe('')
+    expect(within(rows[0]).getByTestId('device-log-via').textContent?.trim()).toBe('unregistered')
 
     await vi.advanceTimersByTimeAsync(5000)
     expect(paths[2]).toBe(`/api/device-logs/${LFDI}?limit=200&scope=managed&after=c3`)

@@ -231,3 +231,7 @@ func (s miswiredEndDeviceManagementStore) Assign(_ context.Context, _, _ string)
 func (s miswiredEndDeviceManagementStore) Unassign(_ context.Context, _ string) error {
 	return miswiredErr(s.field)
 }
+
+func (s miswiredEndDeviceManagementStore) Release(_ context.Context, _, _ string) error {
+	return miswiredErr(s.field)
+}

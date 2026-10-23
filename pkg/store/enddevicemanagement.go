@@ -50,11 +50,18 @@ type EndDeviceManagementStore interface {
 	// Unassign removes the manager of managedLFDI, or returns ErrNotFound
 	// when the device is unmanaged.
 	Unassign(ctx context.Context, managedLFDI string) error
+
+	// Release removes the pair (managerLFDI, managedLFDI) only if
+	// managerLFDI is still the device's manager, and returns ErrNotFound
+	// otherwise, whether the device is unmanaged or now has another manager.
+	// A manager giving up its own grant uses this, never Unassign, so a
+	// rekey that lands first is not undone.
+	Release(ctx context.Context, managerLFDI, managedLFDI string) error
 }
 
 // AsEndDeviceManagementReader narrows an [EndDeviceManagementStore] to an
 // [EndDeviceManagementReader] by wrapping, following the same rule as
-// [AsReader]: a plain assignment leaves Assign and Unassign reachable
+// [AsReader]: a plain assignment leaves Assign, Unassign and Release reachable
 // through the wrapped value's unchanged dynamic type.
 func AsEndDeviceManagementReader(s EndDeviceManagementReader) EndDeviceManagementReader {
 	return endDeviceManagementReaderOnly{reader: s}

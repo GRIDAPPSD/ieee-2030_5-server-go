@@ -890,7 +890,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix, endDeviceBeforeCreate(stores), coreedev.WithManagers(stores.EndDeviceManagers), endDeviceInBandOff(inBandManagementOff), coreedev.WithRefusalLog(refusals)))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))
-	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores)))
+	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores), coreedev.WithManagerDelete(stores.EndDeviceManagers, inBandManagementOff, refusals)))
 
 	// Registration GET handler at /edev/{id}/rg
 	// (GRIDAPPSD/ieee-2030_5-server-go#170).

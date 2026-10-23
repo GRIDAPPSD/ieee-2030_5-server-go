@@ -352,6 +352,16 @@ func TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged(t *testi
 		}
 	})
 
+	t.Run("release reported as failed does not take effect", func(t *testing.T) {
+		err := s.Release(ctx, managerA, childA)
+		if err == nil {
+			t.Fatal("Release into an unwritable data directory: expected an error, got nil")
+		}
+		if manager, mErr := s.ManagerOf(ctx, childA); mErr != nil || manager != managerA {
+			t.Errorf("ManagerOf(childA) after a failed release = %q, %v; want %q still present", manager, mErr, managerA)
+		}
+	})
+
 	// Item 2: the rekey pair persists before mutating too, the same as
 	// create and remove above. A failed write after the in-memory mutation
 	// would leave the rotated fleet live in memory while disk still names

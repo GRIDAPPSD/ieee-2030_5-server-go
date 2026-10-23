@@ -171,7 +171,7 @@ func delegatedReadPatterns(patterns []string) []string {
 
 // writeBelowRecordPatterns selects every PUT, POST or DELETE pattern
 // strictly below /edev/{id}/. It excludes PUT and DELETE on the record
-// itself, which TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration
+// itself, which TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration
 // already covers.
 func writeBelowRecordPatterns(patterns []string) []string {
 	var out []string
@@ -463,7 +463,6 @@ func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t
 		`<lFDI>` + managerLFDI + `</lFDI><sFDI>1</sFDI></EndDevice>`
 	for _, tc := range []struct{ method, path, body string }{
 		{http.MethodPut, "/edev/" + victimID, forged},
-		{http.MethodDelete, "/edev/" + victimID, ""},
 		{http.MethodGet, "/edev/" + victimID + "/rg", ""},
 	} {
 		status, raw := gateRequest(t, srv, tc.method, tc.path, managerLFDI, tc.body)
@@ -477,7 +476,7 @@ func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t
 
 	after, err := fleet.stores.EndDevices.Get(ctx, victimID)
 	if err != nil {
-		t.Fatalf("managed record is gone after a refused DELETE: %v", err)
+		t.Fatalf("managed record is gone after refused requests: %v", err)
 	}
 	if !reflect.DeepEqual(before, after) {
 		t.Errorf("managed record changed by refused writes:\nbefore=%+v\nafter =%+v", before, after)
@@ -588,6 +587,13 @@ func (f faultyManagers) Unassign(ctx context.Context, managed string) error {
 	return f.inner.Unassign(ctx, managed)
 }
 
+func (f faultyManagers) Release(ctx context.Context, manager, managed string) error {
+	if err := f.fault.Err(); err != nil {
+		return err
+	}
+	return f.inner.Release(ctx, manager, managed)
+}
+
 func TestManagement_StoreFailureIs500AndRunsNoHandler(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -622,8 +628,15 @@ func TestManagement_StoreFailureIs500AndRunsNoHandler(t *testing.T) {
 		t.Errorf("owner GET with the management store failing: status %d, want 200; body=%q", status, raw)
 	}
 	// A pattern management never grants is refused without consulting it.
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, managerLFDI, ""); status != http.StatusForbidden {
-		t.Errorf("manager DELETE /edev/%s with the management store failing: status %d, want 403; body=%q", victimID, status, raw)
+	if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, managerLFDI, ""); status != http.StatusForbidden {
+		t.Errorf("manager PUT /edev/%s with the management store failing: status %d, want 403; body=%q", victimID, status, raw)
+	}
+	// A delete is delegated, so the failing store is a 500 and the record stays.
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, managerLFDI, ""); status != http.StatusInternalServerError {
+		t.Errorf("manager DELETE /edev/%s with the management store failing: status %d, want 500; body=%q", victimID, status, raw)
+	}
+	if _, err := fleet.stores.EndDevices.Get(ctx, victimID); err != nil {
+		t.Errorf("the record is gone after a DELETE behind a failed management check: %v", err)
 	}
 }
 

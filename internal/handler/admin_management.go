@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
@@ -82,10 +81,7 @@ func (h *AdminManagementHandler) memberHealth(ctx context.Context, lfdi string) 
 			return pairMemberHealth{}, err
 		}
 	}
-	if at, _, ok := h.Activity.Last(lfdi); ok {
-		v := at.UTC().Format(time.RFC3339)
-		m.LastSeen = &v
-	}
+	m.LastSeen = h.Activity.LastRFC3339(lfdi)
 	return m, nil
 }
 

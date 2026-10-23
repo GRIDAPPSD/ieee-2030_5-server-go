@@ -82,6 +82,18 @@ func (r *Recorder) Last(lfdi string) (time.Time, uint64, bool) {
 	return e.last, e.count, ok
 }
 
+// LastRFC3339 returns the last request time for lfdi as an RFC 3339 UTC
+// string, or nil when none was recorded or the Recorder is nil. It is the one
+// formatter behind every JSON field that reports a last-seen time.
+func (r *Recorder) LastRFC3339(lfdi string) *string {
+	at, _, ok := r.Last(lfdi)
+	if !ok {
+		return nil
+	}
+	v := at.UTC().Format(time.RFC3339)
+	return &v
+}
+
 // State classifies lfdi at now: Online while the last request is younger
 // than offlineAfter, Offline from exactly offlineAfter on, NotSeen when
 // there is none, and Unknown on a nil Recorder.

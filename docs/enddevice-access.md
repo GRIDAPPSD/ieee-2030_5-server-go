@@ -161,8 +161,11 @@ configured, and staying pure in-memory otherwise.
   certificate claiming the old device's grant. That caller is an ordinary
   device: every delegated route answers 403 with the fixed `forbidden` body,
   and the denial log line names the caller and `reason=not-owner-or-manager`.
-  A pair moves only when an operator rekeys it, after which the new LFDI
-  holds the grant and the old one loses it on the next request.
+  A pair moves only when an operator rekeys it. After a manager rekey the
+  new LFDI holds the grant and the old one loses it on the next request.
+  After a managed-side rekey the pair names the new LFDI, which has no
+  record, so the manager loses the record; the old certificate still owns
+  its own record, because the record keeps the old LFDI.
   `GET /api/management-pairs` shows the signal: each LFDI in the answer
   carries `hasRecord` (an EndDevice record exists for it; omitted when the
   handler has no EndDevice reader) and `lastSeen` (RFC 3339 UTC time of its

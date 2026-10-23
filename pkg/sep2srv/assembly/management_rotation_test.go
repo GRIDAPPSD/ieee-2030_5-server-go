@@ -56,3 +56,40 @@ func TestManagement_RotatedManagerIsRefusedUntilRekeyed(t *testing.T) {
 		t.Errorf("old identity after rekey: GET %s status %d, want 403; body=%s", path, status, raw)
 	}
 }
+
+const rotatedChildLFDI = "C100000000000000000000000000000000000099"
+
+// TestManagement_RotatedManagedDeviceFollowsTheRecordNotThePair pins what each
+// identity gets when a managed device's certificate rotates (#1087). The
+// record keeps the old LFDI, so before any rekey the manager still reaches it
+// and the new certificate reaches nothing. After RekeyManaged the pair names
+// the new LFDI, which has no record, so the manager loses the record; the old
+// certificate still owns its own record, and the new one still owns nothing.
+// It cannot run in parallel: it swaps the process-wide log output.
+func TestManagement_RotatedManagedDeviceFollowsTheRecordNotThePair(t *testing.T) {
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	captureLog(t)
+	path := "/edev/" + victimID
+
+	check := func(stage, asLFDI string, want int) {
+		t.Helper()
+		if status, raw := gateRequest(t, srv, http.MethodGet, path, asLFDI, ""); status != want {
+			t.Errorf("%s: GET %s as %s: status %d, want %d; body=%s", stage, path, asLFDI, status, want, raw)
+		}
+	}
+	check("before rekey", managerLFDI, http.StatusOK)
+	check("before rekey", victimLFDI, http.StatusOK)
+	check("before rekey", rotatedChildLFDI, http.StatusForbidden)
+
+	if err := fleet.managers.RekeyManaged(t.Context(), victimLFDI, rotatedChildLFDI); err != nil {
+		t.Fatalf("RekeyManaged: %v", err)
+	}
+	if got, err := fleet.managers.ManagerOf(t.Context(), rotatedChildLFDI); err != nil || got != managerLFDI {
+		t.Fatalf("after rekey ManagerOf(new) = %q, %v; want %q", got, err, managerLFDI)
+	}
+
+	check("after rekey", managerLFDI, http.StatusForbidden)
+	check("after rekey", victimLFDI, http.StatusOK)
+	check("after rekey", rotatedChildLFDI, http.StatusForbidden)
+}

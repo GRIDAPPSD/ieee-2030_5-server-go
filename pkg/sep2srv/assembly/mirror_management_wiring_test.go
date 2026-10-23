@@ -256,3 +256,33 @@ func TestAssembly_MirrorInstanceRoutesManagerWiring(t *testing.T) {
 		})
 	}
 }
+
+// TestAssembly_MirrorInstanceRoutesNeedTheManagedRecord pins the record rule
+// on each /mup instance registration of its own: the manager and the pair are
+// in place, the mirror exists, and only the managed device's EndDevice record
+// is gone. Every route must then refuse the manager, so a registration built
+// without the record check is caught on that route's own row.
+func TestAssembly_MirrorInstanceRoutesNeedTheManagedRecord(t *testing.T) {
+	t.Parallel()
+	for _, rt := range mupWiringInstanceRoutes {
+		t.Run(rt.name, func(t *testing.T) {
+			t.Parallel()
+			srv, stores := mupWiringRouter(t)
+			const mrid = "WIRING_RECORD"
+			if err := stores.EndDeviceManagers.Assign(context.Background(), wiringManagerLFDI, wiringDeviceLFDI); err != nil {
+				t.Fatalf("assign manager: %v", err)
+			}
+			loc := mupWiringCreateAsManager(t, srv, wiringManagerLFDI, mrid)
+			if err := stores.EndDevices.Delete(context.Background(), "88"); err != nil {
+				t.Fatalf("remove the managed device's record: %v", err)
+			}
+
+			resp := mupWiringRequest(t, rt.method, srv.URL+rt.path(loc), wiringManagerLFDI, rt.body(mrid))
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("manager %s %s with no EndDevice record: status = %d, want 403; body = %s", rt.method, rt.path(loc), resp.StatusCode, respBody)
+			}
+		})
+	}
+}

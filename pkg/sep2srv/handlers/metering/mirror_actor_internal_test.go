@@ -22,7 +22,7 @@ func TestNewMirrorActor_DecisionAndReasonClass(t *testing.T) {
 		t.Fatalf("assign pair: %v", err)
 	}
 	devices := memory.NewEndDeviceStore()
-	actFor := newMirrorActor(RequireDeviceRecords(pairs, devices))
+	actFor := newMirrorActor(pairs, RequireDeviceRecords(devices))
 
 	got, err := actFor(context.Background(), manager, device)
 	if err != nil || got != mirrorUnregistered {

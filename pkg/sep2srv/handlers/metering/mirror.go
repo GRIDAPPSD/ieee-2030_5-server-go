@@ -301,7 +301,7 @@ func authorizeMirrorOwner(
 
 	decision, err := actFor(r.Context(), lfdi, mup.DeviceLFDI)
 	if err != nil {
-		srverr.Internal(w, r, fmt.Errorf("the management lookup for the ownership check failed: %w", err))
+		srverr.Internal(w, r, fmt.Errorf("the ownership check failed: %w", err))
 		return zero, "", false
 	}
 	if decision != mirrorAllowed {
@@ -311,9 +311,13 @@ func authorizeMirrorOwner(
 		if len(loggedID) > maxLoggedIDLen {
 			loggedID = loggedID[:maxLoggedIDLen]
 		}
+		line := "mup: denied %s: caller=%q is neither the mirrored device nor its current manager (id=%q)"
+		if decision == mirrorUnregistered {
+			line = "mup: denied %s: caller=%q manages the mirrored device but it has no EndDevice record, reason=" +
+				unregisteredReason + " (id=%q)"
+		}
 		denials.record(lfdi, decision.denialReason("not-device-or-manager"), fmt.Sprintf(
-			"mup: denied %s: caller=%q is neither the mirrored device nor its current manager (id=%q)",
-			srverr.Route(r), lfdi, loggedID))
+			line, srverr.Route(r), lfdi, loggedID))
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return zero, "", false
 	}
@@ -460,10 +464,15 @@ const (
 	mirrorUnregistered
 )
 
+// unregisteredReason is the mirrorDenialLog reason class, and the reason
+// named in the log line, for a manager refused because the managed device has
+// no EndDevice record.
+const unregisteredReason = "managed-device-unregistered"
+
 // denialReason is the mirrorDenialLog reason class for a refusal.
 func (d mirrorDecision) denialReason(selfClass string) string {
 	if d == mirrorUnregistered {
-		return "managed-device-unregistered"
+		return unregisteredReason
 	}
 	return selfClass
 }
@@ -473,29 +482,30 @@ func (d mirrorDecision) denialReason(selfClass string) string {
 // See newMirrorActor for the rule and its fail-closed cases.
 type mirrorActor func(ctx context.Context, caller, device string) (mirrorDecision, error)
 
-// recordRequiringManagers is the management reader RequireDeviceRecords
-// returns: the wrapped pairs plus the EndDevice reader a manager's delegation
-// is checked against.
-type recordRequiringManagers struct {
-	store.EndDeviceManagementReader
-	devices store.EndDeviceReader
+// MirrorOption configures the /mup handlers. Every handler that takes a
+// management reader takes the same options, so a rule cannot be applied to one
+// route and missed on a sibling by construction.
+type MirrorOption func(*mirrorConfig)
+
+type mirrorConfig struct {
+	requireRecords bool
+	devices        store.EndDeviceReader
 }
 
-// RequireDeviceRecords wraps managers so every /mup route that takes it
-// admits a manager acting for a managed device only when that device has an
-// EndDevice record. A pair alone grants nothing on /mup, matching what GET
-// /edev already does. A caller acting for itself is unaffected, so a device
-// can mirror before it registers.
+// RequireDeviceRecords makes a manager's delegation on every /mup route need
+// the managed device's EndDevice record, looked up in devices. A pair alone
+// grants nothing, matching GET /edev. A caller acting for itself is
+// unaffected, so a device can mirror before it registers.
 //
-// Wrapping keeps the exported handler signatures unchanged. An absent managers
-// reader is returned as is (no delegation exists to gate). An absent devices
-// reader with a live managers reader refuses every delegation, since no record
-// can be found.
-func RequireDeviceRecords(managers store.EndDeviceManagementReader, devices store.EndDeviceReader) store.EndDeviceManagementReader {
-	if store.IsAbsent(managers) {
-		return managers
+// It is an option rather than a wrapper of the management reader so that
+// wrapping the reader again cannot silently drop it. Without the option a
+// pair alone admits the manager. An absent devices reader with the option
+// refuses every delegation, since no record can be found.
+func RequireDeviceRecords(devices store.EndDeviceReader) MirrorOption {
+	return func(c *mirrorConfig) {
+		c.requireRecords = true
+		c.devices = devices
 	}
-	return recordRequiringManagers{EndDeviceManagementReader: managers, devices: devices}
 }
 
 // newMirrorActor builds the "self or current manager" rule newMirrorActor's
@@ -512,20 +522,25 @@ func RequireDeviceRecords(managers store.EndDeviceManagementReader, devices stor
 //     matching the /edev ownership gate's managersAbsent branch;
 //   - a lookup miss (store.ErrNotFound, the device is unmanaged) is a refusal,
 //     not an error;
-//   - when managers came from RequireDeviceRecords, a manager's delegation
-//     also needs the device's EndDevice record, else mirrorUnregistered, the
-//     same pair-plus-record composition GET /edev applies;
+//   - with RequireDeviceRecords, a manager's delegation also needs the
+//     device's EndDevice record (coreedev.RecordFor, the check GET /edev
+//     uses), else mirrorUnregistered;
 //   - any other management-store or device-store error is reported to the
-//     caller via err, which every call site turns into a 500 rather than a
-//     silent refusal: an indeterminate check must not read as "not
-//     authorized".
+//     caller via err, naming the store, which every call site turns into a
+//     500 rather than a silent refusal: an indeterminate check must not read
+//     as "not authorized".
 //
-// managersAbsent is resolved once, at mount time, not per request: IsAbsent's
-// own doc says as much, and every /mup route constructor calls this exactly
-// once and reuses the returned func for the handler's lifetime.
-func newMirrorActor(managers store.EndDeviceManagementReader) mirrorActor {
+// managersAbsent and the devices reader's absence are resolved once, at mount
+// time, not per request: IsAbsent's own doc says as much, and every /mup route
+// constructor calls this exactly once and reuses the returned func for the
+// handler's lifetime.
+func newMirrorActor(managers store.EndDeviceManagementReader, opts ...MirrorOption) mirrorActor {
+	var cfg mirrorConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	managersAbsent := store.IsAbsent(managers)
-	recorded, needsRecord := managers.(recordRequiringManagers)
+	devicesAbsent := store.IsAbsent(cfg.devices)
 	return func(ctx context.Context, caller, device string) (mirrorDecision, error) {
 		if coreedev.OwnedBy(device, caller) {
 			return mirrorAllowed, nil
@@ -534,22 +549,23 @@ func newMirrorActor(managers store.EndDeviceManagementReader) mirrorActor {
 			return mirrorRefused, nil
 		}
 		managed, err := coreedev.CurrentManagerOwns(ctx, managers, device, caller)
-		if err != nil || !managed {
-			return mirrorRefused, err
+		if err != nil {
+			return mirrorRefused, fmt.Errorf("look up the device's manager: %w", err)
 		}
-		if !needsRecord {
+		if !managed {
+			return mirrorRefused, nil
+		}
+		if !cfg.requireRecords {
 			return mirrorAllowed, nil
 		}
-		if store.IsAbsent(recorded.devices) {
+		if devicesAbsent {
 			return mirrorUnregistered, nil
 		}
-		dev, err := recorded.devices.GetByLFDI(ctx, device)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			return mirrorUnregistered, nil
-		case err != nil:
-			return mirrorRefused, err
-		case !coreedev.OwnedBy(dev.LFDI, device):
+		_, state, err := coreedev.RecordFor(ctx, cfg.devices, device)
+		if err != nil {
+			return mirrorRefused, fmt.Errorf("look up the device's EndDevice record: %w", err)
+		}
+		if state != coreedev.RecordPresent {
 			return mirrorUnregistered, nil
 		}
 		return mirrorAllowed, nil
@@ -729,7 +745,8 @@ func (d *mirrorDenialLog) closeExpiredLocked(now time.Time) string {
 //
 // managers resolves which LFDI currently manages a device (see
 // store.EndDeviceManagementReader). A nil or absent reader means no
-// delegation: only self-mirroring is accepted (see newMirrorActor).
+// delegation: only self-mirroring is accepted (see newMirrorActor). opts apply
+// to every /mup handler alike; see RequireDeviceRecords.
 //
 // The mirrored device D is resolved from the body's deviceLFDI (#720): absent
 // means the caller itself; present must be valid HexBinary160 hex (400
@@ -755,8 +772,9 @@ func HandleCreateMirrorUsagePoint(
 	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
 	postRateProvider PostRateProvider,
+	opts ...MirrorOption,
 ) http.HandlerFunc {
-	actFor := newMirrorActor(managers)
+	actFor := newMirrorActor(managers, opts...)
 	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -814,13 +832,16 @@ func HandleCreateMirrorUsagePoint(
 		}
 		decision, err := actFor(r.Context(), lfdi, device)
 		if err != nil {
-			srverr.Internal(w, r, fmt.Errorf("the management lookup for the device claim failed: %w", err))
+			srverr.Internal(w, r, fmt.Errorf("the device claim check failed: %w", err))
 			return
 		}
 		if decision != mirrorAllowed {
-			denials.record(lfdi, decision.denialReason("unclaimable-device"), fmt.Sprintf(
-				"mup: create refused a deviceLFDI claim: caller=%q may not act for device=%q",
-				lfdi, device))
+			line := "mup: create refused a deviceLFDI claim: caller=%q may not act for device=%q"
+			if decision == mirrorUnregistered {
+				line = "mup: create refused a deviceLFDI claim: caller=%q manages device=%q but it has no EndDevice record, reason=" +
+					unregisteredReason
+			}
+			denials.record(lfdi, decision.denialReason("unclaimable-device"), fmt.Sprintf(line, lfdi, device))
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -959,8 +980,9 @@ func HandleMirrorUsagePoint(
 	s store.ResourceStore[sep2.MirrorUsagePoint],
 	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
+	opts ...MirrorOption,
 ) http.HandlerFunc {
-	actFor := newMirrorActor(managers)
+	actFor := newMirrorActor(managers, opts...)
 	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -1031,8 +1053,9 @@ func HandlePutMirrorUsagePoint(
 	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
 	postRateProvider PostRateProvider,
+	opts ...MirrorOption,
 ) http.HandlerFunc {
-	actFor := newMirrorActor(managers)
+	actFor := newMirrorActor(managers, opts...)
 	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
@@ -1209,8 +1232,9 @@ func HandleDeleteMirrorUsagePoint(
 	mmrStore store.ScopedStore[sep2.MirrorMeterReading],
 	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
+	opts ...MirrorOption,
 ) http.HandlerFunc {
-	actFor := newMirrorActor(managers)
+	actFor := newMirrorActor(managers, opts...)
 	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -1413,8 +1437,9 @@ func HandlePostMirrorMeterReading(
 	mmrStore store.ScopedStore[sep2.MirrorMeterReading],
 	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
+	opts ...MirrorOption,
 ) http.HandlerFunc {
-	actFor := newMirrorActor(managers)
+	actFor := newMirrorActor(managers, opts...)
 	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

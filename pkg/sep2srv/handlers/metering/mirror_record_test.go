@@ -37,10 +37,10 @@ func seedEndDevice(t *testing.T, devices *memory.EndDeviceStore, lfdi string) {
 	}
 }
 
-func postMirrorClaim(t *testing.T, managers store.EndDeviceManagementReader, mupStore *memory.Store[sep2.MirrorUsagePoint], caller, claimed string) *httptest.ResponseRecorder {
+func postMirrorClaim(t *testing.T, managers store.EndDeviceManagementReader, mupStore *memory.Store[sep2.MirrorUsagePoint], caller, claimed string, opts ...metering.MirrorOption) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(mupStore, managers, identityProvider(caller), nil))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(mupStore, managers, identityProvider(caller), nil, opts...))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(mupWireBody("REC_MRID", "x", claimed))))
 	return w
@@ -56,7 +56,7 @@ func TestRequireDeviceRecords_CreateNeedsTheManagedRecord(t *testing.T) {
 		pairs, devices := recordFixture(t)
 		mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 
-		w := postMirrorClaim(t, metering.RequireDeviceRecords(pairs, devices), mupStore, mgmtManagerLFDI, mgmtDeviceLFDI)
+		w := postMirrorClaim(t, pairs, mupStore, mgmtManagerLFDI, mgmtDeviceLFDI, metering.RequireDeviceRecords(devices))
 
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
@@ -67,7 +67,7 @@ func TestRequireDeviceRecords_CreateNeedsTheManagedRecord(t *testing.T) {
 		if n, _ := mupStore.Count(context.Background()); n != 0 {
 			t.Errorf("stored count = %d, want 0", n)
 		}
-		if !strings.Contains(buf.String(), "may not act for device="+`"`+mgmtDeviceLFDI+`"`) {
+		if !strings.Contains(buf.String(), "device="+`"`+mgmtDeviceLFDI+`"`) || !strings.Contains(buf.String(), unregisteredReason) {
 			t.Errorf("refusal log line missing, log = %q", buf.String())
 		}
 	})
@@ -77,7 +77,7 @@ func TestRequireDeviceRecords_CreateNeedsTheManagedRecord(t *testing.T) {
 		seedEndDevice(t, devices, mgmtDeviceLFDI)
 		mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 
-		w := postMirrorClaim(t, metering.RequireDeviceRecords(pairs, devices), mupStore, mgmtManagerLFDI, mgmtDeviceLFDI)
+		w := postMirrorClaim(t, pairs, mupStore, mgmtManagerLFDI, mgmtDeviceLFDI, metering.RequireDeviceRecords(devices))
 
 		if w.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
@@ -95,7 +95,7 @@ func TestRequireDeviceRecords_CreateNeedsTheManagedRecord(t *testing.T) {
 		pairs, devices := recordFixture(t)
 		mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 
-		w := postMirrorClaim(t, metering.RequireDeviceRecords(pairs, devices), mupStore, mgmtDeviceLFDI, "")
+		w := postMirrorClaim(t, pairs, mupStore, mgmtDeviceLFDI, "", metering.RequireDeviceRecords(devices))
 
 		if w.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
@@ -133,7 +133,7 @@ func TestRequireDeviceRecords_InstanceRoutesNeedTheManagedRecord(t *testing.T) {
 				mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 				mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 				id := seedDerivedMirror(t, mupStore, mgmtDeviceLFDI, "REC_ROUTE", "before")
-				mux := mirrorInstanceMuxWithManagers(mupStore, mmrStore, metering.RequireDeviceRecords(pairs, devices), mgmtManagerLFDI)
+				mux := mirrorInstanceMuxWithManagers(mupStore, mmrStore, pairs, mgmtManagerLFDI, metering.RequireDeviceRecords(devices))
 
 				w := httptest.NewRecorder()
 				mux.ServeHTTP(w, httptest.NewRequest(rt.method, strings.Replace(rt.path, "%s", id, 1), bytes.NewReader(rt.body)))
@@ -184,7 +184,7 @@ func TestRequireDeviceRecords_IndeterminateRecordLookup(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
-			w := postMirrorClaim(t, metering.RequireDeviceRecords(pairs, tc.devices), mupStore, mgmtManagerLFDI, mgmtDeviceLFDI)
+			w := postMirrorClaim(t, pairs, mupStore, mgmtManagerLFDI, mgmtDeviceLFDI, metering.RequireDeviceRecords(tc.devices))
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d; body = %s", w.Code, tc.want, w.Body.String())
 			}
@@ -195,10 +195,65 @@ func TestRequireDeviceRecords_IndeterminateRecordLookup(t *testing.T) {
 	}
 }
 
-// TestRequireDeviceRecords_AbsentManagersIsReturnedUnchanged keeps the
-// no-delegation mode: wrapping an absent reader must not make it present.
-func TestRequireDeviceRecords_AbsentManagersIsReturnedUnchanged(t *testing.T) {
-	if got := metering.RequireDeviceRecords(nil, memory.NewEndDeviceStore()); !store.IsAbsent(got) {
-		t.Errorf("RequireDeviceRecords(nil, ...) = %T, want an absent reader", got)
+// TestRequireDeviceRecords_SurvivesAWrappedManagementReader pins that the
+// rule rides on the handler option, not on the dynamic type of the management
+// reader: wrapping the reader again must not make the check fail open.
+func TestRequireDeviceRecords_SurvivesAWrappedManagementReader(t *testing.T) {
+	pairs, devices := recordFixture(t)
+	wrapped := struct {
+		store.EndDeviceManagementReader
+	}{pairs}
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+
+	w := postMirrorClaim(t, wrapped, mupStore, mgmtManagerLFDI, mgmtDeviceLFDI, metering.RequireDeviceRecords(devices))
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+	if n, _ := mupStore.Count(context.Background()); n != 0 {
+		t.Errorf("stored count = %d, want 0", n)
+	}
+}
+
+// TestRequireDeviceRecords_RefusalLogNamesTheMissingRecord pins that every
+// refusal path logs the real reason: a paired manager refused for want of an
+// EndDevice record must not read as "not the manager".
+func TestRequireDeviceRecords_RefusalLogNamesTheMissingRecord(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		buf := captureMirrorLog(t)
+		pairs, devices := recordFixture(t)
+		postMirrorClaim(t, pairs, memory.NewStore[sep2.MirrorUsagePoint](), mgmtManagerLFDI, mgmtDeviceLFDI, metering.RequireDeviceRecords(devices))
+		if !strings.Contains(buf.String(), unregisteredReason) {
+			t.Errorf("log = %q, want it to name %q", buf.String(), unregisteredReason)
+		}
+	})
+	t.Run("instance route", func(t *testing.T) {
+		buf := captureMirrorLog(t)
+		pairs, devices := recordFixture(t)
+		mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+		id := seedDerivedMirror(t, mupStore, mgmtDeviceLFDI, "REC_LOG", "before")
+		mux := mirrorInstanceMuxWithManagers(mupStore, memory.NewScopedStore[sep2.MirrorMeterReading](), pairs, mgmtManagerLFDI, metering.RequireDeviceRecords(devices))
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/mup/"+id, nil))
+		if !strings.Contains(buf.String(), unregisteredReason) {
+			t.Errorf("log = %q, want it to name %q", buf.String(), unregisteredReason)
+		}
+		if strings.Contains(buf.String(), "neither the mirrored device nor its current manager") {
+			t.Errorf("log = %q: a paired manager was logged as not the manager", buf.String())
+		}
+	})
+}
+
+// TestRequireDeviceRecords_DeviceStoreOutageNamesTheDeviceStore pins that the
+// 500's log line blames the EndDevice store, not the management store.
+func TestRequireDeviceRecords_DeviceStoreOutageNamesTheDeviceStore(t *testing.T) {
+	buf := captureMirrorLog(t)
+	pairs, _ := recordFixture(t)
+	w := postMirrorClaim(t, pairs, memory.NewStore[sep2.MirrorUsagePoint](), mgmtManagerLFDI, mgmtDeviceLFDI,
+		metering.RequireDeviceRecords(failingDevices{err: errors.New("device store unavailable")}))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	if !strings.Contains(buf.String(), "EndDevice record") {
+		t.Errorf("log = %q, want it to name the EndDevice record lookup", buf.String())
 	}
 }

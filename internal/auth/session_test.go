@@ -28,9 +28,22 @@ func TestSessionIssueAndValidateWithoutConsuming(t *testing.T) {
 	}
 }
 
+// stepClock is the store's only time source in these tests, so expiry depends
+// on advance calls and not on how long the host takes between operations.
+type stepClock struct{ t time.Time }
+
+func newStepClock(store *auth.SessionStore) *stepClock {
+	c := &stepClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	store.SetClock(func() time.Time { return c.t })
+	return c
+}
+
+func (c *stepClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
 func TestSessionIdleTimeoutSlides(t *testing.T) {
 	const idle = 40 * time.Millisecond
 	store := auth.NewSessionStore(idle, 5*time.Minute)
+	clock := newStepClock(store)
 
 	id, err := store.Issue()
 	if err != nil {
@@ -40,21 +53,28 @@ func TestSessionIdleTimeoutSlides(t *testing.T) {
 	// Three validations spaced past half the idle window each: the session
 	// outlives one idle window only because each validation slides it.
 	for i := 1; i <= 3; i++ {
-		time.Sleep(idle * 3 / 4)
+		clock.advance(idle * 3 / 4)
 		if !store.Validate(id) {
 			t.Fatalf("validation %d of 3 at %v of continuous use failed: idle deadline did not slide", i, time.Duration(i)*idle*3/4)
 		}
 	}
+
+	clock.advance(idle)
+	if store.Validate(id) {
+		t.Error("session validated a full idle window after its last use")
+	}
 }
 
 func TestSessionIdleTimeoutExpires(t *testing.T) {
-	store := auth.NewSessionStore(1*time.Millisecond, 5*time.Minute)
+	const idle = 1 * time.Millisecond
+	store := auth.NewSessionStore(idle, 5*time.Minute)
+	clock := newStepClock(store)
 
 	id, err := store.Issue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(5 * time.Millisecond)
+	clock.advance(idle)
 
 	if store.Validate(id) {
 		t.Error("idle-expired session should not validate")
@@ -67,40 +87,28 @@ func TestSessionIdleTimeoutExpires(t *testing.T) {
 func TestSessionAbsoluteExpiryIsNotExtendedByUse(t *testing.T) {
 	const idle = 20 * time.Millisecond
 	const absolute = 60 * time.Millisecond
+	const step = 10 * time.Millisecond
 	store := auth.NewSessionStore(idle, absolute)
+	clock := newStepClock(store)
 
 	id, err := store.Issue()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	start := time.Now()
-	validations := 0
-	for {
-		elapsed := time.Since(start)
-		ok := store.Validate(id)
-		switch {
-		case elapsed < absolute-idle:
-			if !ok {
-				t.Fatalf("validation %d at %v failed while inside both windows", validations+1, elapsed)
-			}
-			validations++
-		case !ok:
-			if elapsed < absolute {
-				t.Fatalf("session refused at %v, before the %v absolute cap", elapsed, absolute)
-			}
-			if validations == 0 {
-				t.Fatal("session expired before any successful validation: the fixture proved nothing about the cap")
-			}
-			if store.Len() != 0 {
-				t.Errorf("expired session count = %d, want 0 (the sweep must reclaim it)", store.Len())
-			}
-			return
+	for elapsed := step; elapsed < absolute; elapsed += step {
+		clock.advance(step)
+		if !store.Validate(id) {
+			t.Fatalf("session refused at %v, before the %v absolute cap", elapsed, absolute)
 		}
-		if time.Since(start) > 2*absolute {
-			t.Fatalf("session still validating at %v with a %v absolute cap after %d validations: the cap was extended by use", time.Since(start), absolute, validations)
-		}
-		time.Sleep(idle / 2)
+	}
+
+	clock.advance(step)
+	if store.Validate(id) {
+		t.Fatalf("session still validating at %v with a %v absolute cap: the cap was extended by use", absolute, absolute)
+	}
+	if store.Len() != 0 {
+		t.Errorf("expired session count = %d, want 0 (the sweep must reclaim it)", store.Len())
 	}
 }
 
@@ -129,7 +137,9 @@ func TestSessionDelete(t *testing.T) {
 // depend on new sessions being minted: a store that has stopped issuing must
 // still drop what has expired.
 func TestSessionSweepRunsWithoutIssue(t *testing.T) {
-	store := auth.NewSessionStore(1*time.Millisecond, 5*time.Minute)
+	const idle = 1 * time.Millisecond
+	store := auth.NewSessionStore(idle, 5*time.Minute)
+	clock := newStepClock(store)
 
 	for i := 0; i < 3; i++ {
 		if _, err := store.Issue(); err != nil {
@@ -140,7 +150,7 @@ func TestSessionSweepRunsWithoutIssue(t *testing.T) {
 		t.Fatalf("session count = %d, want 3", store.Len())
 	}
 
-	time.Sleep(5 * time.Millisecond)
+	clock.advance(idle)
 
 	// Validate is the only call made after the sleep, and it names a session
 	// that never existed, so nothing but the sweep can change the count.
@@ -239,14 +249,15 @@ func TestSessionStoreEvictsOldestAtCapacity(t *testing.T) {
 // two ways a slot is freed: an expired entry is swept first, so a live session
 // is never evicted while a dead one occupies a slot.
 func TestSessionStoreEvictionPrefersExpiredOverLive(t *testing.T) {
-	// A very short idle window so the first batch expires on its own.
-	store := auth.NewSessionStore(20*time.Millisecond, 5*time.Minute)
+	const idle = 20 * time.Millisecond
+	store := auth.NewSessionStore(idle, 5*time.Minute)
+	clock := newStepClock(store)
 
 	stale, err := store.Issue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(40 * time.Millisecond)
+	clock.advance(2 * idle)
 
 	fresh, err := store.Issue()
 	if err != nil {

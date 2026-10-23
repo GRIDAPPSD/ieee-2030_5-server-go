@@ -1636,3 +1636,50 @@ func TestFSASwap_ExhaustedVersionIs409AndMovesNothing(t *testing.T) {
 		})
 	}
 }
+
+// The OOB delete must not leave the device's DERs, or the subscriptions
+// another device holds on its resources, behind for the index to reuse (GRIDAPPSD/ieee-2030_5-server-go#1100).
+func TestEdevDeleteOOB_RemovesDERsAndSubscriptions(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	if err := stores.EndDevices.Create(ctx, "e1", sep2.EndDevice{}); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	var der sep2.DER
+	der.Href = "/edev/e1/der/1"
+	if err := stores.DERs.Create(ctx, "e1", "1", der); err != nil {
+		t.Fatalf("seed DER: %v", err)
+	}
+	if err := stores.DERStatuses.Create(ctx, "e1/1", "default", sep2.DERStatus{}); err != nil {
+		t.Fatalf("seed ders: %v", err)
+	}
+	own := sep2.Subscription{SubscribedResource: "/edev"}
+	own.Href = "/edev/e1/sub/s1"
+	other := sep2.Subscription{SubscribedResource: "/edev/e1/der/1/ders"}
+	other.Href = "/edev/e5/sub/s2"
+	for id, sub := range map[string]sep2.Subscription{"s1": own, "s2": other} {
+		if err := stores.Subscriptions.Create(ctx, id, sub); err != nil {
+			t.Fatalf("seed subscription %s: %v", id, err)
+		}
+	}
+
+	rr := postJSON(t, h, tmEdevDelete, tmTestToken, map[string]string{"end_device_id": "e1"})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+
+	if n, err := stores.DERs.Count(ctx, "e1"); err != nil || n != 0 {
+		t.Errorf("DERs under e1 = %d, %v, want 0", n, err)
+	}
+	if n, err := stores.DERStatuses.Count(ctx, "e1/1"); err != nil || n != 0 {
+		t.Errorf("DERStatuses under e1/1 = %d, %v, want 0", n, err)
+	}
+	// MAINT-001 notifies the device's own EndDeviceList subscription after
+	// this returns, so it stays until the index is registered again.
+	if recs, err := stores.Subscriptions.ListByResource(ctx, "/edev"); err != nil || len(recs) != 1 {
+		t.Errorf("e1's own EndDeviceList subscription = %d, %v, want 1 (kept for the notification)", len(recs), err)
+	}
+	if recs, err := stores.Subscriptions.ListByResource(ctx, "/edev/e1/der/1/ders"); err != nil || len(recs) != 0 {
+		t.Errorf("e5's subscription on e1's resource = %d, %v, want 0", len(recs), err)
+	}
+}

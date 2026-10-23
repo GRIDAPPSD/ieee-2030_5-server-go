@@ -31,6 +31,34 @@ func deleteScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedSt
 	return err
 }
 
+// prefixCascader is the optional capability to remove every parent whose id
+// starts with a prefix as ONE store operation. A device owns many composite
+// parents (deviceID + "/" + derId); listing them and then deleting each leaves
+// a window in which a parent created in between survives the cascade.
+type prefixCascader interface {
+	DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error)
+}
+
+// deleteScopedParentsUnder removes every parent of s whose id starts with prefix.
+func deleteScopedParentsUnder[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], prefix string) error {
+	cascader, ok := s.(prefixCascader)
+	if !ok {
+		return fmt.Errorf("the store (%T) cannot cascade a prefix delete", s)
+	}
+	_, err := cascader.DeleteParentsWithPrefix(ctx, prefix)
+	return err
+}
+
+// probeScopedParentsUnder checks that s HAS the capability
+// deleteScopedParentsUnder requires. It reads nothing else: the delete is a
+// single operation, so there is no enumeration to rehearse.
+func probeScopedParentsUnder[T store.Copier[T]](_ context.Context, s store.ScopedStore[T], _ string) error {
+	if _, ok := s.(prefixCascader); !ok {
+		return fmt.Errorf("the store (%T) cannot cascade a prefix delete", s)
+	}
+	return nil
+}
+
 // probeScopedParent checks the two things known ahead of the actual cascade:
 // that s HAS the capability deleteScopedParent requires, and that a read
 // against it (HasParent) succeeds. [store.ScopedReader.HasParent] must

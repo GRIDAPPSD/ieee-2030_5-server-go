@@ -161,6 +161,13 @@ type parentCascader interface {
 	DeleteParent(ctx context.Context, parentID string) (uint32, error)
 }
 
+// prefixCascader is the optional remove-every-parent-under-a-prefix capability
+// the EndDevice delete cascade asserts for, redeclared here for the same reason
+// as parentCascader.
+type prefixCascader interface {
+	DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error)
+}
+
 // NewFaultyScopedStore wraps inner in a decorator that fails every operation
 // while fault is armed and delegates to inner otherwise.
 //
@@ -181,7 +188,11 @@ type parentCascader interface {
 func NewFaultyScopedStore[T store.Copier[T]](inner store.ScopedStore[T], fault *Fault) store.ScopedStore[T] {
 	base := &faultyScopedStore[T]{inner: inner, fault: fault}
 	if cascader, ok := inner.(parentCascader); ok {
-		return &faultyCascadingScopedStore[T]{faultyScopedStore: base, cascader: cascader}
+		cascading := &faultyCascadingScopedStore[T]{faultyScopedStore: base, cascader: cascader}
+		if prefixer, ok := inner.(prefixCascader); ok {
+			return &faultyPrefixCascadingScopedStore[T]{faultyCascadingScopedStore: cascading, prefixer: prefixer}
+		}
+		return cascading
 	}
 	return base
 }
@@ -262,11 +273,26 @@ func (s *faultyCascadingScopedStore[T]) DeleteParent(ctx context.Context, parent
 	return s.cascader.DeleteParent(ctx, parentID)
 }
 
+// faultyPrefixCascadingScopedStore adds the prefix capability to a store that
+// also cascades by exact parent. It exists only when inner has both.
+type faultyPrefixCascadingScopedStore[T store.Copier[T]] struct {
+	*faultyCascadingScopedStore[T]
+	prefixer prefixCascader
+}
+
+func (s *faultyPrefixCascadingScopedStore[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
+	if err := s.fault.Err(); err != nil {
+		return 0, err
+	}
+	return s.prefixer.DeleteParentsWithPrefix(ctx, prefix)
+}
+
 // Compile-time proof that the decorators satisfy the contracts they wrap.
 var (
 	_ store.ResourceStore[Resource] = (*faultyResourceStore[Resource])(nil)
 	_ store.ScopedStore[Resource]   = (*faultyScopedStore[Resource])(nil)
 	_ store.ScopedStore[Resource]   = (*faultyCascadingScopedStore[Resource])(nil)
 	_ parentCascader                = (*faultyCascadingScopedStore[Resource])(nil)
+	_ prefixCascader                = (*faultyPrefixCascadingScopedStore[Resource])(nil)
 	_ store.EndDeviceStore          = (*faultyEndDeviceStore)(nil)
 )

@@ -32,6 +32,8 @@ const (
 func mupWiringRouter(t *testing.T) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
 	stores := testStores()
+	// A manager acts for a managed device only if its EndDevice record exists.
+	seedDevice(t, stores.EndDevices, "88", wiringDeviceLFDI, "")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{}, stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil,
 	)

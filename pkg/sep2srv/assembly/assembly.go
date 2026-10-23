@@ -953,6 +953,14 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// lifecycle store is wired.
 	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls)
 
+	// The protocol routes below read through these two, which note the served
+	// mRIDs on the request's device log line. derPrograms above counts the
+	// undecorated store, and the admin handlers never see either. The control
+	// decorator wraps the ordering wrapper, not the other way round, so List
+	// notes the page that was served rather than the whole collection.
+	servedControls := devicelog.NewServedStore(store.OrderedScoped(derControls, coreder.CompareDERControl), func(c sep2.DERControl) string { return c.MRID })
+	servedDefaults := devicelog.NewServedStore(defaultDERControls, func(c sep2.DefaultDERControl) string { return c.MRID })
+
 	dercap, derg, ders, dera := coreder.DERSingletonHandlers(
 		derCapabilities, derSettings, derStatuses, derAvailabilities,
 	)
@@ -1031,7 +1039,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 		scopedListHandlerDeep[sep2.DERControl, sep2.DERControlList](
-			store.OrderedScoped(derControls, coreder.CompareDERControl), store.SortByListOrdering, coreder.BuildDERControlList, 900,
+			servedControls, store.SortByListOrdering, coreder.BuildDERControlList, 900,
 		))
 
 	// A DERControl's own href, so an activated event resolves. A client that
@@ -1051,7 +1059,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// URI and responseRequired is a constant, unlike the DER instance stamp
 	// above, which derives links from path values.
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}",
-		scopedResourceHandlerDeep[sep2.DERControl](derControls, "dercId",
+		scopedResourceHandlerDeep[sep2.DERControl](servedControls, "dercId",
 			func(_ *http.Request, ctrl *sep2.DERControl) { coreder.StampResponseRequest(ctrl) }))
 
 	// DefaultDERControl is utility-set, not device-written: only GET is
@@ -1059,7 +1067,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// 405 (GET, HEAD), so this stays true even if a PUT mount is added back
 	// here without reading why it was removed (#456).
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
-		coreder.DefaultDERControlHandler(defaultDERControls))
+		coreder.DefaultDERControlHandler(servedDefaults))
 
 	// Global DERCurve
 	mux.HandleFunc("GET /dc", corelisthandler.SortedListHandler[sep2.DERCurve, sep2.DERCurveList](

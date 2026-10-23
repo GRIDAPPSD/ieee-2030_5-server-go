@@ -38,6 +38,20 @@ func logServerWith(t *testing.T, policy assembly.AuthPolicy, wrapManagers func(s
 // maxBytes.
 func logServerSized(t *testing.T, maxBytes int64, policy assembly.AuthPolicy, wrapManagers func(store.EndDeviceManagementStore) store.EndDeviceManagementStore, wrapDevices func(store.EndDeviceStore) store.EndDeviceStore) (srv *httptest.Server, dir string, closeLog func(), w *devicelog.Writer) {
 	t.Helper()
+	stores := newManagementFleet(t).stores
+	if wrapManagers != nil {
+		stores.EndDeviceManagers = wrapManagers(stores.EndDeviceManagers)
+	}
+	if wrapDevices != nil {
+		stores.EndDevices = wrapDevices(stores.EndDevices)
+	}
+	return logServerFor(t, maxBytes, policy, stores)
+}
+
+// logServerFor serves stores through a router that writes the device log into
+// a fresh directory, so a test can seed the stores first.
+func logServerFor(t *testing.T, maxBytes int64, policy assembly.AuthPolicy, stores *assembly.Stores) (srv *httptest.Server, dir string, closeLog func(), w *devicelog.Writer) {
+	t.Helper()
 	dir = t.TempDir()
 	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: maxBytes})
 	if err != nil {
@@ -56,13 +70,6 @@ func logServerSized(t *testing.T, maxBytes int64, policy assembly.AuthPolicy, wr
 		}
 	}
 	t.Cleanup(closeLog)
-	stores := newManagementFleet(t).stores
-	if wrapManagers != nil {
-		stores.EndDeviceManagers = wrapManagers(stores.EndDeviceManagers)
-	}
-	if wrapDevices != nil {
-		stores.EndDevices = wrapDevices(stores.EndDevices)
-	}
 	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{DeviceLog: w}, stores, policy, "serverSFDI", "serverLFDI", nil)
 	srv = httptest.NewServer(handler)
 	t.Cleanup(srv.Close)

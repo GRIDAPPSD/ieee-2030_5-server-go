@@ -267,6 +267,91 @@ describe('DeviceLog', () => {
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(2)
   })
 
+  it('pauses auto-load when an older page adds no line the filter shows, and re-arms on a filter change', async () => {
+    const paths = serve((path) => {
+      if (path.includes('before=c3')) return page([entry(2), entry(1)], { nextBefore: 'c1' })
+      if (path.includes('before=c1')) return page([entry(0, { status: 500 })], { nextBefore: null })
+      return page([entry(3)], { nextBefore: 'c3' })
+    })
+    mount()
+    await settle()
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.queryByTestId('device-log-row')).toBeNull()
+    // Re-arming on the filter change made a new observer; it loads one page.
+    FakeObserver.live()[0].see()
+    await settle()
+    expect(paths).toHaveLength(2)
+    // That page added nothing the filter shows: no observer, a button instead.
+    expect(FakeObserver.live()).toHaveLength(0)
+    expect(screen.getByTestId('device-logs-older-manual')).toHaveTextContent('Load older lines')
+
+    await fireEvent.click(screen.getByTestId('device-logs-older-manual'))
+    await settle()
+    expect(paths).toHaveLength(3)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
+    expect(screen.queryByTestId('device-logs-older-manual')).toBeNull()
+  })
+
+  it('leaves the button in place when a click loads a page with nothing to show', async () => {
+    const paths = serve((path) =>
+      path.includes('before=') ? page([entry(2)], { nextBefore: 'c2' }) : page([entry(3)], { nextBefore: 'c3' }),
+    )
+    mount()
+    await settle()
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    FakeObserver.live()[0].see()
+    await settle()
+    await fireEvent.click(screen.getByTestId('device-logs-older-manual'))
+    await settle()
+    expect(paths).toHaveLength(3)
+    expect(screen.getByTestId('device-logs-older-manual')).toBeInTheDocument()
+    expect(FakeObserver.live()).toHaveLength(0)
+
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.queryByTestId('device-logs-older-manual')).toBeNull()
+    expect(FakeObserver.live()).toHaveLength(1)
+  })
+
+  it('counts only the held lines the filter shows, and shows all of them on the jump', async () => {
+    serve((path) =>
+      path.includes('after=') ? page([entry(5, { status: 500 }), entry(4), entry(3)]) : page([entry(2), entry(1)]),
+    )
+    mount()
+    await settle()
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    const box = screen.getByTestId('device-logs-scroll')
+    Object.defineProperty(box, 'scrollTop', { value: 40, writable: true, configurable: true })
+    await fireEvent.scroll(box)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('1 new line')
+
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('3 new lines')
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.getByTestId('device-logs-new')).toHaveTextContent('1 new line')
+    await fireEvent.click(screen.getByTestId('device-logs-new'))
+    await fireEvent.click(screen.getByTestId('device-logs-errors'))
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(5)
+    expect(screen.queryByTestId('device-logs-new')).toBeNull()
+  })
+
+  it('keeps the older-read message while Retry is shown, after a poll clears the shared error', async () => {
+    serve((path) => {
+      if (path.includes('before=')) return { ok: false, status: 500, error: 'boom' }
+      return page([entry(2)], { nextBefore: 'c2' })
+    })
+    mount()
+    await settle()
+    FakeObserver.live()[0].see()
+    await settle()
+    expect(screen.getByTestId('device-logs-older-error')).toHaveTextContent('boom')
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.queryByTestId('device-logs-error')).toBeNull()
+    expect(screen.getByTestId('device-logs-older-retry')).toBeInTheDocument()
+    expect(screen.getByTestId('device-logs-older-error')).toHaveTextContent('boom')
+  })
+
   it('keeps the rows under the reader still while a poll delivers lines', async () => {
     serve((path) => (path.includes('after=') ? page([entry(5), entry(4)]) : page([entry(3), entry(2), entry(1)])))
     mount()

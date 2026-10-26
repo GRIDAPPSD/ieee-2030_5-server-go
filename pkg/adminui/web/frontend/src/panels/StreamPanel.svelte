@@ -3,7 +3,7 @@
   // teardown closes the stream when Stop, a new submit, a panel or tab
   // change, or unmount ends it, so a swap never leaves a stream open
   // holding one of the server's few stream slots.
-  import { tick } from 'svelte'
+  import { followBottom } from '../lib/followBottom'
   import type { PanelStreamInfo } from '../lib/descriptor'
   import {
     appendLines,
@@ -28,7 +28,7 @@
   let pending: StreamLine[] = []
   let flushScheduled = false
   // Follow the newest line until the operator scrolls up from the bottom.
-  let follow = true
+  const follow = followBottom(() => logEl)
 
   const connectionText = $derived(
     connection === 'ended'
@@ -45,7 +45,7 @@
     if (problem !== null) return
     pending = []
     lines = []
-    follow = true
+    follow.follow()
     run = { param, n: (run?.n ?? 0) + 1 }
   }
 
@@ -53,20 +53,12 @@
     run = null
   }
 
-  function onscroll() {
-    if (logEl) follow = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 8
-  }
-
   function flush() {
     flushScheduled = false
     if (pending.length === 0) return
     lines = appendLines(lines, pending)
     pending = []
-    if (follow) {
-      void tick().then(() => {
-        if (follow && logEl) logEl.scrollTop = logEl.scrollHeight
-      })
-    }
+    follow.pinAfterUpdate()
   }
 
   function add(kind: StreamLine['kind'], text: string, time: string) {
@@ -140,7 +132,7 @@
     <div class="result err" role="alert" data-testid="stream-validation">{validation}</div>
   {/if}
   <div class="result" data-testid="stream-connection" data-state={connection}>{connectionText}</div>
-  <ol class="stream-log" data-testid="stream-log" aria-label="Stream output" aria-live="polite" bind:this={logEl} {onscroll}>
+  <ol class="stream-log" data-testid="stream-log" aria-label="Stream output" aria-live="polite" bind:this={logEl} onscroll={follow.onscroll}>
     {#each lines as line (line.key)}
       <li class="stream-line" class:stream-status={line.kind === 'status'} data-kind={line.kind}>
         {#if line.time}<time class="mono" datetime={line.time}>{line.time}</time>{/if}

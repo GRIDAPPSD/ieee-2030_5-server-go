@@ -603,6 +603,36 @@ describe('DerControl: programs, primacy and the controls table', () => {
     expect(screen.getAllByTestId('der-control-row')).toHaveLength(5)
   })
 
+  it('counts the pending and active controls, and can hide the rest', async () => {
+    const { container } = await mount({ controlsFor: reply })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
+    expect(tid('der-control-live-count')).toHaveTextContent('2 pending or active')
+
+    await fireEvent.click(tid('der-control-live-only'))
+    const mrids = screen.getAllByTestId('der-control-row').map((r) => r.getAttribute('data-mrid'))
+    expect(mrids).toEqual(['SCHED', 'ACTIVE'])
+
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(screen.getAllByTestId('der-control-row')).toHaveLength(5)
+  })
+
+  it('sends a second control from the same form without retyping it', async () => {
+    const { post, container } = await mount()
+    post.mockResolvedValue(scheduledReply())
+    await fillFlagSchedule(container)
+    await sendAndConfirm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.input(inp(container, '#controlStartAt'), { target: { value: '2030-01-02T03:04:05' } })
+    await sendAndConfirm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+    const second = post.mock.calls[1]?.[1] as Record<string, unknown>
+    expect(second.functions).toEqual({ fnFlag: true })
+    expect(second.durationSeconds).toBe(300)
+    expect(second.startTime).toBe(Math.floor(Date.parse('2030-01-02T03:04:05') / 1000))
+  })
+
   it('offers Cancel on Scheduled and on Active-not-ended rows only', async () => {
     const { container } = await mount({ controlsFor: reply })
     await pickDevice(container)

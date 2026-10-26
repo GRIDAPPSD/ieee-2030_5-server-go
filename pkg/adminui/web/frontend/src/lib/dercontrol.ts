@@ -129,3 +129,10 @@ export function canCancel(status: string, start: number, duration: number, serve
   if (status !== 'active') return false
   return serverNowSeconds === null || serverNowSeconds < start + duration
 }
+
+// isLiveControl is true for a control that is waiting to start or running:
+// the statuses an operator means by "what is scheduled". An active row whose
+// interval has ended is finished, so it is not live.
+export function isLiveControl(c: { eventStatus: { status: string }; ended?: boolean }): boolean {
+  return c.eventStatus.status === 'scheduled' || (c.eventStatus.status === 'active' && !c.ended)
+}

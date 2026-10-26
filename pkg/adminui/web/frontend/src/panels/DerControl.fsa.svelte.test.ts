@@ -310,3 +310,18 @@ describe('DerControl: a target switch while a send is in flight', () => {
     expect(await screen.findByTestId('der-control-row')).toHaveAttribute('data-mrid', 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
   })
 })
+
+describe('DerControl, FSA target: pending and active controls', () => {
+  it('counts the live controls and can hide cancelled and ended ones', async () => {
+    const live = fsaControl({ id: 'live', mRID: 'LIVE' })
+    const cancelled = fsaControl({ id: 'gone', mRID: 'GONE', cancelled: true })
+    const ended = fsaControl({ id: 'done', mRID: 'DONE', ended: true })
+    const { container } = await mountFsa({ templates: [template()], controls: [cancelled, live, ended] })
+    await pickProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('fsa-control-row')).toHaveLength(3))
+    expect(tid('der-control-live-count')).toHaveTextContent('1 pending or active')
+
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(screen.getAllByTestId('fsa-control-row').map((r) => r.getAttribute('data-mrid'))).toEqual(['LIVE'])
+  })
+})

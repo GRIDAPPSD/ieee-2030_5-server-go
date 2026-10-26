@@ -42,6 +42,7 @@
     canCancel,
     expectedDeviceReadTime,
     fmtTime,
+    isLiveControl,
     keptControl,
     POLL_RATE_SECONDS,
     type DERControlListItem,
@@ -542,7 +543,14 @@
     reload(fsaControl ? 'fsa' : 'device')
   }
 
-  const shownControls = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
+  // liveOnly narrows both control tables to what is pending or running, so
+  // the controls still to come are not buried under cancelled and finished ones.
+  let liveOnly = $state(false)
+  const inProgram = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
+  const shownControls = $derived(liveOnly ? inProgram.filter(isLiveControl) : inProgram)
+  const liveControlCount = $derived(inProgram.filter(isLiveControl).length)
+  const shownFsaControls = $derived(liveOnly ? fsaControls.filter(canCancelFsaControl) : fsaControls)
+  const liveFsaControlCount = $derived(fsaControls.filter(canCancelFsaControl).length)
   const shownDefault = $derived(storedDefault && storedDefault.deviceId === selectedDeviceId ? storedDefault : null)
   const primacyOf = (href: string): string => {
     const p = programs.find((x) => x.href === href)
@@ -721,6 +729,18 @@
     <div class="result err" data-testid="der-control-default-error">{defaultError}</div>
   {/if}
 
+  {#if (target === 'device' && selectedDeviceId) || (target === 'fsa' && selectedTemplate)}
+    <div class="form-row">
+      <span data-testid="der-control-live-count">
+        {target === 'device' ? liveControlCount : liveFsaControlCount} pending or active
+      </span>
+      <label>
+        <input type="checkbox" data-testid="der-control-live-only" bind:checked={liveOnly} />
+        Show pending and active only
+      </label>
+    </div>
+  {/if}
+
   {#if target === 'device' && selectedDeviceId}
     <table id="derControlsTable">
       <thead>
@@ -804,10 +824,10 @@
           <tr>
             <td colspan="7" class="result err" data-testid="fsa-control-controls-error">{fsaControlsError}</td>
           </tr>
-        {:else if fsaControls.length === 0}
+        {:else if shownFsaControls.length === 0}
           <tr><td colspan="7" class="stat-label">No admin-issued controls for this program</td></tr>
         {:else}
-          {#each fsaControls as ctrl (ctrl.id)}
+          {#each shownFsaControls as ctrl (ctrl.id)}
             <tr data-testid="fsa-control-row" data-mrid={ctrl.mRID}>
               <td>{ctrl.type}</td>
               <td>{functionsText(ctrl.functions)}</td>

@@ -11,6 +11,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/statuswriter"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -178,10 +179,10 @@ func (o deviceLogLookups) registered(ctx context.Context, actor string) (bool, e
 		if len(managed) > 0 {
 			return true, nil
 		}
-		if _, err := o.managers.ManagerOf(ctx, actor); err == nil {
-			return true, nil
-		} else if !errors.Is(err, store.ErrNotFound) {
+		if _, managed, err := coreedev.ManagerOf(ctx, o.managers, actor); err != nil {
 			return false, err
+		} else if managed {
+			return true, nil
 		}
 	}
 	return false, nil

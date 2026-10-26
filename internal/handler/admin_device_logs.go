@@ -13,6 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -208,9 +209,12 @@ func (h *AdminDeviceLogHandler) sources(ctx context.Context, lfdi string, manage
 	in := map[string]bool{lfdi: true}
 
 	if h.Managers != nil {
-		manager, err := h.Managers.ManagerOf(ctx, lfdi)
+		manager, hasManager, err := coreedev.ManagerOf(ctx, h.Managers, lfdi)
 		switch {
-		case err == nil:
+		case err != nil:
+			log.Printf("admin: device log manager lookup for %s: %s", logsafe.Str(lfdi), logsafe.Str(err.Error()))
+			return nil, http.StatusInternalServerError, "device log unreadable"
+		case hasManager:
 			if !sep2lfdi.IsCanonical(manager) {
 				return nil, http.StatusBadRequest, "the device's manager is not a canonical LFDI"
 			}
@@ -218,9 +222,6 @@ func (h *AdminDeviceLogHandler) sources(ctx context.Context, lfdi string, manage
 				in[manager] = true
 				srcs = append(srcs, devicelog.Source{File: manager, Target: lfdi, Label: "manager"})
 			}
-		case !errors.Is(err, store.ErrNotFound):
-			log.Printf("admin: device log manager lookup for %s: %s", logsafe.Str(lfdi), logsafe.Str(err.Error()))
-			return nil, http.StatusInternalServerError, "device log unreadable"
 		}
 		if managed {
 			devices, err := h.Managers.ManagedBy(ctx, lfdi)

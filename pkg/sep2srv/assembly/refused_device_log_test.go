@@ -27,23 +27,23 @@ func sendRefusedProbe(t *testing.T, base, path, lfdi string) int {
 func TestDeviceLogRecordsOwnershipRefusalAsRefusedLine(t *testing.T) {
 	t.Parallel()
 	srv, dir, closeLog := logServer(t, gateTestPolicy())
-	warmDeviceLog(t, srv, dir, callerLFDI, "/edev/"+callerID)
+	warmDeviceLog(t, srv, dir, unmanagedLFDI, "/edev/"+unmanagedID)
 
-	// callerLFDI is registered and owns device 2, so a read of device 1 is
+	// unmanagedLFDI is registered and owns device 3, so a read of device 1 is
 	// the ownership gate's 403.
-	if status := sendRefusedProbe(t, srv.URL, "/edev/"+victimID, callerLFDI); status != http.StatusForbidden {
+	if status := sendRefusedProbe(t, srv.URL, "/edev/"+victimID, unmanagedLFDI); status != http.StatusForbidden {
 		t.Fatalf("control: GET /edev/%s as the other device = %d, want 403", victimID, status)
 	}
 	closeLog()
 
-	raw, lines := linesFor(t, filepath.Join(dir, callerLFDI+".jsonl"), "/edev/"+victimID)
+	raw, lines := linesFor(t, filepath.Join(dir, unmanagedLFDI+".jsonl"), "/edev/"+victimID)
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines for the refused path, want 1: %s", len(lines), raw)
 	}
 	l := lines[0]
 	want := map[string]any{
 		"kind":   devicelog.KindRefused,
-		"actor":  callerLFDI,
+		"actor":  unmanagedLFDI,
 		"method": http.MethodGet,
 		"path":   "/edev/" + victimID,
 		"status": float64(http.StatusForbidden),
@@ -113,19 +113,19 @@ func TestDeviceLogRefusedLoopStaysBoundedByRotation(t *testing.T) {
 	t.Parallel()
 	const maxBytes = 4096
 	srv, dir, closeLog, _ := logServerSized(t, maxBytes, gateTestPolicy(), nil, nil)
-	warmDeviceLog(t, srv, dir, callerLFDI, "/edev/"+callerID)
+	warmDeviceLog(t, srv, dir, unmanagedLFDI, "/edev/"+unmanagedID)
 
 	// Each line is well over 100 bytes, so 200 of them pass the limit many
 	// times over.
 	for range 200 {
-		if status, _ := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID, callerLFDI, ""); status != http.StatusForbidden {
+		if status, _ := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID, unmanagedLFDI, ""); status != http.StatusForbidden {
 			t.Fatalf("refused request status = %d, want 403", status)
 		}
 	}
 	closeLog()
 
-	cur := filepath.Join(dir, callerLFDI+".jsonl")
-	old := filepath.Join(dir, callerLFDI+".1.jsonl")
+	cur := filepath.Join(dir, unmanagedLFDI+".jsonl")
+	old := filepath.Join(dir, unmanagedLFDI+".1.jsonl")
 	for _, p := range []string{cur, old} {
 		raw, _ := readLogLines(t, p)
 		if len(raw) > maxBytes {

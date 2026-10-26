@@ -171,3 +171,39 @@ func TestResolver_FleetOf_EmptyLFDIIsErrNoLFDI(t *testing.T) {
 		t.Errorf("FleetOf(empty LFDI) error = %v, want ErrNoLFDI", err)
 	}
 }
+
+type fakeByLFDI map[string]sep2.EndDevice
+
+func (f fakeByLFDI) GetByLFDI(_ context.Context, lfdi string) (sep2.EndDevice, error) {
+	dev, ok := f[lfdi]
+	if !ok {
+		return sep2.EndDevice{}, store.ErrNotFound
+	}
+	return dev, nil
+}
+
+func TestFleets_Known(t *testing.T) {
+	t.Parallel()
+	const manager, managed, standalone, stranger = "AA01", "AA02", "AA03", "AA04"
+	devices := fakeByLFDI{manager: {LFDI: manager}, managed: {LFDI: managed}, standalone: {LFDI: standalone}}
+	managers := fakeManagers{managed: manager}
+	f := Fleets{Devices: devices, Managers: managers}
+
+	for _, tc := range []struct {
+		name, key string
+		want      bool
+	}{
+		{"a manager names its fleet", manager, true},
+		{"a managed device belongs to its manager's fleet, not its own", managed, false},
+		{"an unmanaged device is its own fleet", standalone, true},
+		{"an unknown key names nothing", stranger, false},
+	} {
+		got, err := f.Known(context.Background(), tc.key)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: Known(%q) = %v, %v; want %v, nil", tc.name, tc.key, got, err, tc.want)
+		}
+	}
+	if _, err := (Fleets{Devices: devices, Managers: failingManagers{}}).Known(context.Background(), standalone); !errors.Is(err, errManagerLookupFailed) {
+		t.Errorf("Known with a failing management store: err = %v, want the store error", err)
+	}
+}

@@ -49,14 +49,26 @@ func OwnedBy(storedLFDI, callerLFDI string) bool {
 // rather than folded into false, so a caller can answer 500 (a check that
 // could not complete) instead of misreporting an outage as "not authorized".
 func CurrentManagerOwns(ctx context.Context, managers store.EndDeviceManagementReader, device, caller string) (bool, error) {
-	manager, err := managers.ManagerOf(ctx, device)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return false, nil
-		}
+	manager, managed, err := ManagerOf(ctx, managers, device)
+	if err != nil || !managed {
 		return false, err
 	}
 	return OwnedBy(manager, caller), nil
+}
+
+// ManagerOf returns the manager of the device with the given LFDI and whether
+// it has one. It is the one place a management lookup miss (store.ErrNotFound)
+// is read as "unmanaged" rather than as a failure; any other store error is
+// returned so the caller can fail closed.
+func ManagerOf(ctx context.Context, managers store.EndDeviceManagementReader, lfdi string) (manager string, managed bool, err error) {
+	manager, err = managers.ManagerOf(ctx, lfdi)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "", false, nil
+	case err != nil:
+		return "", false, err
+	}
+	return manager, true, nil
 }
 
 // RecordState classifies the answer of [RecordFor].

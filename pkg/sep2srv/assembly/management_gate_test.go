@@ -118,6 +118,22 @@ func seedManagedSubResources(t *testing.T, stores *assembly.Stores, edevID strin
 	}
 }
 
+// ownerView returns stores with an empty management store, over the same
+// device data. A router built on it serves a fleet device's own certificate,
+// which the fleet's real router refuses once the device is paired.
+func ownerView(stores *assembly.Stores) *assembly.Stores {
+	v := *stores
+	v.EndDeviceManagers = memory.NewEndDeviceManagementStore()
+	return &v
+}
+
+// emptyManagers swaps a fleet's management store for an empty one, for
+// logServerWith, so the fleet's paired devices connect on their own
+// certificates.
+func emptyManagers(store.EndDeviceManagementStore) store.EndDeviceManagementStore {
+	return memory.NewEndDeviceManagementStore()
+}
+
 // assertNoFleetData checks a refusal's raw bytes for any sep2 document and any
 // LFDI in the fleet.
 func assertNoFleetData(t *testing.T, label string, raw []byte) {
@@ -208,17 +224,29 @@ var managerWriteAllowlist = map[string]bool{
 // caller states rather than one two files agree on by accident.
 func sweepStatus(t *testing.T, pattern, asLFDI string) int {
 	t.Helper()
-	srv := gateServer(t, newManagementFleet(t).stores, gateTestPolicy())
-	req, err := probeRequestForID(srv.URL, pattern, victimID)
-	if err != nil {
-		method, path := concreteGatePath(pattern)
-		if req, err = http.NewRequest(method, srv.URL+path, nil); err != nil {
-			t.Fatalf("build %s: %v", pattern, err)
-		}
+	stores := newManagementFleet(t).stores
+	if asLFDI == victimLFDI {
+		stores = ownerView(stores)
 	}
+	srv := gateServer(t, stores, gateTestPolicy())
+	req := patternRequest(t, srv.URL, pattern)
 	req.Header.Set(gateIdentityHeader, asLFDI)
 	status, _ := sendGateRequest(t, req)
 	return status
+}
+
+// patternRequest builds a request for pattern with every wildcard set to
+// victimID, or to the generic concrete path when the pattern has no probe.
+func patternRequest(t *testing.T, base, pattern string) *http.Request {
+	t.Helper()
+	req, err := probeRequestForID(base, pattern, victimID)
+	if err != nil {
+		method, path := concreteGatePath(pattern)
+		if req, err = http.NewRequest(method, base+path, nil); err != nil {
+			t.Fatalf("build %s: %v", pattern, err)
+		}
+	}
+	return req
 }
 
 func TestManagement_ManagerReadIsServedAsTheOwnerIs(t *testing.T) {
@@ -487,7 +515,8 @@ func TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration(t *testin
 
 	// The owner reads the same Registration, so the manager's 403 is the
 	// delegation boundary and not a missing record.
-	if status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID+"/rg", victimLFDI, ""); status != http.StatusOK {
+	ownerSrv := gateServer(t, ownerView(fleet.stores), gateTestPolicy())
+	if status, raw := gateRequest(t, ownerSrv, http.MethodGet, "/edev/"+victimID+"/rg", victimLFDI, ""); status != http.StatusOK {
 		t.Errorf("owner GET /edev/%s/rg: status %d, want 200; body=%q", victimID, status, raw)
 	}
 }
@@ -623,20 +652,46 @@ func TestManagement_StoreFailureIs500AndRunsNoHandler(t *testing.T) {
 		t.Errorf("the write handler ran behind a failed management check: err=%v", err)
 	}
 
-	// Self access never consults management.
-	if status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID, victimLFDI, ""); status != http.StatusOK {
-		t.Errorf("owner GET with the management store failing: status %d, want 200; body=%q", status, raw)
+	// Every caller's request consults management first (the exclusivity
+	// check), so the failure is a 500 for the owner and for a write
+	// management never grants.
+	for _, tc := range []struct{ label, method, asLFDI string }{
+		{"owner GET", http.MethodGet, victimLFDI},
+		{"manager DELETE", http.MethodDelete, managerLFDI},
+	} {
+		if status, raw := gateRequest(t, srv, tc.method, "/edev/"+victimID, tc.asLFDI, ""); status != http.StatusInternalServerError {
+			t.Errorf("%s /edev/%s with the management store failing: status %d, want 500; body=%q", tc.label, victimID, status, raw)
+		}
 	}
-	// A pattern management never grants is refused without consulting it.
-	if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, managerLFDI, ""); status != http.StatusForbidden {
-		t.Errorf("manager PUT /edev/%s with the management store failing: status %d, want 403; body=%q", victimID, status, raw)
-	}
-	// A delete is delegated, so the failing store is a 500 and the record stays.
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, managerLFDI, ""); status != http.StatusInternalServerError {
-		t.Errorf("manager DELETE /edev/%s with the management store failing: status %d, want 500; body=%q", victimID, status, raw)
+	// A pattern management never grants is refused without consulting it,
+	// and behind the exclusivity check that is a 500 too.
+	if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, managerLFDI, ""); status != http.StatusInternalServerError {
+		t.Errorf("manager PUT /edev/%s with the management store failing: status %d, want 500; body=%q", victimID, status, raw)
 	}
 	if _, err := fleet.stores.EndDevices.Get(ctx, victimID); err != nil {
 		t.Errorf("the record is gone after a DELETE behind a failed management check: %v", err)
+	}
+}
+
+// A pattern management never grants is refused as not-owner: the delegated
+// check is skipped, so the refusal does not depend on the manager's pair.
+// It cannot run in parallel: it swaps the process-wide log output.
+func TestManagement_RouteManagementNeverGrantsIsRefusedAsNotOwner(t *testing.T) {
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	buf := captureLog(t)
+
+	status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, managerLFDI, "")
+	if status != http.StatusForbidden {
+		t.Fatalf("manager PUT /edev/%s: status %d, want 403; body=%q", victimID, status, raw)
+	}
+	assertNoFleetData(t, "manager PUT", raw)
+	if !lineWith(buf.String(), denialLogMarker, `caller="`+managerLFDI+`"`, `id="`+victimID+`"`, "reason=not-owner") ||
+		lineWith(buf.String(), "reason=not-owner-or-manager") {
+		t.Errorf("want a not-owner denial line (not not-owner-or-manager) for the manager; log=%q", buf.String())
+	}
+	if _, err := fleet.stores.EndDevices.Get(t.Context(), victimID); err != nil {
+		t.Errorf("managed record gone after the refused PUT: %v", err)
 	}
 }
 

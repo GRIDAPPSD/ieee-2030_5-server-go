@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestDefaultDERControl_PUTIsRefusedForEveryCallerClass(t *testing.T) {
 	}{
 		{"owner", victimLFDI, http.StatusMethodNotAllowed},
 		{"manager", managerLFDI, http.StatusMethodNotAllowed},
-		{"unrelated device", callerLFDI, http.StatusMethodNotAllowed},
+		{"unrelated device", unmanagedLFDI, http.StatusMethodNotAllowed},
 	}
 
 	for _, tc := range cases {
@@ -77,7 +78,11 @@ func TestDefaultDERControl_PUTIsRefusedForEveryCallerClass(t *testing.T) {
 			t.Parallel()
 			stores := newManagementFleet(t).stores
 			seedDefaultDERControl(t, stores, victimID, original)
-			srv := gateServer(t, stores, gateTestPolicy())
+			served := stores
+			if tc.asLFDI == victimLFDI {
+				served = ownerView(stores)
+			}
+			srv := gateServer(t, served, gateTestPolicy())
 
 			status, raw := gateRequest(t, srv, http.MethodPut, ddercPath(victimID), tc.asLFDI, forged)
 			if status != tc.want {
@@ -96,7 +101,7 @@ func TestDefaultDERControl_PUTRefusalNamesTheServedMethods(t *testing.T) {
 	t.Parallel()
 	stores := newManagementFleet(t).stores
 	seedDefaultDERControl(t, stores, victimID, "ORIGINAL0000000000000000000000000000001")
-	srv := gateServer(t, stores, gateTestPolicy())
+	srv := gateServer(t, ownerView(stores), gateTestPolicy())
 
 	req, err := http.NewRequest(http.MethodPut, srv.URL+ddercPath(victimID), strings.NewReader(
 		`<DefaultDERControl xmlns="urn:ieee:std:2030.5:ns"/>`))
@@ -127,16 +132,18 @@ func TestDefaultDERControl_GETStillServesOwnerAndManager(t *testing.T) {
 	stores := newManagementFleet(t).stores
 	seedDefaultDERControl(t, stores, victimID, mrid)
 	srv := gateServer(t, stores, gateTestPolicy())
+	ownerSrv := gateServer(t, ownerView(stores), gateTestPolicy())
 
 	for _, tc := range []struct {
 		name   string
 		asLFDI string
+		srv    *httptest.Server
 	}{
-		{"owner", victimLFDI},
-		{"manager", managerLFDI},
+		{"owner", victimLFDI, ownerSrv},
+		{"manager", managerLFDI, srv},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, raw := gateRequest(t, srv, http.MethodGet, ddercPath(victimID), tc.asLFDI, "")
+			status, raw := gateRequest(t, tc.srv, http.MethodGet, ddercPath(victimID), tc.asLFDI, "")
 			if status != http.StatusOK {
 				t.Fatalf("GET dderc as %s: status %d, want 200; body=%q", tc.name, status, raw)
 			}

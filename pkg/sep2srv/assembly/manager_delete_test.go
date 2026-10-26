@@ -106,8 +106,8 @@ func TestManagerDelete_OptionOffRefusesAndChangesNothing(t *testing.T) {
 	assertRecordHeld(t, fleet, victimID, victimLFDI)
 	assertPairHeld(t, fleet, victimLFDI, managerLFDI)
 
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, victimLFDI, ""); status != http.StatusNoContent {
-		t.Errorf("the device deleting itself with the option off: status %d, want 204; body=%q", status, raw)
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+unmanagedID, unmanagedLFDI, ""); status != http.StatusNoContent {
+		t.Errorf("an unpaired device deleting itself with the option off: status %d, want 204; body=%q", status, raw)
 	}
 }
 
@@ -116,9 +116,12 @@ func TestManagerDelete_ADeviceDeletingItselfLeavesItsPair(t *testing.T) {
 	fleet := newManagementFleet(t)
 	srv := managerDeleteServer(t, assembly.RouterConfig{}, fleet)
 
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, victimLFDI, ""); status != http.StatusNoContent {
-		t.Fatalf("self DELETE: status %d, want 204; body=%q", status, raw)
+	// A paired device is refused on its own certificate, so it cannot delete
+	// itself at all; the record and the pair stay.
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, victimLFDI, ""); status != http.StatusForbidden {
+		t.Fatalf("paired self DELETE: status %d, want 403; body=%q", status, raw)
 	}
+	assertRecordHeld(t, fleet, victimID, victimLFDI)
 	assertPairHeld(t, fleet, victimLFDI, managerLFDI)
 }
 
@@ -231,8 +234,11 @@ func TestManagerDelete_APreSetDelegatedValueDoesNotTurnASelfDeleteIntoAManagerDe
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, victimLFDI, ""); status != http.StatusNoContent {
+	// The fleet's paired devices are refused on their own certificate, so the
+	// self delete is by an unpaired device.
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+unmanagedID, unmanagedLFDI, ""); status != http.StatusNoContent {
 		t.Fatalf("self DELETE: status %d, want 204; body=%q", status, raw)
 	}
 	assertPairHeld(t, fleet, victimLFDI, managerLFDI)
+	assertPairHeld(t, fleet, secondChildLFDI, managerLFDI)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"log"
 	"maps"
@@ -186,6 +187,10 @@ const (
 	reasonRecordHasNoLFDI = "record-has-no-lfdi"
 	reasonNotOwner        = "not-owner"
 	reasonNotManager      = "not-owner-or-manager"
+	reasonManagedDirect   = "managed-direct"
+	// reasonManagementFailed is logged for a 500, not a refusal: the
+	// exclusivity check could not read the management store.
+	reasonManagementFailed = "management-store-error"
 )
 
 // ownershipVerdict is the gate's answer to one request. caller and reason
@@ -196,6 +201,9 @@ type ownershipVerdict struct {
 	caller   string
 	reason   string
 	err      error
+	// path, when set, is the full request path to log: the exclusivity check
+	// runs before the mux matches, so the route and {id} name nothing.
+	path string
 	// manager is the caller's LFDI when it was admitted as the record's
 	// manager rather than its owner.
 	manager string
@@ -219,11 +227,48 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 			g.denials.record(r, v)
 			http.Error(w, "not found", http.StatusNotFound)
 		default:
-			g.denials.record(r, v)
-			devicelog.NoteFrom(r.Context()).Refuse(v.reason)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			g.refuse(w, r, v)
 		}
 	}
+}
+
+// refuse answers 403 for v: one line in the denial log within its budget, the
+// reason in the device log, and the fixed body.
+func (g *ownershipGate) refuse(w http.ResponseWriter, r *http.Request, v ownershipVerdict) {
+	g.denials.record(r, v)
+	devicelog.NoteFrom(r.Context()).Refuse(v.reason)
+	http.Error(w, "forbidden", http.StatusForbidden)
+}
+
+// exclusive refuses a caller whose certificate LFDI is the managed side of a
+// management pair, on every route behind it. CSIP IG 3.2 has each DER connect
+// in one scenario only and the pair is the utility's designation of it. A
+// request with no identity passes, so the anonymous /dcap and /tm access the
+// ACL allows is unchanged. A store failure is a 500: failing open would let a
+// managed DER act during exactly that outage.
+func (g *ownershipGate) exclusive(next http.Handler) http.Handler {
+	if g.managersAbsent {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callerLFDI, ok := g.caller(r.Context())
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		_, managed, err := coreedev.ManagerOf(r.Context(), g.managers, callerLFDI)
+		switch {
+		case err != nil:
+			g.denials.record(r, ownershipVerdict{caller: callerLFDI, reason: reasonManagementFailed, path: r.URL.Path})
+			// The budgeted line above is the record; srverr.Internal would add an
+			// unbudgeted line per request during an outage.
+			http.Error(w, srverr.DefaultMessage, http.StatusInternalServerError)
+		case managed:
+			g.refuse(w, r, ownershipVerdict{caller: callerLFDI, reason: reasonManagedDirect, path: r.URL.Path})
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict {
@@ -268,8 +313,7 @@ func (g *ownershipGate) decideFor(ctx context.Context, callerLFDI, id string, de
 	}
 
 	// Management is consulted only after self fails and only on a delegable
-	// pattern, so a management store outage never blocks a device's own
-	// /edev/{id} routes. CurrentManagerOwns is the same helper the /mup
+	// pattern. CurrentManagerOwns is the same helper the /mup
 	// device-or-manager rule uses (metering.newMirrorActor, #720), so the two
 	// "is caller the current manager of this device" checks cannot drift.
 	if !delegated || g.managersAbsent {
@@ -293,6 +337,7 @@ const (
 	denialLogLimit     = 100
 	denialLogWindow    = time.Minute
 	maxLoggedIDLen     = 64
+	maxLoggedPathLen   = 256
 )
 
 // denialLog writes refusal lines within the bounds above and counts the rest
@@ -337,8 +382,15 @@ func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
 	if !admitted {
 		return
 	}
-	// The id is client-chosen: it is truncated and quoted so it cannot forge a
-	// log line. No field of the stored record is written.
+	// The id and path are client-chosen: truncated and quoted so they cannot
+	// forge a log line. No field of the stored record is written.
+	if v.path != "" {
+		// %q on top of logsafe.Str: Str leaves a double quote alone, and an
+		// unescaped one in the path would close it and add a field.
+		d.logf("assembly: ownership gate denied %s %q: caller=%q reason=%s",
+			logsafe.Str(r.Method), logsafe.Str(logsafe.TruncateOctets(v.path, maxLoggedPathLen)), logsafe.Str(v.caller), logsafe.Str(v.reason))
+		return
+	}
 	id := r.PathValue("id")
 	if len(id) > maxLoggedIDLen {
 		id = id[:maxLoggedIDLen]

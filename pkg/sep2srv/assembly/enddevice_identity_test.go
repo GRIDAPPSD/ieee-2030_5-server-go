@@ -23,8 +23,11 @@ func TestEndDeviceUpdate_BodyIdentityCannotRedirectAnotherDevice(t *testing.T) {
 	ctx := context.Background()
 	fleet := newManagementFleet(t)
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	// The fleet pairs victimLFDI and callerLFDI, so their own certificates are
+	// served by the owner view.
+	ownerSrv := gateServer(t, ownerView(fleet.stores), gateTestPolicy())
 
-	if l := listAs(t, srv, "", victimLFDI); len(l.EndDevice) != 1 || l.EndDevice[0].Href != "/edev/"+victimID {
+	if l := listAs(t, ownerSrv, "", victimLFDI); len(l.EndDevice) != 1 || l.EndDevice[0].Href != "/edev/"+victimID {
 		t.Fatalf("control: victim list %+v, want only /edev/%s", l.EndDevice, victimID)
 	}
 	if status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+callerID+"/der", managerLFDI, ""); status != http.StatusForbidden {
@@ -32,7 +35,7 @@ func TestEndDeviceUpdate_BodyIdentityCannotRedirectAnotherDevice(t *testing.T) {
 	}
 
 	forged := putBody(`<lFDI>` + victimLFDI + `</lFDI><sFDI>` + victimSFDI + `</sFDI>`)
-	if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+callerID, callerLFDI, forged); status != http.StatusNoContent {
+	if status, raw := gateRequest(t, ownerSrv, http.MethodPut, "/edev/"+callerID, callerLFDI, forged); status != http.StatusNoContent {
 		t.Fatalf("owner PUT carrying another device's identity: status %d, want 204; body=%q", status, raw)
 	}
 
@@ -60,10 +63,10 @@ func TestEndDeviceUpdate_BodyIdentityCannotRedirectAnotherDevice(t *testing.T) {
 		}
 	}
 
-	if l := listAs(t, srv, "", victimLFDI); len(l.EndDevice) != 1 || l.EndDevice[0].Href != "/edev/"+victimID || l.EndDevice[0].LFDI != victimLFDI {
+	if l := listAs(t, ownerSrv, "", victimLFDI); len(l.EndDevice) != 1 || l.EndDevice[0].Href != "/edev/"+victimID || l.EndDevice[0].LFDI != victimLFDI {
 		t.Errorf("victim list after the PUT: %+v, want only its own /edev/%s", l.EndDevice, victimID)
 	}
-	status, raw := gateRequest(t, srv, http.MethodPost, "/edev", victimLFDI, `<EndDevice xmlns="urn:ieee:std:2030.5:ns"/>`)
+	status, raw := gateRequest(t, ownerSrv, http.MethodPost, "/edev", victimLFDI, `<EndDevice xmlns="urn:ieee:std:2030.5:ns"/>`)
 	var registered sep2.EndDevice
 	if status != http.StatusOK || xml.Unmarshal(raw, &registered) != nil || registered.Href != "/edev/"+victimID {
 		t.Errorf("victim POST /edev after the PUT: status %d href %q, want 200 and its own /edev/%s; body=%s", status, registered.Href, victimID, raw)
@@ -76,12 +79,12 @@ func TestEndDeviceUpdate_BodyIdentityCannotRedirectAnotherDevice(t *testing.T) {
 		t.Errorf("manager GET /edev/%s/der after the PUT: status %d, want 200; body=%q", victimID, status, raw)
 	}
 
-	status, raw = gateRequest(t, srv, http.MethodGet, "/edev/"+callerID, callerLFDI, "")
+	status, raw = gateRequest(t, ownerSrv, http.MethodGet, "/edev/"+callerID, callerLFDI, "")
 	var own sep2.EndDevice
 	if status != http.StatusOK || xml.Unmarshal(raw, &own) != nil || own.LFDI != callerLFDI {
 		t.Errorf("owner GET /edev/%s after its PUT: status %d LFDI %q, want 200 and its own LFDI; body=%s", callerID, status, own.LFDI, raw)
 	}
-	if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+callerID, callerLFDI, putBody("")); status != http.StatusNoContent {
+	if status, raw := gateRequest(t, ownerSrv, http.MethodPut, "/edev/"+callerID, callerLFDI, putBody("")); status != http.StatusNoContent {
 		t.Errorf("owner PUT /edev/%s after its PUT: status %d, want 204; body=%q", callerID, status, raw)
 	}
 }
@@ -95,8 +98,9 @@ func TestEndDeviceUpdate_OwnerPUTWithoutIdentityKeepsIdentityAndAccess(t *testin
 	} {
 		fleet := newManagementFleet(t)
 		srv := gateServer(t, fleet.stores, gateTestPolicy())
+		ownerSrv := gateServer(t, ownerView(fleet.stores), gateTestPolicy())
 
-		if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, victimLFDI, body); status != http.StatusNoContent {
+		if status, raw := gateRequest(t, ownerSrv, http.MethodPut, "/edev/"+victimID, victimLFDI, body); status != http.StatusNoContent {
 			t.Errorf("%s: owner PUT: status %d, want 204; body=%q", name, status, raw)
 			continue
 		}
@@ -112,11 +116,15 @@ func TestEndDeviceUpdate_OwnerPUTWithoutIdentityKeepsIdentityAndAccess(t *testin
 			{http.MethodPut, victimLFDI, putBody(""), http.StatusNoContent},
 			{http.MethodGet, managerLFDI, "", http.StatusOK},
 		} {
-			if status, raw := gateRequest(t, srv, tc.method, "/edev/"+victimID, tc.asLFDI, tc.body); status != tc.want {
+			target := ownerSrv
+			if tc.asLFDI == managerLFDI {
+				target = srv
+			}
+			if status, raw := gateRequest(t, target, tc.method, "/edev/"+victimID, tc.asLFDI, tc.body); status != tc.want {
 				t.Errorf("%s: %s /edev/%s as %s: status %d, want %d; body=%q", name, tc.method, victimID, tc.asLFDI, status, tc.want, raw)
 			}
 		}
-		if l := listAs(t, srv, "", victimLFDI); len(l.EndDevice) != 1 || l.EndDevice[0].Href != "/edev/"+victimID {
+		if l := listAs(t, ownerSrv, "", victimLFDI); len(l.EndDevice) != 1 || l.EndDevice[0].Href != "/edev/"+victimID {
 			t.Errorf("%s: owner list %+v, want only /edev/%s", name, l.EndDevice, victimID)
 		}
 	}

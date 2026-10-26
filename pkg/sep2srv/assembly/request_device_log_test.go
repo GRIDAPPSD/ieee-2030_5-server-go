@@ -76,6 +76,14 @@ func logServerFor(t *testing.T, maxBytes int64, policy assembly.AuthPolicy, stor
 	return srv, dir, closeLog, w
 }
 
+// ownerLogServer is logServer with the fleet's pairs removed, for a test whose
+// device connects on its own certificate.
+func ownerLogServer(t *testing.T, policy assembly.AuthPolicy) (srv *httptest.Server, dir string, closeLog func()) {
+	t.Helper()
+	srv, dir, closeLog, _ = logServerWith(t, policy, emptyManagers, nil)
+	return srv, dir, closeLog
+}
+
 func readLogLines(t *testing.T, path string) (raw string, lines []map[string]any) {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -156,7 +164,7 @@ func putDERStatus(t *testing.T, srv *httptest.Server, asLFDI, query string) int 
 
 func TestDeviceLogRecordsOwnRequestWithoutQueryOrHeaders(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog := logServer(t, gateTestPolicy())
+	srv, dir, closeLog := ownerLogServer(t, gateTestPolicy())
 	warmDeviceLog(t, srv, dir, victimLFDI, "/edev/"+victimID)
 
 	if status := putDERStatus(t, srv, victimLFDI, "?token=query-secret-value"); status != http.StatusNoContent {
@@ -246,7 +254,7 @@ func TestDeviceLogUnregisteredCertificateGoesToSharedFile(t *testing.T) {
 
 func TestDeviceLogSkipsRefusedAndAnonymousRequests(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog := logServer(t, activityPolicy(victimLFDI))
+	srv, dir, closeLog := ownerLogServer(t, activityPolicy(victimLFDI))
 
 	req, err := http.NewRequest(http.MethodGet, srv.URL+"/dcap", nil)
 	if err != nil {
@@ -273,7 +281,7 @@ func TestDeviceLogSkipsRefusedAndAnonymousRequests(t *testing.T) {
 
 func TestDeviceLogFailureNeverFailsTheRequest(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog := logServer(t, gateTestPolicy())
+	srv, dir, closeLog := ownerLogServer(t, gateTestPolicy())
 	closeLog()
 
 	if status := putDERStatus(t, srv, victimLFDI, ""); status != http.StatusNoContent {
@@ -284,8 +292,10 @@ func TestDeviceLogFailureNeverFailsTheRequest(t *testing.T) {
 	}
 }
 
-// stalledManagers blocks every lookup until release closes, as a management
-// store stuck on a lock or a slow backend would.
+// stalledManagers blocks the lookups the device log writer makes until release
+// closes, as a management store stuck on a lock or a slow backend would.
+// ManagerOf is not stalled: the exclusivity check reads it on the request
+// path, so a stall there holds the request by design.
 type stalledManagers struct {
 	store.EndDeviceManagementStore
 	entered chan struct{}
@@ -300,17 +310,12 @@ func (s stalledManagers) stall() {
 	<-s.release
 }
 
-func (s stalledManagers) ManagerOf(ctx context.Context, lfdi string) (string, error) {
-	s.stall()
-	return s.EndDeviceManagementStore.ManagerOf(ctx, lfdi)
-}
-
 func (s stalledManagers) ManagedBy(ctx context.Context, lfdi string) ([]string, error) {
 	s.stall()
 	return s.EndDeviceManagementStore.ManagedBy(ctx, lfdi)
 }
 
-func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
+func TestDeviceLogStalledManagedByLookupNeverHoldsARequest(t *testing.T) {
 	t.Parallel()
 	stalled := stalledManagers{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {
@@ -365,7 +370,7 @@ func (erroringDevices) GetByLFDI(context.Context, string) (sep2.EndDevice, error
 
 func TestDeviceLogStoreErrorNeverCreatesADeviceFile(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), nil, func(real store.EndDeviceStore) store.EndDeviceStore {
+	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), emptyManagers, func(real store.EndDeviceStore) store.EndDeviceStore {
 		return erroringDevices{real}
 	})
 	if status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", victimLFDI, ""); status != http.StatusOK {
@@ -380,7 +385,7 @@ func TestDeviceLogStoreErrorNeverCreatesADeviceFile(t *testing.T) {
 
 func TestDeviceLogStoreErrorKeepsAnExistingDeviceFile(t *testing.T) {
 	t.Parallel()
-	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), nil, func(real store.EndDeviceStore) store.EndDeviceStore {
+	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), emptyManagers, func(real store.EndDeviceStore) store.EndDeviceStore {
 		return erroringDevices{real}
 	})
 	if err := os.WriteFile(filepath.Join(dir, victimLFDI+".jsonl"), nil, 0o640); err != nil {

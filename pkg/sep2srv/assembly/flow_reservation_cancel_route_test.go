@@ -234,7 +234,7 @@ func TestFlowReservationCancel_OnlyTheOwnerMayPut(t *testing.T) {
 	t.Run("owner accepted", func(t *testing.T) {
 		t.Parallel()
 		fleet := newManagementFleet(t)
-		srv := gateServer(t, fleet.stores, gateTestPolicy())
+		srv := gateServer(t, ownerView(fleet.stores), gateTestPolicy())
 		if status, raw := gateRequest(t, srv, http.MethodPut, path, victimLFDI, body); status != http.StatusNoContent {
 			t.Fatalf("owner PUT status = %d, want 204; body=%s", status, raw)
 		}

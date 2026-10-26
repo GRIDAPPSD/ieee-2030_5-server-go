@@ -251,7 +251,9 @@ func (g *ownershipGate) exclusive(next http.Handler) http.Handler {
 		switch {
 		case err != nil:
 			g.denials.record(r, ownershipVerdict{caller: callerLFDI, reason: reasonManagementFailed, path: r.URL.Path})
-			srverr.Internal(w, r, fmt.Errorf("exclusivity check could not read the caller's manager: %w", err))
+			// The budgeted line above is the record; srverr.Internal would add an
+			// unbudgeted line per request during an outage.
+			http.Error(w, srverr.DefaultMessage, http.StatusInternalServerError)
 		case managed:
 			g.refuse(w, r, ownershipVerdict{caller: callerLFDI, reason: reasonManagedDirect, path: r.URL.Path})
 		default:
@@ -374,7 +376,9 @@ func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
 	// The id and path are client-chosen: truncated and quoted so they cannot
 	// forge a log line. No field of the stored record is written.
 	if v.path != "" {
-		d.logf(`assembly: ownership gate denied %s "%s": caller="%s" reason=%s`,
+		// %q on top of logsafe.Str: Str leaves a double quote alone, and an
+		// unescaped one in the path would close it and add a field.
+		d.logf("assembly: ownership gate denied %s %q: caller=%q reason=%s",
 			logsafe.Str(r.Method), logsafe.Str(logsafe.TruncateOctets(v.path, maxLoggedPathLen)), logsafe.Str(v.caller), logsafe.Str(v.reason))
 		return
 	}

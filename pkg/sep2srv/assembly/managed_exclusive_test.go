@@ -199,3 +199,65 @@ func TestManagedExclusive_RemovingThePairRestoresDirectAccess(t *testing.T) {
 		t.Errorf("GET %s after the pair was removed: status %d, want 200; body=%q", path, status, raw)
 	}
 }
+
+// A quote in the request path must not close the logged path and add a field
+// to the denial line. It cannot run in parallel: it swaps the process-wide
+// log output.
+func TestManagedExclusive_QuoteInPathCannotForgeAField(t *testing.T) {
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	buf := captureLog(t)
+
+	forged := "/edev/1%22:%20caller=%22FORGED%22%20reason=%22managed-direct"
+	if status, _ := gateRequest(t, srv, http.MethodGet, forged, victimLFDI, ""); status != http.StatusForbidden {
+		t.Fatalf("paired GET of a path carrying quotes: status %d, want 403", status)
+	}
+	var lines []string
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(l, denialLogMarker) {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("got %d denial lines, want 1: %q", len(lines), buf.String())
+	}
+	if strings.Contains(lines[0], `caller="FORGED"`) || strings.Count(lines[0], `caller="`) != 1 || strings.Count(lines[0], "reason=") != 2 {
+		// reason= appears once as the real field and once inside the escaped path.
+		t.Errorf("a quote in the path added a field to the denial line: %q", lines[0])
+	}
+	if !strings.HasSuffix(lines[0], `caller="`+victimLFDI+`" reason=managed-direct`) {
+		t.Errorf("the real caller and reason must close the line: %q", lines[0])
+	}
+}
+
+// Repeated management store failures write one budgeted line per request up
+// to the caller's budget, and no unbudgeted line per request. It cannot run
+// in parallel: it swaps the process-wide log output.
+func TestManagedExclusive_StoreFailureWritesOnlyBudgetedLines(t *testing.T) {
+	fleet := newManagementFleet(t)
+	fault := &storetest.Fault{}
+	fleet.stores.EndDeviceManagers = faultyManagers{inner: fleet.managers, fault: fault}
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	buf := captureLog(t)
+	fault.Arm(storetest.ErrBackendUnavailable)
+
+	const requests = 12
+	for range requests {
+		status, raw := gateRequest(t, srv, http.MethodGet, "/dcap", victimLFDI, "")
+		if status != http.StatusInternalServerError || string(raw) != "internal error\n" {
+			t.Fatalf("status %d body %q, want 500 with the fixed body", status, raw)
+		}
+	}
+	var budgeted, unbudgeted int
+	for _, l := range strings.Split(buf.String(), "\n") {
+		switch {
+		case strings.Contains(l, denialLogMarker) && strings.Contains(l, "reason=management-store-error"):
+			budgeted++
+		case strings.Contains(l, "sep2srv: 500"):
+			unbudgeted++
+		}
+	}
+	if budgeted != 5 || unbudgeted != 0 {
+		t.Errorf("after %d failures: %d budgeted lines (want the per-caller budget of 5), %d unbudgeted 500 lines (want 0); log=%q", requests, budgeted, unbudgeted, buf.String())
+	}
+}

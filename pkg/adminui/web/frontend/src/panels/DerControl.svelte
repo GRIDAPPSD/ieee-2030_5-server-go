@@ -43,6 +43,7 @@
     expectedDeviceReadTime,
     fmtTime,
     isLiveControl,
+    localDateTimeInput,
     keptControl,
     POLL_RATE_SECONDS,
     type DERControlListItem,
@@ -371,6 +372,12 @@
     primacyLine = ''
   }
 
+  // The picker opens at the moment the box is unchecked, not at page load.
+  function onStartNowChange(e: Event) {
+    startNow = (e.currentTarget as HTMLInputElement).checked
+    if (!startNow) startAt = localDateTimeInput()
+  }
+
   function editPending() {
     pendingBody = null
     pendingSummary = ''
@@ -666,7 +673,7 @@
   {#if mode === 'scheduled'}
     <div class="form-row">
       <label>
-        <input type="checkbox" id="controlStartNow" bind:checked={startNow} /> Start now
+        <input type="checkbox" id="controlStartNow" checked={startNow} onchange={onStartNowChange} /> Start now
       </label>
       {#if !startNow}
         <input type="datetime-local" id="controlStartAt" step="1" bind:value={startAt} />

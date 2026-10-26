@@ -845,3 +845,36 @@ describe('DerControl: the function rows lay out in three columns', () => {
     expect(narrow).not.toBeNull()
   })
 })
+
+describe('DerControl: the start picker defaults to now', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('opens filled with the local date and time to the second, taken when Start now is unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 8, 9))
+    const { container } = await mount()
+    expect(container.querySelector('#controlStartAt')).toBeNull()
+
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 9, 10))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    // jsdom's datetime-local sanitizer appends .000; a browser keeps the seconds.
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2031-05-06T07:09:10(\.000)?$/)
+
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    vi.setSystemTime(new Date(2031, 11, 31, 23, 59, 58))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2031-12-31T23:59:58(\.000)?$/)
+  })
+
+  it('sends the defaulted start when the form is submitted untouched', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 8, 9))
+    const { post, container } = await mount()
+    post.mockResolvedValue(scheduledReply())
+    await fillFlagSchedule(container)
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await sendAndConfirm()
+    const body = post.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(body.startTime).toBe(Math.floor(new Date(2031, 4, 6, 7, 8, 9).getTime() / 1000))
+  })
+})

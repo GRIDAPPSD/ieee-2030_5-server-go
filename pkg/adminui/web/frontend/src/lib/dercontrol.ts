@@ -110,6 +110,13 @@ export function fmtTime(seconds: number): string {
   return new Date(seconds * 1000).toISOString()
 }
 
+// localDateTimeInput formats a moment as a datetime-local value: the browser's
+// local date and time to the second, with no zone.
+export function localDateTimeInput(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 // expectedDeviceReadTime is a nominal estimate, never a delivery time: the
 // stored time plus the DERControlList pollRate, for a device that polls on
 // schedule and misses the push. An offline device never reads it.

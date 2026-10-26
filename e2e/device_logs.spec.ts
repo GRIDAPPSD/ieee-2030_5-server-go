@@ -82,3 +82,54 @@ test('the Logs tab lists the requests a device made, survives a reload, and link
   await expect(page.getByTestId('logs-not-found')).toBeVisible();
   await expect(page.getByTestId('device-logs')).toHaveCount(0);
 });
+
+// #1129: the log reads like a tail. Opens at the bottom, a new line while the
+// reader is scrolled up waits behind a control, and the control jumps down.
+test('the Logs tab opens at the bottom and holds new lines while the reader is scrolled up', async ({ page, request }) => {
+  const cert = mintDeviceCert(SERVER, getCertDir(), 'device-log-tail');
+  const info = await request.post(`${baseUrl}/api/certs/info`, {
+    headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },
+    data: cert.certPEM,
+  });
+  expect(info.status()).toBe(200);
+  const { sfdi, lfdi } = await info.json();
+  const added = await request.post(`${baseUrl}/api/devices`, {
+    headers: AUTH,
+    data: { sfdi, lfdi, name: 'device-log-tail', pin: 424243, enabled: true },
+  });
+  expect(added.status()).toBe(201);
+
+  // Enough lines that the box scrolls; the last one is distinguishable.
+  for (let i = 0; i < 40; i++) {
+    expect((await readWire(PROTOCOL_PORT, getCertDir(), cert, '/dcap')).status).toBe(200);
+  }
+  expect((await readWire(PROTOCOL_PORT, getCertDir(), cert, '/tm')).status).toBe(200);
+
+  await page.goto(baseUrl + `/ui/logs?device=${lfdi}&token=${ADMIN_KEY}`);
+  const logs = page.getByTestId('device-logs');
+  const box = logs.getByTestId('device-logs-scroll');
+  const metrics = () =>
+    box.evaluate((el) => ({ top: el.scrollTop, gap: el.scrollHeight - el.scrollTop - el.clientHeight, scrollable: el.scrollHeight > el.clientHeight }));
+
+  await expect(logs.getByRole('row').filter({ hasText: 'GET /tm' })).toBeVisible({ timeout: 15000 });
+  // Control: the box really scrolls, so being at the bottom is not vacuous.
+  expect((await metrics()).scrollable).toBe(true);
+  await expect.poll(async () => (await metrics()).gap).toBeLessThan(8);
+  const rows = logs.getByTestId('device-log-row');
+  await expect(rows.last()).toContainText('GET /tm');
+
+  await box.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await expect.poll(async () => (await metrics()).top).toBe(0);
+  expect((await readWire(PROTOCOL_PORT, getCertDir(), cert, '/edev')).status).toBeGreaterThan(0);
+
+  const jump = logs.getByTestId('device-logs-new');
+  await expect(jump).toBeVisible({ timeout: 15000 });
+  expect((await metrics()).top).toBe(0);
+
+  await jump.click();
+  await expect.poll(async () => (await metrics()).gap).toBeLessThan(8);
+  await expect(rows.last()).toContainText('GET /edev');
+  await expect(jump).toHaveCount(0);
+});

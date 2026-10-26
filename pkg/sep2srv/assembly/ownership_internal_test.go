@@ -193,7 +193,7 @@ func TestDelegable(t *testing.T) {
 		"GET /edev/{id}/der":         true,
 		"HEAD /edev/{id}/der":        true,
 		"PUT /edev/{id}":             false,
-		"DELETE /edev/{id}":          false,
+		"DELETE /edev/{id}":          true, // MAINT-002, IG 5.3.1.2
 		"GET /edev/{id}/rg":          false,
 		"HEAD /edev/{id}/rg":         false,
 		"GET /edev/{id}/{name}":      false,
@@ -250,7 +250,7 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}":    true,
 	"GET /edev/{id}/rg": false,
 	"PUT /edev/{id}":    false,
-	"DELETE /edev/{id}": false,
+	"DELETE /edev/{id}": true, // CSIP MAINT-002: a manager deletes a device it manages
 
 	"GET /edev/{id}/fsa":                                     true,
 	"GET /edev/{id}/fsa/{fsaId}":                             true,

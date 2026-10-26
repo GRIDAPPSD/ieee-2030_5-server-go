@@ -176,9 +176,25 @@ func (s *EndDeviceManagementStore) Assign(_ context.Context, managerLFDI, manage
 
 // Unassign implements [store.EndDeviceManagementStore].
 func (s *EndDeviceManagementStore) Unassign(_ context.Context, managedLFDI string) error {
+	return s.remove(managedLFDI, "")
+}
+
+// Release implements [store.EndDeviceManagementStore]. The manager is
+// compared inside the same locked build as the removal, so the check and the
+// delete cannot straddle a rekey.
+func (s *EndDeviceManagementStore) Release(_ context.Context, managerLFDI, managedLFDI string) error {
+	if managerLFDI == "" {
+		return store.ErrNotFound
+	}
+	return s.remove(managedLFDI, managerLFDI)
+}
+
+// remove deletes the pair naming managedLFDI. A non-empty onlyManager limits
+// it to a pair that manager still holds.
+func (s *EndDeviceManagementStore) remove(managedLFDI, onlyManager string) error {
 	return s.mutate(func() ([]managementPairRecord, func(), error) {
 		manager, ok := s.managerOf[managedLFDI]
-		if !ok {
+		if !ok || (onlyManager != "" && manager != onlyManager) {
 			return nil, nil, store.ErrNotFound
 		}
 		records := slices.DeleteFunc(s.recordsLocked(), func(r managementPairRecord) bool {

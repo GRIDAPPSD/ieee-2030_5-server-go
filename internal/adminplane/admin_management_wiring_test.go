@@ -23,6 +23,7 @@ func (fakeManagementStore) ManagerOf(context.Context, string) (string, error) {
 func (fakeManagementStore) ManagedBy(context.Context, string) ([]string, error) { return nil, nil }
 func (fakeManagementStore) Assign(context.Context, string, string) error        { return nil }
 func (fakeManagementStore) Unassign(context.Context, string) error              { return nil }
+func (fakeManagementStore) Release(context.Context, string, string) error       { return nil }
 
 var _ store.EndDeviceManagementStore = fakeManagementStore{}
 

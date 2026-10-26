@@ -281,3 +281,53 @@ func TestManagers_SortedDeduplicatedByManagedCount(t *testing.T) {
 		t.Errorf("Managers() after the last child is unassigned = %v, want [%s]; a manager with no devices left must not still be listed", got, otherManager)
 	}
 }
+
+func TestEndDeviceManagementStore_ReleaseRemovesOnlyTheNamedManagersPair(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceManagementStore()
+	const (
+		mgrA   = "AA00000000000000000000000000000000000001"
+		mgrB   = "BB00000000000000000000000000000000000002"
+		child1 = "C100000000000000000000000000000000000001"
+		child2 = "C200000000000000000000000000000000000002"
+	)
+	for _, p := range [][2]string{{mgrA, child1}, {mgrA, child2}} {
+		if err := s.Assign(ctx, p[0], p[1]); err != nil {
+			t.Fatalf("Assign: %v", err)
+		}
+	}
+
+	if err := s.Release(ctx, mgrB, child1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Release by a manager that does not hold the pair = %v, want ErrNotFound", err)
+	}
+	if got, err := s.ManagerOf(ctx, child1); err != nil || got != mgrA {
+		t.Errorf("ManagerOf(child1) after a refused Release = %q, %v; want %q", got, err, mgrA)
+	}
+	if err := s.Release(ctx, "", child1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Release with an empty manager = %v, want ErrNotFound", err)
+	}
+
+	if err := s.Release(ctx, mgrA, child1); err != nil {
+		t.Fatalf("Release by the holder: %v", err)
+	}
+	if _, err := s.ManagerOf(ctx, child1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("ManagerOf(child1) after Release = %v, want ErrNotFound", err)
+	}
+	if got, err := s.ManagedBy(ctx, mgrA); err != nil || len(got) != 1 || got[0] != child2 {
+		t.Errorf("ManagedBy(mgrA) after Release = %v, %v; want [%s]", got, err, child2)
+	}
+	if err := s.Release(ctx, mgrA, child1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second Release = %v, want ErrNotFound", err)
+	}
+
+	if err := s.RekeyManager(ctx, mgrA, mgrB); err != nil {
+		t.Fatalf("RekeyManager: %v", err)
+	}
+	if err := s.Release(ctx, mgrA, child2); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Release by the retired manager after a rekey = %v, want ErrNotFound", err)
+	}
+	if got, err := s.ManagerOf(ctx, child2); err != nil || got != mgrB {
+		t.Errorf("ManagerOf(child2) after a stale Release = %q, %v; want %q", got, err, mgrB)
+	}
+}

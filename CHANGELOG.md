@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `scope`; a device's view includes its lines in the shared unregistered
   file and its manager's lines that name it. A real credential is required, and
   503 means the log is off (#1066). `sep2adminplane.Config` gains `DeviceLogs`.
+- A manager may delete a device it manages with `DELETE /edev/{id}`, which also
+  releases the pair (#1087). `store.EndDeviceManagementStore` gains
+  `Release(ctx, managerLFDI, managedLFDI)`, a compare-and-delete; an embedder
+  that implements the interface must add it.
 
 ## [0.18.0] - 2026-10-21
 

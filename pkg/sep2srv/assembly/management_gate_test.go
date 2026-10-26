@@ -659,6 +659,28 @@ func TestManagement_StoreFailureIs500AndRunsNoHandler(t *testing.T) {
 	}
 }
 
+// A pattern management never grants is refused as not-owner: the delegated
+// check is skipped, so the refusal does not depend on the manager's pair.
+// It cannot run in parallel: it swaps the process-wide log output.
+func TestManagement_RouteManagementNeverGrantsIsRefusedAsNotOwner(t *testing.T) {
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	buf := captureLog(t)
+
+	status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, managerLFDI, "")
+	if status != http.StatusForbidden {
+		t.Fatalf("manager DELETE /edev/%s: status %d, want 403; body=%q", victimID, status, raw)
+	}
+	assertNoFleetData(t, "manager DELETE", raw)
+	if !lineWith(buf.String(), denialLogMarker, `caller="`+managerLFDI+`"`, `id="`+victimID+`"`, "reason=not-owner") ||
+		lineWith(buf.String(), "reason=not-owner-or-manager") {
+		t.Errorf("want a not-owner denial line (not not-owner-or-manager) for the manager; log=%q", buf.String())
+	}
+	if _, err := fleet.stores.EndDevices.Get(t.Context(), victimID); err != nil {
+		t.Errorf("managed record gone after the refused DELETE: %v", err)
+	}
+}
+
 func TestManagement_AbsentStoreDelegatesNothing(t *testing.T) {
 	t.Parallel()
 	var typedNil *memory.EndDeviceManagementStore

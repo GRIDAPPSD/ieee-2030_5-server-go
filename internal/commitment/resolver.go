@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -42,12 +43,12 @@ func (r Resolver) FleetOf(ctx context.Context, endDeviceID string) (string, erro
 	// canonical upper-case form, so an exact lookup of a lower-case LFDI
 	// would miss its manager and fail open.
 	lfdi := strings.ToUpper(dev.LFDI)
-	manager, err := r.Managers.ManagerOf(ctx, lfdi)
+	manager, managed, err := coreedev.ManagerOf(ctx, r.Managers, lfdi)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return lfdi, nil
-		}
 		return "", fmt.Errorf("commitment: looking up the manager of EndDevice %s (LFDI %s): %w", endDeviceID, lfdi, err)
+	}
+	if !managed {
+		return lfdi, nil
 	}
 	return strings.ToUpper(manager), nil
 }
@@ -82,15 +83,12 @@ func (f Fleets) Known(ctx context.Context, fleetKey string) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("commitment: EndDevice with LFDI %s: %w", lfdi, err)
 		}
-		_, err = f.Managers.ManagerOf(ctx, fleetKey)
-		if errors.Is(err, store.ErrNotFound) {
-			return true, nil
-		}
+		_, managed, err := coreedev.ManagerOf(ctx, f.Managers, fleetKey)
 		if err != nil {
 			return false, fmt.Errorf("commitment: manager of %s: %w", fleetKey, err)
 		}
 		// A managed device belongs to its manager's fleet, not its own.
-		return false, nil
+		return !managed, nil
 	}
 	return false, nil
 }

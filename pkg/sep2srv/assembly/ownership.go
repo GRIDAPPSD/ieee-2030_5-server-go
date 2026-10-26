@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"log"
 	"maps"
@@ -184,6 +185,9 @@ const (
 	reasonNotOwner        = "not-owner"
 	reasonNotManager      = "not-owner-or-manager"
 	reasonManagedDirect   = "managed-direct"
+	// reasonManagementFailed is logged for a 500, not a refusal: the
+	// exclusivity check could not read the management store.
+	reasonManagementFailed = "management-store-error"
 )
 
 // ownershipVerdict is the gate's answer to one request. caller and reason
@@ -194,6 +198,9 @@ type ownershipVerdict struct {
 	caller   string
 	reason   string
 	err      error
+	// path, when set, is the full request path to log: the exclusivity check
+	// runs before the mux matches, so the route and {id} name nothing.
+	path string
 }
 
 func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), delegated bool) func(http.ResponseWriter, *http.Request) {
@@ -211,11 +218,17 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 			g.denials.record(r, v)
 			http.Error(w, "not found", http.StatusNotFound)
 		default:
-			g.denials.record(r, v)
-			devicelog.NoteFrom(r.Context()).Refuse(v.reason)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			g.refuse(w, r, v)
 		}
 	}
+}
+
+// refuse answers 403 for v: one line in the denial log within its budget, the
+// reason in the device log, and the fixed body.
+func (g *ownershipGate) refuse(w http.ResponseWriter, r *http.Request, v ownershipVerdict) {
+	g.denials.record(r, v)
+	devicelog.NoteFrom(r.Context()).Refuse(v.reason)
+	http.Error(w, "forbidden", http.StatusForbidden)
 }
 
 // exclusive refuses a caller whose certificate LFDI is the managed side of a
@@ -237,11 +250,10 @@ func (g *ownershipGate) exclusive(next http.Handler) http.Handler {
 		_, managed, err := coreedev.ManagerOf(r.Context(), g.managers, callerLFDI)
 		switch {
 		case err != nil:
+			g.denials.record(r, ownershipVerdict{caller: callerLFDI, reason: reasonManagementFailed, path: r.URL.Path})
 			srverr.Internal(w, r, fmt.Errorf("exclusivity check could not read the caller's manager: %w", err))
 		case managed:
-			g.denials.record(r, ownershipVerdict{caller: callerLFDI, reason: reasonManagedDirect})
-			devicelog.NoteFrom(r.Context()).Refuse(reasonManagedDirect)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			g.refuse(w, r, ownershipVerdict{caller: callerLFDI, reason: reasonManagedDirect, path: r.URL.Path})
 		default:
 			next.ServeHTTP(w, r)
 		}
@@ -314,6 +326,7 @@ const (
 	denialLogLimit     = 100
 	denialLogWindow    = time.Minute
 	maxLoggedIDLen     = 64
+	maxLoggedPathLen   = 256
 )
 
 // denialLog writes refusal lines within the bounds above and counts the rest
@@ -358,8 +371,13 @@ func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
 	if !admitted {
 		return
 	}
-	// The id is client-chosen: it is truncated and quoted so it cannot forge a
-	// log line. No field of the stored record is written.
+	// The id and path are client-chosen: truncated and quoted so they cannot
+	// forge a log line. No field of the stored record is written.
+	if v.path != "" {
+		d.logf(`assembly: ownership gate denied %s "%s": caller="%s" reason=%s`,
+			logsafe.Str(r.Method), logsafe.Str(logsafe.TruncateOctets(v.path, maxLoggedPathLen)), logsafe.Str(v.caller), logsafe.Str(v.reason))
+		return
+	}
 	id := r.PathValue("id")
 	if len(id) > maxLoggedIDLen {
 		id = id[:maxLoggedIDLen]

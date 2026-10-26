@@ -36,7 +36,9 @@ request still moves the device's last-seen time and writes a device log line.
 
 The check reads the management store on every request that carries an
 identity. If the store fails the request answers 500, because failing open
-would let a paired DER act during exactly that outage. Removing the pair gives
+would let a paired DER act during exactly that outage. A management store
+that stalls rather than fails holds every identified request for as long as
+the stall lasts; that cost is accepted. Removing the pair gives
 the device direct access again on its next request.
 
 ## What a manager can and cannot do
@@ -155,7 +157,10 @@ LFDI, the requested id (truncated to 64 bytes, then quoted) and a reason class:
 route management never grants, or no management store), or
 `not-owner-or-manager` (a delegated route where the caller is not the
 record's manager either), or `managed-direct` (the caller is the managed side
-of a pair).
+of a pair). A `managed-direct` line names the method and full request path
+instead of a route and id, because it is decided before the route is matched;
+a management store failure in that check is logged the same way with
+`reason=management-store-error` and still answers 500.
 
 These lines are budgeted per router in one-minute windows. A window opens at
 the first refusal after the previous window has closed. Within a window each

@@ -90,8 +90,28 @@ func TestManagedExclusive_UnpairedCallerIsNotRefusedAsManagedDirect(t *testing.T
 	}
 }
 
+// The refusal line names the full request path and the caller; the mount
+// prefix and an empty id would name nothing. It cannot run in parallel: it
+// swaps the process-wide log output.
+func TestManagedExclusive_DenialLineNamesPathAndCaller(t *testing.T) {
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	buf := captureLog(t)
+
+	path := "/edev/" + victimID + "/der"
+	if status, _ := gateRequest(t, srv, http.MethodGet, path, victimLFDI, ""); status != http.StatusForbidden {
+		t.Fatalf("paired GET %s: status %d, want 403", path, status)
+	}
+	if !lineWith(buf.String(), denialLogMarker, `GET "`+path+`"`, `caller="`+victimLFDI+`"`, "reason=managed-direct") {
+		t.Errorf("no denial line with the method, full path, caller and reason; log=%q", buf.String())
+	}
+}
+
+// The 500 is logged with the caller and path through the denial budget. It
+// cannot run in parallel: it swaps the process-wide log output.
 func TestManagedExclusive_StoreFailureAnswers500(t *testing.T) {
 	fleet := newManagementFleet(t)
+	buf := captureLog(t)
 	fault := &storetest.Fault{}
 	fleet.stores.EndDeviceManagers = faultyManagers{inner: fleet.managers, fault: fault}
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
@@ -105,6 +125,10 @@ func TestManagedExclusive_StoreFailureAnswers500(t *testing.T) {
 		if strings.Contains(string(raw), storetest.ErrBackendUnavailable.Error()) {
 			t.Errorf("store error text reached the client; body=%q", raw)
 		}
+	}
+
+	if !lineWith(buf.String(), denialLogMarker, `GET "/dcap"`, `caller="`+victimLFDI+`"`, "reason=management-store-error") {
+		t.Errorf("no budgeted line naming the caller and path for the store failure; log=%q", buf.String())
 	}
 
 	// No identity means no lookup, so the anonymous /tm is unaffected.

@@ -315,7 +315,7 @@ func (s stalledManagers) ManagedBy(ctx context.Context, lfdi string) ([]string, 
 	return s.EndDeviceManagementStore.ManagedBy(ctx, lfdi)
 }
 
-func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
+func TestDeviceLogStalledManagedByLookupNeverHoldsARequest(t *testing.T) {
 	t.Parallel()
 	stalled := stalledManagers{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	srv, dir, closeLog, _ := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -191,13 +192,13 @@ func (h *AdminManagementHandler) HandleListManagementPairs() http.HandlerFunc {
 				writeError(w, http.StatusBadRequest, "managed: "+err.Error())
 				return
 			}
-			manager, err := h.Managers.ManagerOf(r.Context(), managed)
+			manager, isManaged, err := coreedev.ManagerOf(r.Context(), h.Managers, managed)
 			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					writeError(w, http.StatusNotFound, "device is not managed")
-					return
-				}
 				writeManagementInternalError(w, "lookup", err)
+				return
+			}
+			if !isManaged {
+				writeError(w, http.StatusNotFound, "device is not managed")
 				return
 			}
 			mgr, err := h.memberHealth(r.Context(), manager)

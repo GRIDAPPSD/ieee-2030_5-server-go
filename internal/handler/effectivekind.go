@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -67,12 +68,12 @@ func (g kindGate) managerRefusal(ctx context.Context, lfdi string) (string, erro
 	if store.IsAbsent(g.managers) {
 		return "", nil
 	}
-	parent, err := g.managers.ManagerOf(ctx, lfdi)
+	parent, managed, err := coreedev.ManagerOf(ctx, g.managers, lfdi)
 	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return "", nil
 	case err != nil:
 		return "", fmt.Errorf("management lookup: %w", err)
+	case !managed:
+		return "", nil
 	}
 	return "manager " + lfdi + " is managed by " + parent + " and cannot manage others", nil
 }
@@ -97,12 +98,12 @@ func (g kindGate) profileKindRefusal(ctx context.Context, lfdi, kind string) (st
 	}
 	switch kind {
 	case store.DeviceKindAggregator:
-		manager, err := g.managers.ManagerOf(ctx, lfdi)
+		manager, managed, err := coreedev.ManagerOf(ctx, g.managers, lfdi)
 		switch {
-		case errors.Is(err, store.ErrNotFound):
-			return "", nil
 		case err != nil:
 			return "", fmt.Errorf("management lookup: %w", err)
+		case !managed:
+			return "", nil
 		}
 		return "device is managed by " + manager, nil
 	case store.DeviceKindDevice:

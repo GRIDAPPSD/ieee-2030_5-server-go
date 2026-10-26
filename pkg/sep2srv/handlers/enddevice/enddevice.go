@@ -464,20 +464,16 @@ func resolveTarget(w http.ResponseWriter, r *http.Request, cfg *createConfig, de
 		return self, true
 	}
 	manages := false
-	if !cfg.inBandOff && !store.IsAbsent(cfg.managers) {
+	if !cfg.inBand.off && !store.IsAbsent(cfg.inBand.managers) {
 		var err error
-		manages, err = CurrentManagerOwns(r.Context(), cfg.managers, claimed, callerLFDI)
+		manages, err = CurrentManagerOwns(r.Context(), cfg.inBand.managers, claimed, callerLFDI)
 		if err != nil {
 			srverr.Internal(w, r, fmt.Errorf("the management lookup failed, so no device was provisioned: %w", err))
 			return createTarget{}, false
 		}
 	}
 	if !manages {
-		if cfg.inBandOff {
-			cfg.refuse(w, r, callerLFDI, http.StatusForbidden, "in-band-off", inBandOffMessage)
-		} else {
-			cfg.refuse(w, r, callerLFDI, http.StatusForbidden, "not-manager", notManagedMessage)
-		}
+		cfg.inBand.refuseForbidden(w, r, callerLFDI)
 		return createTarget{}, false
 	}
 	derived, err := sep2tls.SFDIFromLFDI(claimed)
@@ -496,14 +492,72 @@ func resolveTarget(w http.ResponseWriter, r *http.Request, cfg *createConfig, de
 // log when one is wired; the same limiter that bounds the ownership gate's
 // denial lines then bounds these.
 func (c *createConfig) refuse(w http.ResponseWriter, r *http.Request, caller string, status int, reason, msg string) {
-	refuseWith(c.refusals, w, r, caller, status, reason, msg)
+	c.inBand.refuse(w, r, caller, status, reason, msg)
 }
 
-func refuseWith(refusals func(r *http.Request, caller, reason string), w http.ResponseWriter, r *http.Request, caller string, status int, reason, msg string) {
-	if refusals != nil {
-		refusals(r, caller, reason)
+// inBandManagement is the one owner of the in-band switch, the management
+// store and the refusal log, shared by POST and DELETE.
+type inBandManagement struct {
+	managers store.EndDeviceManagementReader
+	off      bool
+	refusals func(r *http.Request, caller, reason string)
+}
+
+const (
+	reasonInBandOff  = "in-band-off"
+	reasonNotManaged = "not-manager"
+)
+
+func (m inBandManagement) refuse(w http.ResponseWriter, r *http.Request, caller string, status int, reason, msg string) {
+	if m.refusals != nil {
+		m.refusals(r, caller, reason)
 	}
 	http.Error(w, msg, status)
+}
+
+// refuseForbidden answers the 403 a manager gets when in-band management is
+// off or the device is not its to manage.
+func (m inBandManagement) refuseForbidden(w http.ResponseWriter, r *http.Request, caller string) {
+	if m.off {
+		m.refuse(w, r, caller, http.StatusForbidden, reasonInBandOff, inBandOffMessage)
+		return
+	}
+	m.refuse(w, r, caller, http.StatusForbidden, reasonNotManaged, notManagedMessage)
+}
+
+// InBandManagement configures a manager's in-band add and delete of the
+// devices it manages. One value feeds both [HandleCreateEndDevice] (through
+// ForCreate) and [HandleDeleteEndDevice] (through ForDelete), so the switch,
+// the store and the refusal log cannot differ between them.
+type InBandManagement struct {
+	// Managers is the management store; absent means a manager is refused.
+	Managers store.EndDeviceManagementStore
+	// Off refuses every manager add and delete with 403.
+	Off bool
+	// Refusals, when set, receives each refusal with the caller's LFDI and a
+	// short reason; it owns the bounding of what it writes.
+	Refusals func(r *http.Request, caller, reason string)
+}
+
+func (m InBandManagement) config() inBandManagement {
+	return inBandManagement{managers: m.Managers, off: m.Off, refusals: m.Refusals}
+}
+
+// ForCreate is the option for [HandleCreateEndDevice].
+func (m InBandManagement) ForCreate() CreateOption {
+	return func(c *createConfig) { c.inBand = m.config() }
+}
+
+// ForDelete is the option for [HandleDeleteEndDevice]: a manager the
+// ownership gate admitted (see [WithDelegatedAccess]) releases the pair and
+// deletes the record.
+func (m InBandManagement) ForDelete() DeleteOption {
+	return func(c *deleteConfig) {
+		c.inBand = m.config()
+		if !store.IsAbsent(m.Managers) {
+			c.release = m.Managers.Release
+		}
+	}
 }
 
 // findByLFDIFold looks for a record whose LFDI equals lfdi ignoring case. It
@@ -597,9 +651,7 @@ type CreateOption func(*createConfig)
 
 type createConfig struct {
 	beforeCreate func(ctx context.Context, id string) error
-	managers     store.EndDeviceManagementReader
-	inBandOff    bool
-	refusals     func(r *http.Request, caller, reason string)
+	inBand       inBandManagement
 }
 
 // WithRefusalLog sends each 403 and 400 a POST /edev refuses on the caller's
@@ -607,20 +659,20 @@ type createConfig struct {
 // bounding of what it writes; without it these refusals are answered and not
 // logged.
 func WithRefusalLog(fn func(r *http.Request, caller, reason string)) CreateOption {
-	return func(c *createConfig) { c.refusals = fn }
+	return func(c *createConfig) { c.inBand.refusals = fn }
 }
 
 // WithManagers lets a caller register the EndDevices it manages: a POST whose
 // body names another lFDI is accepted when managers says the caller is that
 // LFDI's current manager. Without it, such a POST answers 403.
 func WithManagers(managers store.EndDeviceManagementReader) CreateOption {
-	return func(c *createConfig) { c.managers = managers }
+	return func(c *createConfig) { c.inBand.managers = managers }
 }
 
 // WithInBandManagementOff refuses every manager registration with 403, the
 // server option that leaves device registration to the device or an operator.
 func WithInBandManagementOff() CreateOption {
-	return func(c *createConfig) { c.inBandOff = true }
+	return func(c *createConfig) { c.inBand.off = true }
 }
 
 // WithBeforeCreate runs fn with the allocated id just before a new device is
@@ -654,12 +706,12 @@ func sweepVacantID(ctx context.Context, s store.EndDeviceStore, fn func(context.
 // record). ErrNotFound from Release means the grant that admitted the request
 // is gone, so nothing is deleted.
 func (c *deleteConfig) releaseManagedPair(w http.ResponseWriter, r *http.Request, s store.EndDeviceStore, manager, id string) bool {
-	if c.inBandOff {
-		refuseWith(c.refusals, w, r, manager, http.StatusForbidden, "in-band-off", inBandOffMessage)
+	if c.inBand.off {
+		c.inBand.refuseForbidden(w, r, manager)
 		return false
 	}
-	if store.IsAbsent(c.managers) {
-		srverr.Internal(w, r, errors.New("enddevice: a manager delete has no management store to release the pair in"))
+	if c.release == nil {
+		srverr.Internal(w, r, fmt.Errorf("enddevice: a manager delete of %q has no management store to release the pair in", id))
 		return false
 	}
 	dev, err := s.Get(r.Context(), id)
@@ -668,17 +720,18 @@ func (c *deleteConfig) releaseManagedPair(w http.ResponseWriter, r *http.Request
 			http.Error(w, "not found", http.StatusNotFound)
 			return false
 		}
-		srverr.Internal(w, r, fmt.Errorf("read the EndDevice before releasing its pair: %w", err))
+		srverr.Internal(w, r, fmt.Errorf("read EndDevice %q before releasing its pair: %w", id, err))
 		return false
 	}
-	if err := c.managers.Release(r.Context(), manager, dev.LFDI); err != nil {
+	if err := c.release(r.Context(), manager, dev.LFDI); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			refuseWith(c.refusals, w, r, manager, http.StatusForbidden, "not-manager", notManagedMessage)
+			c.inBand.refuse(w, r, manager, http.StatusForbidden, reasonNotManaged, notManagedMessage)
 			return false
 		}
-		srverr.Internal(w, r, fmt.Errorf("release the management pair: %w", err))
+		srverr.Internal(w, r, fmt.Errorf("release the management pair of EndDevice %q for manager %s: %w", id, logsafe.Str(manager), err))
 		return false
 	}
+	log.Printf("%s%s: manager %s released the pair of EndDevice %s", managedDeleteLogPrefix, logsafe.Str(srverr.Route(r)), logsafe.Str(manager), logsafe.Str(id))
 	return true
 }
 
@@ -687,22 +740,8 @@ type DeleteOption func(*deleteConfig)
 
 type deleteConfig struct {
 	afterNotify func(ctx context.Context, id string) error
-	managers    store.EndDeviceManagementStore
-	inBandOff   bool
-	refusals    func(r *http.Request, caller, reason string)
-}
-
-// WithManagerDelete lets a manager that the ownership gate admitted (see
-// [WithDelegatedAccess]) delete the EndDevice it manages: the pair is
-// released through managers, then the record is deleted. With inBandOff the
-// request is refused 403 and nothing is deleted. refusals, when set, receives
-// each such refusal with the caller's LFDI and a short reason.
-func WithManagerDelete(managers store.EndDeviceManagementStore, inBandOff bool, refusals func(r *http.Request, caller, reason string)) DeleteOption {
-	return func(c *deleteConfig) {
-		c.managers = managers
-		c.inBandOff = inBandOff
-		c.refusals = refusals
-	}
+	inBand      inBandManagement
+	release     func(ctx context.Context, manager, managed string) error
 }
 
 type delegatedAccessKey struct{}
@@ -764,6 +803,9 @@ func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier, opts ...D
 		}
 
 		if err := s.Delete(r.Context(), id); err != nil {
+			if manager != "" {
+				log.Printf("%s%s: manager %s lost its pair but the delete of EndDevice %s failed: %s", managedDeleteLogPrefix, logsafe.Str(srverr.Route(r)), logsafe.Str(manager), logsafe.Str(id), logsafe.Str(err.Error()))
+			}
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return

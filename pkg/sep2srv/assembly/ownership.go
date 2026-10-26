@@ -206,9 +206,9 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 		v := g.decide(r, delegated)
 		switch v.decision {
 		case ownershipAllowed:
-			if v.manager != "" {
-				r = r.WithContext(coreedev.WithDelegatedAccess(r.Context(), v.manager))
-			}
+			// Written on every admit, empty for a self admit, so a value
+			// already on the context can never reach the handler.
+			r = r.WithContext(coreedev.WithDelegatedAccess(r.Context(), v.manager))
 			next(w, r)
 		case ownershipStoreFailed:
 			// A 500, not a 403: the gate could not establish access, and a

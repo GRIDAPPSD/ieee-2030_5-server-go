@@ -782,15 +782,6 @@ func endDeviceBeforeCreate(stores *Stores) coreedev.CreateOption {
 	return nil
 }
 
-// endDeviceInBandOff is the option that refuses a manager's in-band add with
-// 403 when the server option is off, and nil (no option) when it is on.
-func endDeviceInBandOff(inBandManagementOff bool) coreedev.CreateOption {
-	if inBandManagementOff {
-		return coreedev.WithInBandManagementOff()
-	}
-	return nil
-}
-
 // flowReservationLinkedEndDevices returns the EndDevice store the /edev
 // routes must use so every served EndDevice carries, or is stripped of, its
 // flow reservation list links.
@@ -886,11 +877,13 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// the reason its package comment gives.
 	edevs := ownedEndDevices(stores)
 
+	inBand := coreedev.InBandManagement{Managers: stores.EndDeviceManagers, Off: inBandManagementOff, Refusals: refusals}
+
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
-	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix, endDeviceBeforeCreate(stores), coreedev.WithManagers(stores.EndDeviceManagers), endDeviceInBandOff(inBandManagementOff), coreedev.WithRefusalLog(refusals)))
+	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix, endDeviceBeforeCreate(stores), inBand.ForCreate()))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))
-	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores), coreedev.WithManagerDelete(stores.EndDeviceManagers, inBandManagementOff, refusals)))
+	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores), inBand.ForDelete()))
 
 	// Registration GET handler at /edev/{id}/rg
 	// (GRIDAPPSD/ieee-2030_5-server-go#170).

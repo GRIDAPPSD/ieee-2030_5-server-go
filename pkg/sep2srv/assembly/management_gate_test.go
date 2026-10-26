@@ -170,9 +170,9 @@ func delegatedReadPatterns(patterns []string) []string {
 }
 
 // writeBelowRecordPatterns selects every PUT, POST or DELETE pattern
-// strictly below /edev/{id}/. It excludes PUT and DELETE on the record
-// itself, which TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration
-// already covers.
+// strictly below /edev/{id}/. It excludes PUT on the record itself, which
+// TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration covers,
+// and DELETE on it, which a manager may do (manager_delete_test.go).
 func writeBelowRecordPatterns(patterns []string) []string {
 	var out []string
 	for _, p := range patterns {
@@ -446,7 +446,7 @@ func TestManagement_ManagerGrantedWriteLandsOnTheManagedDevice(t *testing.T) {
 	}
 }
 
-func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t *testing.T) {
+func TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fleet := newManagementFleet(t)

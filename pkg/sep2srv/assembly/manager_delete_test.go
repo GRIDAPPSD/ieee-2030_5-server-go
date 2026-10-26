@@ -3,12 +3,16 @@ package assembly_test
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -186,4 +190,49 @@ func TestManagerDelete_AFailedRecordDeleteAfterTheReleaseLeavesNoPairAndAnswers5
 		t.Errorf("ManagerOf after the failed delete = %v, want ErrNotFound: the release comes first and stays", err)
 	}
 	assertPairHeld(t, fleet, secondChildLFDI, managerLFDI)
+}
+
+// Not parallel: it captures the process log.
+func TestManagerDelete_LogsTheReleasedPairAndALostGrantWhenTheDeleteFails(t *testing.T) {
+	fleet := newManagementFleet(t)
+	fleet.stores.EndDevices = deleteFailingDevices{fleet.stores.EndDevices}
+	srv := managerDeleteServer(t, assembly.RouterConfig{}, fleet)
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	if status, _ := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, managerLFDI, ""); status != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", status)
+	}
+	var released, lost bool
+	for _, l := range strings.Split(buf.String(), "\n") {
+		named := strings.Contains(l, managerLFDI) && strings.Contains(l, victimID)
+		released = released || (named && strings.Contains(l, "released the pair"))
+		lost = lost || (named && strings.Contains(l, "lost its pair"))
+	}
+	if !released || !lost {
+		t.Errorf("log names the manager and id for the release (%v) and the failed delete (%v); log=%q", released, lost, buf.String())
+	}
+}
+
+// A value already on the request context must not turn a device's own delete
+// into a manager delete: the gate is the only writer.
+func TestManagerDelete_APreSetDelegatedValueDoesNotTurnASelfDeleteIntoAManagerDelete(t *testing.T) {
+	t.Parallel()
+	fleet := newManagementFleet(t)
+	policy := gateTestPolicy()
+	inner := policy.Wrap
+	policy.Wrap = func(h http.Handler) http.Handler {
+		return inner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r.WithContext(coreedev.WithDelegatedAccess(r.Context(), managerLFDI)))
+		}))
+	}
+	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, fleet.stores, policy, "serverSFDI", "serverLFDI", nil)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, victimLFDI, ""); status != http.StatusNoContent {
+		t.Fatalf("self DELETE: status %d, want 204; body=%q", status, raw)
+	}
+	assertPairHeld(t, fleet, victimLFDI, managerLFDI)
 }

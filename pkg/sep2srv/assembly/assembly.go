@@ -363,6 +363,12 @@ type RouterConfig struct {
 	// the LFDI AuthPolicy.Identity reports. Nil writes nothing. The caller
 	// owns the Writer and closes it after the listener has drained.
 	DeviceLog *devicelog.Writer
+
+	// InBandManagementOff refuses a manager's in-band registration of the
+	// EndDevices it manages (POST /edev naming another lFDI) with 403. The
+	// zero value leaves it on, which is the default; the server option is
+	// SEP2_INBAND_MANAGEMENT=false. Manager delete does not read it yet.
+	InBandManagementOff bool
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -504,7 +510,9 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	// Every helper registers through the ownership gate, so each
 	// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
 	gated := newOwnershipGate(next, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
-	registerEndDeviceRoutes(gated, stores, authPolicy, notifier, gated.checkSubscribe)
+	registerEndDeviceRoutes(gated, stores, authPolicy, notifier, gated.checkSubscribe, cfg.InBandManagementOff, func(r *http.Request, caller, reason string) {
+		gated.denials.record(r, ownershipVerdict{caller: caller, reason: reason})
+	})
 	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 	registerDERRoutes(gated, stores)
 	registerMeteringRoutes(gated, stores)
@@ -778,6 +786,15 @@ func endDeviceBeforeCreate(stores *Stores) coreedev.CreateOption {
 	return nil
 }
 
+// endDeviceInBandOff is the option that refuses a manager's in-band add with
+// 403 when the server option is off, and nil (no option) when it is on.
+func endDeviceInBandOff(inBandManagementOff bool) coreedev.CreateOption {
+	if inBandManagementOff {
+		return coreedev.WithInBandManagementOff()
+	}
+	return nil
+}
+
 // flowReservationLinkedEndDevices returns the EndDevice store the /edev
 // routes must use so every served EndDevice carries, or is stripped of, its
 // flow reservation list links.
@@ -844,7 +861,7 @@ func ownedEndDevices(stores *Stores) store.EndDeviceStore {
 	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores))
 }
 
-func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck) {
+func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck, inBandManagementOff bool, refusals func(r *http.Request, caller, reason string)) {
 	// A nil index allocator is substituted rather than rejected so a
 	// zero-value Stores stays usable, but the substitute is process-local:
 	// log it, because on a production server it means every device is
@@ -874,7 +891,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	edevs := ownedEndDevices(stores)
 
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
-	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix, endDeviceBeforeCreate(stores)))
+	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix, endDeviceBeforeCreate(stores), coreedev.WithManagers(stores.EndDeviceManagers), endDeviceInBandOff(inBandManagementOff), coreedev.WithRefusalLog(refusals)))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))
 	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevs, notifier, endDeviceAfterNotify(stores)))
@@ -915,13 +932,16 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 		lfdi, _, ok := authPolicy.Identity(ctx)
 		return lfdi, ok
 	})
+	// A manager acts on /mup for a managed device only when that device has an
+	// EndDevice record, as GET /edev already requires.
+	requireRecords := coremetering.RequireDeviceRecords(stores.EndDevices)
 	mux.HandleFunc("GET /mup", corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
 		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
 	))
-	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider))
-	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider))
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider, requireRecords))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, requireRecords))
 	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(
-		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
 
 	// IEEE 2030.5-2018 section 10.11.3 rule (d): the client posts readings
@@ -939,7 +959,7 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// drift into minting different href shapes, or into enforcing creator
 	// scope on one path and not the other, for the same resource kind.
 	mux.HandleFunc("POST /mup/{id}", coremetering.HandlePostMirrorMeterReading(
-		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
 
 	// The two Mandatory methods on the MirrorUsagePoint instance.
@@ -963,10 +983,10 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// wrapper tables are removed upstream. Editing those tables from here is
 	// the cross-repo lockstep drift to avoid.
 	mux.HandleFunc("PUT /mup/{id}", coremetering.HandlePutMirrorUsagePoint(
-		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider,
+		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider, requireRecords,
 	))
 	mux.HandleFunc("DELETE /mup/{id}", coremetering.HandleDeleteMirrorUsagePoint(
-		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
 }
 

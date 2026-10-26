@@ -1,13 +1,15 @@
 <script lang="ts">
-  // The log of one device, newest first, from GET /api/device-logs/{lfdi}. It
-  // polls every 5 s while mounted, so leaving the tab stops the polling.
-  // Lines sit in their own scroll box. A poll never touches what the reader
-  // is looking at: at the top its lines appear in place, anywhere else they
-  // wait behind a control. Older lines load when the end of the box is reached.
-  import { untrack } from 'svelte'
+  // The log of one device from GET /api/device-logs/{lfdi}, read like a tail:
+  // oldest at the top, newest at the bottom. It polls every 5 s while mounted,
+  // so leaving the tab stops the polling. Lines sit in their own scroll box. A
+  // poll never touches what the reader is looking at: at the bottom its lines
+  // append and the view stays pinned, anywhere else they wait behind a
+  // control. Older lines load when the top of the box is reached.
+  import { tick, untrack } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import { formatAge } from '../lib/comms'
   import { deviceKind, deviceLabelIn } from '../lib/devices'
+import { followBottom } from '../lib/followBottom'
   import {
     logPath,
     logRow,
@@ -27,9 +29,8 @@
   // A poll that returns a full page asks again at once, at most this often
   // per tick, so a long gap is caught up without an unbounded loop.
   const MAX_CATCH_UP = 5
-  // Pixels from the top that still count as being at the top.
-  const TOP_SLACK = 2
 
+  // Newest first, as the server returns them; the table shows them reversed.
   let entries = $state<LogEntry[]>([])
   let nextBefore = $state<string | null>(null)
   let nextAfter = $state<string | null>(null)
@@ -37,7 +38,7 @@
   let loaded = $state(false)
   let error = $state('')
   let olderBusy = $state(false)
-  // A failed Older read stops the automatic loading: the end of the box stays
+  // A failed Older read stops the automatic loading: the top of the box stays
   // in view, so the observer would otherwise ask again at once.
   let olderFailed = $state(false)
   // The message of that failure, kept while Retry is shown: a later poll
@@ -47,10 +48,10 @@
   // a filter that hides everything does not page through the whole log; a
   // click on "Load older lines" or a filter change picks it up again.
   let stalled = $state(false)
-  // Lines a poll delivered while the reader was away from the top, newest first.
+  // Lines a poll delivered while the reader was away from the bottom, newest first.
   let pending = $state<LogEntry[]>([])
-  let atTop = $state(true)
   let scroller = $state<HTMLElement>()
+  const follow = followBottom(() => scroller)
   let sentinel = $state<HTMLElement>()
   let kind = $state<KindFilter>('all')
   // The switch is offered for an aggregator only. scope=managed adds each
@@ -63,6 +64,7 @@
 
   const rows = $derived(entries.map(logRow))
   const shown = $derived(visible(rows, kind, errorsOnly))
+  const ordered = $derived([...shown].reverse())
   const label = $derived(deviceLabelIn(devices, lfdi))
 
   // The controller of the current device; replaced when the device changes
@@ -112,6 +114,7 @@
           entries = page.entries
           nextBefore = page.nextBefore
           loaded = true
+          follow.pinAfterUpdate()
         } else {
           absorb(page.entries)
           // With no cursor yet (the first page was empty) this page is the
@@ -127,11 +130,12 @@
     }
   }
 
-  // absorb shows a poll's lines now when the reader is at the top, and holds
+  // absorb shows a poll's lines now when the reader is at the bottom, and holds
   // them back otherwise so the rows under the reader do not move.
   function absorb(fresh: LogEntry[]) {
-    if (atTop) {
+    if (follow.following) {
       entries = mergeNewer(entries, fresh)
+      follow.pinAfterUpdate()
       return
     }
     const have = new Set(entries.map((e) => e.cursor))
@@ -141,16 +145,16 @@
   function showPending() {
     entries = mergeNewer(entries, pending)
     pending = []
+    follow.pinAfterUpdate()
   }
 
   function onScroll() {
-    atTop = (scroller?.scrollTop ?? 0) <= TOP_SLACK
-    if (atTop && pending.length > 0) showPending()
+    follow.onscroll()
+    if (follow.following && pending.length > 0) showPending()
   }
 
   function jumpToNew() {
-    if (scroller) scroller.scrollTop = 0
-    atTop = true
+    follow.follow()
     showPending()
   }
 
@@ -170,16 +174,27 @@
       }
       const held = new Set(entries.map((e) => e.cursor))
       const added = visible(page.entries.filter((e) => !held.has(e.cursor)).map(logRow), kind, errorsOnly)
+      // The lines land above the reader, so the box is moved by the height
+      // they add to keep the line under the reader where it was.
+      const height = scroller?.scrollHeight ?? 0
+      const top = scroller?.scrollTop ?? 0
       entries = mergeOlder(entries, page.entries)
       nextBefore = page.nextBefore
       stalled = added.length === 0
+      await tick()
+      if (scroller && !signal.aborted) scroller.scrollTop = top + (scroller.scrollHeight - height)
     } finally {
       olderBusy = false
     }
   }
 
+  // The parent's lfdi prop is read through a derived pick that gets a new
+  // object on every dashboard frame; reading it here directly would restart
+  // the log each time. A derived string only notifies when the text changes.
+  const device = $derived(lfdi)
+
   $effect(() => {
-    void lfdi
+    void device
     void managed
     const mine = new AbortController()
     lifetime = mine
@@ -189,13 +204,10 @@
     loaded = false
     error = ''
     pending = []
-    atTop = true
+    follow.follow()
     olderFailed = false
     olderError = ''
     stalled = false
-    untrack(() => {
-      if (scroller) scroller.scrollTop = 0
-    })
     pollingFor = undefined
     untrack(() => void poll(mine.signal))
     const timer = setInterval(() => {
@@ -224,7 +236,7 @@
 
   // One observer at a time, and none while a read is out, so Older pages load
   // one request at a time. Making a new observer once the read lands makes it
-  // report the sentinel again, which keeps loading while the end is in view.
+  // report the sentinel again, which keeps loading while the top is in view.
   $effect(() => {
     if (!sentinel || !scroller || nextBefore === null || olderBusy || olderFailed || stalled) return
     if (typeof IntersectionObserver === 'undefined') return
@@ -288,7 +300,22 @@
   {#if !loaded && !error}
     <p class="hint">Loading log...</p>
   {:else if loaded}
+    {#if nextBefore !== null}
+      {#if olderBusy}
+        <p class="hint">Loading older lines...</p>
+      {:else if olderFailed}
+        <p class="result err" data-testid="device-logs-older-error">{olderError}</p>
+        <button class="btn btn-small" data-testid="device-logs-older-retry" onclick={retryOlder}>Retry older lines</button>
+      {:else if stalled}
+        <button class="btn btn-small" data-testid="device-logs-older-manual" onclick={older}>Load older lines</button>
+      {/if}
+    {:else if entries.length > 0}
+      <p class="hint" data-testid="device-logs-start">Start of the log.</p>
+    {/if}
     <div class="log-scroll" bind:this={scroller} onscroll={onScroll} data-testid="device-logs-scroll">
+    {#if nextBefore !== null}
+      <div bind:this={sentinel} class="log-end" data-testid="device-logs-more" aria-hidden="true"></div>
+    {/if}
     {#if shown.length === 0}
       <p class="hint" data-testid="device-logs-empty">
         {entries.length === 0 ? 'No lines yet.' : 'No loaded line matches the filters.'}
@@ -300,7 +327,7 @@
           <tr><th>Time</th><th>Kind</th><th>Request</th><th>Status</th><th>ms</th><th>Detail</th>{#if managed}<th>Device</th>{/if}<th>Made by</th></tr>
         </thead>
         <tbody>
-          {#each shown as r (r.cursor)}
+          {#each ordered as r (r.cursor)}
             {@const by = via(r.actor)}
             <tr data-testid="device-log-row">
               <td><time datetime={r.t} title={r.t}>{formatAge(r.t === '' ? null : r.t, nowMs)}</time></td>
@@ -319,19 +346,6 @@
           {/each}
         </tbody>
       </table>
-    {/if}
-    {#if nextBefore !== null}
-      <div bind:this={sentinel} class="log-end" data-testid="device-logs-more" aria-hidden="true"></div>
-      {#if olderBusy}
-        <p class="hint">Loading older lines...</p>
-      {:else if olderFailed}
-        <p class="result err" data-testid="device-logs-older-error">{olderError}</p>
-        <button class="btn btn-small" data-testid="device-logs-older-retry" onclick={retryOlder}>Retry older lines</button>
-      {:else if stalled}
-        <button class="btn btn-small" data-testid="device-logs-older-manual" onclick={older}>Load older lines</button>
-      {/if}
-    {:else if entries.length > 0}
-      <p class="hint" data-testid="device-logs-start">Start of the log.</p>
     {/if}
     </div>
   {/if}
@@ -352,6 +366,8 @@
   .log-scroll {
     max-height: 70vh;
     overflow-y: auto;
+    /* The box is moved by hand when older lines land above the reader. */
+    overflow-anchor: none;
   }
 
   .log-end {

@@ -148,6 +148,11 @@ type Config struct {
 	DeviceLogDir      string
 	DeviceLogMaxBytes int64
 
+	// InBandManagementOff turns off a manager's in-band registration of the
+	// EndDevices it manages (SEP2_INBAND_MANAGEMENT=false). It does not govern
+	// manager delete yet. Default on; the zero value is on.
+	InBandManagementOff bool
+
 	// DeviceLogResolvedDir is the symlink-resolved, created and probed
 	// directory startup validation settled on; empty until it has run or
 	// when the log is off.
@@ -435,6 +440,20 @@ func ParseDeviceLog(v string) (enabled bool, err error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("SEP2_DEVICE_LOG: %q is not \"true\" or \"false\"", v)
+}
+
+// ParseInBandManagement validates SEP2_INBAND_MANAGEMENT: empty or "true"
+// leaves a manager free to register the EndDevices it manages over the
+// protocol, "false" refuses that with 403, and anything else is refused rather
+// than read as on. Manager delete is not covered by it yet.
+func ParseInBandManagement(v string) (enabled bool, err error) {
+	switch v {
+	case "", "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("SEP2_INBAND_MANAGEMENT: %q is not \"true\" or \"false\"", v)
 }
 
 // ParseDeviceLogMaxBytes validates SEP2_DEVICE_LOG_MAX_BYTES: empty is unset

@@ -33,13 +33,14 @@ func mirrorInstanceMuxWithManagers(
 	mmrStore *memory.ScopedStore[sep2.MirrorMeterReading],
 	managers store.EndDeviceManagementReader,
 	caller string,
+	opts ...metering.MirrorOption,
 ) *http.ServeMux {
 	provider := identityProvider(caller)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(mupStore, managers, provider))
-	mux.HandleFunc("PUT /mup/{id}", metering.HandlePutMirrorUsagePoint(mupStore, managers, provider, nil))
-	mux.HandleFunc("DELETE /mup/{id}", metering.HandleDeleteMirrorUsagePoint(mupStore, mmrStore, managers, provider))
-	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, managers, provider))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(mupStore, managers, provider, opts...))
+	mux.HandleFunc("PUT /mup/{id}", metering.HandlePutMirrorUsagePoint(mupStore, managers, provider, nil, opts...))
+	mux.HandleFunc("DELETE /mup/{id}", metering.HandleDeleteMirrorUsagePoint(mupStore, mmrStore, managers, provider, opts...))
+	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, managers, provider, opts...))
 	return mux
 }
 

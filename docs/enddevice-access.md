@@ -82,6 +82,16 @@ A manager may not:
 A write pattern added to the route table later is refused by default until
 an entry naming it, with its source, is added here and to the gate.
 
+## Mirroring for a managed device
+
+A `/mup` route admits a manager acting for a managed device only when that
+device also has an EndDevice record, the same pair-plus-record rule `GET /edev`
+applies. A pair whose managed LFDI has no record is refused with 403, and the
+refusal log line names the reason `managed-device-unregistered` on every
+`/mup` route. A device mirroring for itself needs no record. An embedder gets
+the check by passing `metering.RequireDeviceRecords(endDevices)` as an option
+to each of the `/mup` handlers; without it a pair alone admits the manager.
+
 ## GET /edev and PUT /edev/{id}
 
 `GET /edev` lists the caller's own EndDevice and every EndDevice it manages,
@@ -90,8 +100,32 @@ returned for a different LFDI, and a record whose href names no store key are
 left out and logged. `all` and `results` count the listed set and the page, and
 `s`, `l` and `a` page over it. A caller with nothing to list gets an empty
 list, not a 404. `POST /edev` and `GET /edev` are the only routes under
-`/edev` outside the gate; `POST /edev` takes the LFDI and SFDI from the
-certificate.
+`/edev` outside the gate.
+
+## POST /edev
+
+`POST /edev` registers the caller by default: the record carries the LFDI and
+SFDI of the client certificate, whatever the body says. The body's lFDI is
+compared with the caller's after padding it to 40 hex digits, so the short
+lower-case form some clients send still means the caller.
+
+A manager may instead register a device it manages. When the body names another
+lFDI and a provisioned pair names the caller as that LFDI's manager, the record
+is stored with that LFDI and the SFDI derived from it, `GET /edev` from the
+manager lists it, and a repeat POST returns the same href. Registering never
+creates a pair.
+
+| Status | When |
+|---|---|
+| 201 / 200 | The record is created / already exists under that LFDI. |
+| 400 | The body lFDI is not hex of at most 40 digits, or its sFDI differs from the one derived from the lFDI. |
+| 403 | The body names an lFDI the caller does not manage, or in-band management is off. No record is written. |
+| 409 | The derived SFDI is held by another LFDI, or the LFDI exists in another letter case. |
+
+The derived SFDI is not authenticated: any LFDI sharing the first 9 hex digits
+yields the same SFDI, which is why a collision is refused rather than
+overwritten. `SEP2_INBAND_MANAGEMENT=false` turns manager registration off
+(default on). It does not cover manager delete.
 
 `PUT /edev/{id}` never changes the record's identity. The stored LFDI and SFDI
 are kept whatever the body carries: present, empty, absent, or another

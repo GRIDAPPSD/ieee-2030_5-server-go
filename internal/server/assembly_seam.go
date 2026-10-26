@@ -99,6 +99,7 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 		PEN:         cfg.EffectivePEN(),
 
 		FlowReservationDeadline: cfg.FlowReservationDeadline,
+		InBandManagementOff:     cfg.InBandManagementOff,
 	}
 }
 

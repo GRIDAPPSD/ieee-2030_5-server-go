@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import DerControl from './DerControl.svelte'
 import * as api from '../lib/api'
@@ -784,5 +786,32 @@ describe('DerControl: "now" for Cancel comes from the server clock', () => {
     await pickDevice(container)
     await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
     expect(screen.getByTestId('der-control-cancel-OLD')).toBeInTheDocument()
+  })
+})
+
+// jsdom does no layout, so the stylesheet is injected and read back through
+// getComputedStyle: what is asserted is the rule the browser would apply.
+describe('DerControl: the function rows lay out in three columns', () => {
+  let style: HTMLStyleElement
+  beforeEach(() => {
+    style = document.createElement('style')
+    style.textContent = readFileSync('src/app.css', 'utf8')
+    document.head.appendChild(style)
+  })
+  afterEach(() => style.remove())
+
+  it('puts every catalog row in one three-column grid, in catalog order', async () => {
+    await mount()
+    const grid = tid('control-functions')
+    expect(getComputedStyle(grid).display).toBe('grid')
+    expect(getComputedStyle(grid).gridTemplateColumns).toMatch(/^repeat\(3,/)
+    const names = Array.from(grid.querySelectorAll('[data-testid^="control-function-"]')).map((r) => r.getAttribute('data-testid'))
+    expect(names).toEqual(['fnFlag', 'fnLevel', 'fnPair', 'fnCurve', 'fnOther', 'fnOdd'].map((n) => `control-function-${n}`))
+  })
+
+  it('drops to one column on a narrow window', () => {
+    const css = readFileSync('src/app.css', 'utf8')
+    const narrow = /@media\s*\(max-width:\s*\d+px\)\s*\{\s*\.control-functions\s*\{\s*grid-template-columns:\s*1fr;/.exec(css)
+    expect(narrow).not.toBeNull()
   })
 })

@@ -649,9 +649,11 @@
   {#if catalogError}
     <div class="result err" data-testid="control-catalog-error">Functions could not be read: {catalogError}</div>
   {/if}
-  {#each catalog as row (row.name)}
-    <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={values[row.name]} {curves} {curvesError} />
-  {/each}
+  <div class="control-functions" data-testid="control-functions">
+    {#each catalog as row (row.name)}
+      <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={values[row.name]} {curves} {curvesError} />
+    {/each}
+  </div>
 
   {#if mode === 'scheduled'}
     <div class="form-row">

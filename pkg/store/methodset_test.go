@@ -80,6 +80,7 @@ func TestDecomposedEndDeviceInterfacesHaveExactMethodSets(t *testing.T) {
 				"Assign func(context.Context, string, string) error",
 				"ManagedBy func(context.Context, string) ([]string, error)",
 				"ManagerOf func(context.Context, string) (string, error)",
+				"Release func(context.Context, string, string) error",
 				"Unassign func(context.Context, string) error",
 			},
 		},

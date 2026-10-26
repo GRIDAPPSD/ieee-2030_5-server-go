@@ -120,6 +120,9 @@ var writeAllowlist = map[string]bool{
 	// CSIP V1.2 UTIL-001: the aggregator POSTs a LogEvent for a managed
 	// device.
 	"POST /edev/{id}/lel": true,
+	// CSIP V1.2 MAINT-002 and IG 5.3.1.2: the aggregator deletes a device it
+	// manages. The handler releases the pair and honors the in-band switch.
+	"DELETE /edev/{id}": true,
 }
 
 // delegable reports whether a manager may use pattern on a device it
@@ -201,6 +204,9 @@ type ownershipVerdict struct {
 	// path, when set, is the full request path to log: the exclusivity check
 	// runs before the mux matches, so the route and {id} name nothing.
 	path string
+	// manager is the caller's LFDI when it was admitted as the record's
+	// manager rather than its owner.
+	manager string
 }
 
 func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), delegated bool) func(http.ResponseWriter, *http.Request) {
@@ -208,6 +214,9 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 		v := g.decide(r, delegated)
 		switch v.decision {
 		case ownershipAllowed:
+			// Written on every admit, empty for a self admit, so a value
+			// already on the context can never reach the handler.
+			r = r.WithContext(coreedev.WithDelegatedAccess(r.Context(), v.manager))
 			next(w, r)
 		case ownershipStoreFailed:
 			// A 500, not a 403: the gate could not establish access, and a
@@ -317,7 +326,7 @@ func (g *ownershipGate) decideFor(ctx context.Context, callerLFDI, id string, de
 	if !allowed {
 		return refuse(reasonNotManager)
 	}
-	return ownershipVerdict{decision: ownershipAllowed}
+	return ownershipVerdict{decision: ownershipAllowed, manager: callerLFDI}
 }
 
 // Denial log bounds per window. The per-caller budget stops one caller from

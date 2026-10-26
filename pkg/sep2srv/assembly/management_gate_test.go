@@ -186,9 +186,9 @@ func delegatedReadPatterns(patterns []string) []string {
 }
 
 // writeBelowRecordPatterns selects every PUT, POST or DELETE pattern
-// strictly below /edev/{id}/. It excludes PUT and DELETE on the record
-// itself, which TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration
-// already covers.
+// strictly below /edev/{id}/. It excludes PUT on the record itself, which
+// TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration covers,
+// and DELETE on it, which a manager may do (manager_delete_test.go).
 func writeBelowRecordPatterns(patterns []string) []string {
 	var out []string
 	for _, p := range patterns {
@@ -474,7 +474,7 @@ func TestManagement_ManagerGrantedWriteLandsOnTheManagedDevice(t *testing.T) {
 	}
 }
 
-func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t *testing.T) {
+func TestManagement_ManagerCannotRewriteTheRecordOrReadItsRegistration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fleet := newManagementFleet(t)
@@ -491,7 +491,6 @@ func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t
 		`<lFDI>` + managerLFDI + `</lFDI><sFDI>1</sFDI></EndDevice>`
 	for _, tc := range []struct{ method, path, body string }{
 		{http.MethodPut, "/edev/" + victimID, forged},
-		{http.MethodDelete, "/edev/" + victimID, ""},
 		{http.MethodGet, "/edev/" + victimID + "/rg", ""},
 	} {
 		status, raw := gateRequest(t, srv, tc.method, tc.path, managerLFDI, tc.body)
@@ -505,7 +504,7 @@ func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t
 
 	after, err := fleet.stores.EndDevices.Get(ctx, victimID)
 	if err != nil {
-		t.Fatalf("managed record is gone after a refused DELETE: %v", err)
+		t.Fatalf("managed record is gone after refused requests: %v", err)
 	}
 	if !reflect.DeepEqual(before, after) {
 		t.Errorf("managed record changed by refused writes:\nbefore=%+v\nafter =%+v", before, after)
@@ -617,6 +616,13 @@ func (f faultyManagers) Unassign(ctx context.Context, managed string) error {
 	return f.inner.Unassign(ctx, managed)
 }
 
+func (f faultyManagers) Release(ctx context.Context, manager, managed string) error {
+	if err := f.fault.Err(); err != nil {
+		return err
+	}
+	return f.inner.Release(ctx, manager, managed)
+}
+
 func TestManagement_StoreFailureIs500AndRunsNoHandler(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -657,6 +663,14 @@ func TestManagement_StoreFailureIs500AndRunsNoHandler(t *testing.T) {
 			t.Errorf("%s /edev/%s with the management store failing: status %d, want 500; body=%q", tc.label, victimID, status, raw)
 		}
 	}
+	// A pattern management never grants is refused without consulting it,
+	// and behind the exclusivity check that is a 500 too.
+	if status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, managerLFDI, ""); status != http.StatusInternalServerError {
+		t.Errorf("manager PUT /edev/%s with the management store failing: status %d, want 500; body=%q", victimID, status, raw)
+	}
+	if _, err := fleet.stores.EndDevices.Get(ctx, victimID); err != nil {
+		t.Errorf("the record is gone after a DELETE behind a failed management check: %v", err)
+	}
 }
 
 // A pattern management never grants is refused as not-owner: the delegated
@@ -667,17 +681,17 @@ func TestManagement_RouteManagementNeverGrantsIsRefusedAsNotOwner(t *testing.T) 
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
 	buf := captureLog(t)
 
-	status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID, managerLFDI, "")
+	status, raw := gateRequest(t, srv, http.MethodPut, "/edev/"+victimID, managerLFDI, "")
 	if status != http.StatusForbidden {
-		t.Fatalf("manager DELETE /edev/%s: status %d, want 403; body=%q", victimID, status, raw)
+		t.Fatalf("manager PUT /edev/%s: status %d, want 403; body=%q", victimID, status, raw)
 	}
-	assertNoFleetData(t, "manager DELETE", raw)
+	assertNoFleetData(t, "manager PUT", raw)
 	if !lineWith(buf.String(), denialLogMarker, `caller="`+managerLFDI+`"`, `id="`+victimID+`"`, "reason=not-owner") ||
 		lineWith(buf.String(), "reason=not-owner-or-manager") {
 		t.Errorf("want a not-owner denial line (not not-owner-or-manager) for the manager; log=%q", buf.String())
 	}
 	if _, err := fleet.stores.EndDevices.Get(t.Context(), victimID); err != nil {
-		t.Errorf("managed record gone after the refused DELETE: %v", err)
+		t.Errorf("managed record gone after the refused PUT: %v", err)
 	}
 }
 

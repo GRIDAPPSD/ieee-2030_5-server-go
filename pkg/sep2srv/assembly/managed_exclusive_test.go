@@ -2,6 +2,7 @@ package assembly_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
 
@@ -259,5 +261,35 @@ func TestManagedExclusive_StoreFailureWritesOnlyBudgetedLines(t *testing.T) {
 	}
 	if budgeted != 5 || unbudgeted != 0 {
 		t.Errorf("after %d failures: %d budgeted lines (want the per-caller budget of 5), %d unbudgeted 500 lines (want 0); log=%q", requests, budgeted, unbudgeted, buf.String())
+	}
+}
+
+// A paired DER cannot delete itself on its own certificate, while its
+// manager's delete of it still works and takes the pair with the record. It
+// cannot run in parallel: it swaps the process-wide log output.
+func TestManagedExclusive_PairedDERSelfDeleteIsRefusedButManagerDeleteWorks(t *testing.T) {
+	fleet := newManagementFleet(t)
+	srv := managerDeleteServer(t, assembly.RouterConfig{}, fleet)
+	buf := captureLog(t)
+	path := "/edev/" + victimID
+
+	status, raw := gateRequest(t, srv, http.MethodDelete, path, victimLFDI, "")
+	if status != http.StatusForbidden || string(raw) != forbiddenBody {
+		t.Fatalf("paired DER DELETE %s: status %d body %q, want 403 %q", path, status, raw, forbiddenBody)
+	}
+	if !lineWith(buf.String(), denialLogMarker, `DELETE "`+path+`"`, `caller="`+victimLFDI+`"`, "reason=managed-direct") {
+		t.Errorf("no managed-direct denial line for the self delete; log=%q", buf.String())
+	}
+	assertRecordHeld(t, fleet, victimID, victimLFDI)
+	assertPairHeld(t, fleet, victimLFDI, managerLFDI)
+
+	if status, raw := gateRequest(t, srv, http.MethodDelete, path, managerLFDI, ""); status != http.StatusNoContent {
+		t.Fatalf("manager DELETE %s: status %d, want 204; body=%q", path, status, raw)
+	}
+	if _, err := fleet.stores.EndDevices.Get(context.Background(), victimID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("record after the manager's delete: err=%v, want ErrNotFound", err)
+	}
+	if _, err := fleet.managers.ManagerOf(context.Background(), victimLFDI); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("ManagerOf(deleted device) = %v, want ErrNotFound", err)
 	}
 }

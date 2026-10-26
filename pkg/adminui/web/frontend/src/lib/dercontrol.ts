@@ -131,15 +131,12 @@ export function expectedDeviceReadTime(creationTime: number): string {
 // With no server time the row keeps Cancel and the server decides: hiding
 // Cancel on a live curtailment because of a skewed browser clock is the
 // unsafe direction, while a refused cancel is loud.
+//
+// canCancel is also the definition of a live control (pending or running):
+// the Cancel button and the "pending and active only" filter both use it, so
+// they cannot disagree.
 export function canCancel(status: string, start: number, duration: number, serverNowSeconds: number | null): boolean {
   if (status === 'scheduled') return true
   if (status !== 'active') return false
   return serverNowSeconds === null || serverNowSeconds < start + duration
-}
-
-// isLiveControl is true for a control that is waiting to start or running:
-// the statuses an operator means by "what is scheduled". An active row whose
-// interval has ended is finished, so it is not live.
-export function isLiveControl(c: { eventStatus: { status: string }; ended?: boolean }): boolean {
-  return c.eventStatus.status === 'scheduled' || (c.eventStatus.status === 'active' && !c.ended)
 }

@@ -617,6 +617,39 @@ describe('DerControl: programs, primacy and the controls table', () => {
     expect(screen.getAllByTestId('der-control-row')).toHaveLength(5)
   })
 
+  it('the filter keeps exactly the rows that offer Cancel', async () => {
+    const { container } = await mount({ controlsFor: reply })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
+    const cancellable = screen
+      .getAllByTestId('der-control-row')
+      .filter((r) => within(r).queryByRole('button', { name: 'Cancel' }) !== null)
+      .map((r) => r.getAttribute('data-mrid'))
+    expect(cancellable).toEqual(['SCHED', 'ACTIVE'])
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(screen.getAllByTestId('der-control-row').map((r) => r.getAttribute('data-mrid'))).toEqual(cancellable)
+  })
+
+  it('says none are pending or active when the filter hides only finished controls', async () => {
+    const finished = { device: '0', controls: [item('CANCELLED', 'cancelled', now - 10, 3600)] }
+    const { container } = await mount({ controlsFor: () => ({ ok: true, data: finished, serverTime: now * 1000 }) })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(tid('der-control-empty')).toHaveTextContent('No pending or active controls for this selection')
+    expect(tid('der-control-live-count')).toHaveTextContent('0 pending or active')
+  })
+
+  it('shows no live count while the list loads or after a failed read', async () => {
+    const slow = deferred<unknown>()
+    const { container } = await mount({ controlsFor: () => slow.promise })
+    await pickDevice(container)
+    expect(screen.queryByTestId('der-control-live-count')).toBeNull()
+    slow.resolve({ ok: false, error: 'list failed', status: 500 })
+    await waitFor(() => expect(tid('der-control-controls-error')).toBeInTheDocument())
+    expect(screen.queryByTestId('der-control-live-count')).toBeNull()
+  })
+
   it('sends a second control from the same form without retyping it', async () => {
     const { post, container } = await mount()
     post.mockResolvedValue(scheduledReply())
@@ -841,7 +874,7 @@ describe('DerControl: the function rows lay out in three columns', () => {
 
   it('drops to one column on a narrow window', () => {
     const css = readFileSync('src/app.css', 'utf8')
-    const narrow = /@media\s*\(max-width:\s*\d+px\)\s*\{\s*\.control-functions\s*\{\s*grid-template-columns:\s*1fr;/.exec(css)
+    const narrow = /@media\s*\(max-width:\s*800px\)\s*\{\s*\.control-functions\s*\{\s*grid-template-columns:\s*1fr;/.exec(css)
     expect(narrow).not.toBeNull()
   })
 })
@@ -864,6 +897,22 @@ describe('DerControl: the start picker defaults to now', () => {
     vi.setSystemTime(new Date(2031, 11, 31, 23, 59, 58))
     await fireEvent.click(inp(container, '#controlStartNow'))
     expect(inp(container, '#controlStartAt').value).toMatch(/^2031-12-31T23:59:58(\.000)?$/)
+  })
+
+  it('keeps a future start the user typed and replaces one that has passed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 8, 9))
+    const { container } = await mount()
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.input(inp(container, '#controlStartAt'), { target: { value: '2032-01-02T03:04:05' } })
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2032-01-02T03:04:05(\.000)?$/)
+
+    await fireEvent.input(inp(container, '#controlStartAt'), { target: { value: '2030-01-02T03:04:05' } })
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2031-05-06T07:08:09(\.000)?$/)
   })
 
   it('sends the defaulted start when the form is submitted untouched', async () => {

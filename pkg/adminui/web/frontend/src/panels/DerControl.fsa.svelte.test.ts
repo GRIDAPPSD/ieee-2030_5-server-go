@@ -324,4 +324,12 @@ describe('DerControl, FSA target: pending and active controls', () => {
     await fireEvent.click(tid('der-control-live-only'))
     expect(screen.getAllByTestId('fsa-control-row').map((r) => r.getAttribute('data-mrid'))).toEqual(['LIVE'])
   })
+
+  it('says none are pending or active when the filter hides only finished controls', async () => {
+    const { container } = await mountFsa({ templates: [template()], controls: [fsaControl({ cancelled: true })] })
+    await pickProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('fsa-control-row')).toHaveLength(1))
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(tid('fsa-control-empty')).toHaveTextContent('No pending or active controls for this program')
+  })
 })

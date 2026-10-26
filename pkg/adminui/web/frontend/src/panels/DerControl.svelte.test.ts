@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import DerControl from './DerControl.svelte'
 import * as api from '../lib/api'
@@ -601,6 +603,69 @@ describe('DerControl: programs, primacy and the controls table', () => {
     expect(screen.getAllByTestId('der-control-row')).toHaveLength(5)
   })
 
+  it('counts the pending and active controls, and can hide the rest', async () => {
+    const { container } = await mount({ controlsFor: reply })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
+    expect(tid('der-control-live-count')).toHaveTextContent('2 pending or active')
+
+    await fireEvent.click(tid('der-control-live-only'))
+    const mrids = screen.getAllByTestId('der-control-row').map((r) => r.getAttribute('data-mrid'))
+    expect(mrids).toEqual(['SCHED', 'ACTIVE'])
+
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(screen.getAllByTestId('der-control-row')).toHaveLength(5)
+  })
+
+  it('the filter keeps exactly the rows that offer Cancel', async () => {
+    const { container } = await mount({ controlsFor: reply })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
+    const cancellable = screen
+      .getAllByTestId('der-control-row')
+      .filter((r) => within(r).queryByRole('button', { name: 'Cancel' }) !== null)
+      .map((r) => r.getAttribute('data-mrid'))
+    expect(cancellable).toEqual(['SCHED', 'ACTIVE'])
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(screen.getAllByTestId('der-control-row').map((r) => r.getAttribute('data-mrid'))).toEqual(cancellable)
+  })
+
+  it('says none are pending or active when the filter hides only finished controls', async () => {
+    const finished = { device: '0', controls: [item('CANCELLED', 'cancelled', now - 10, 3600)] }
+    const { container } = await mount({ controlsFor: () => ({ ok: true, data: finished, serverTime: now * 1000 }) })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    await fireEvent.click(tid('der-control-live-only'))
+    expect(tid('der-control-empty')).toHaveTextContent('No pending or active controls for this selection')
+    expect(tid('der-control-live-count')).toHaveTextContent('0 pending or active')
+  })
+
+  it('shows no live count while the list loads or after a failed read', async () => {
+    const slow = deferred<unknown>()
+    const { container } = await mount({ controlsFor: () => slow.promise })
+    await pickDevice(container)
+    expect(screen.queryByTestId('der-control-live-count')).toBeNull()
+    slow.resolve({ ok: false, error: 'list failed', status: 500 })
+    await waitFor(() => expect(tid('der-control-controls-error')).toBeInTheDocument())
+    expect(screen.queryByTestId('der-control-live-count')).toBeNull()
+  })
+
+  it('sends a second control from the same form without retyping it', async () => {
+    const { post, container } = await mount()
+    post.mockResolvedValue(scheduledReply())
+    await fillFlagSchedule(container)
+    await sendAndConfirm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.input(inp(container, '#controlStartAt'), { target: { value: '2030-01-02T03:04:05' } })
+    await sendAndConfirm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+    const second = post.mock.calls[1]?.[1] as Record<string, unknown>
+    expect(second.functions).toEqual({ fnFlag: true })
+    expect(second.durationSeconds).toBe(300)
+    expect(second.startTime).toBe(Math.floor(Date.parse('2030-01-02T03:04:05') / 1000))
+  })
+
   it('offers Cancel on Scheduled and on Active-not-ended rows only', async () => {
     const { container } = await mount({ controlsFor: reply })
     await pickDevice(container)
@@ -784,5 +849,81 @@ describe('DerControl: "now" for Cancel comes from the server clock', () => {
     await pickDevice(container)
     await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
     expect(screen.getByTestId('der-control-cancel-OLD')).toBeInTheDocument()
+  })
+})
+
+// jsdom does no layout, so the stylesheet is injected and read back through
+// getComputedStyle: what is asserted is the rule the browser would apply.
+describe('DerControl: the function rows lay out in three columns', () => {
+  let style: HTMLStyleElement
+  beforeEach(() => {
+    style = document.createElement('style')
+    style.textContent = readFileSync('src/app.css', 'utf8')
+    document.head.appendChild(style)
+  })
+  afterEach(() => style.remove())
+
+  it('puts every catalog row in one three-column grid, in catalog order', async () => {
+    await mount()
+    const grid = tid('control-functions')
+    expect(getComputedStyle(grid).display).toBe('grid')
+    expect(getComputedStyle(grid).gridTemplateColumns).toMatch(/^repeat\(3,/)
+    const names = Array.from(grid.querySelectorAll('[data-testid^="control-function-"]')).map((r) => r.getAttribute('data-testid'))
+    expect(names).toEqual(['fnFlag', 'fnLevel', 'fnPair', 'fnCurve', 'fnOther', 'fnOdd'].map((n) => `control-function-${n}`))
+  })
+
+  it('drops to one column on a narrow window', () => {
+    const css = readFileSync('src/app.css', 'utf8')
+    const narrow = /@media\s*\(max-width:\s*800px\)\s*\{\s*\.control-functions\s*\{\s*grid-template-columns:\s*1fr;/.exec(css)
+    expect(narrow).not.toBeNull()
+  })
+})
+
+describe('DerControl: the start picker defaults to now', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('opens filled with the local date and time to the second, taken when Start now is unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 8, 9))
+    const { container } = await mount()
+    expect(container.querySelector('#controlStartAt')).toBeNull()
+
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 9, 10))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    // jsdom's datetime-local sanitizer appends .000; a browser keeps the seconds.
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2031-05-06T07:09:10(\.000)?$/)
+
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    vi.setSystemTime(new Date(2031, 11, 31, 23, 59, 58))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2031-12-31T23:59:58(\.000)?$/)
+  })
+
+  it('keeps a future start the user typed and replaces one that has passed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 8, 9))
+    const { container } = await mount()
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.input(inp(container, '#controlStartAt'), { target: { value: '2032-01-02T03:04:05' } })
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2032-01-02T03:04:05(\.000)?$/)
+
+    await fireEvent.input(inp(container, '#controlStartAt'), { target: { value: '2030-01-02T03:04:05' } })
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    expect(inp(container, '#controlStartAt').value).toMatch(/^2031-05-06T07:08:09(\.000)?$/)
+  })
+
+  it('sends the defaulted start when the form is submitted untouched', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2031, 4, 6, 7, 8, 9))
+    const { post, container } = await mount()
+    post.mockResolvedValue(scheduledReply())
+    await fillFlagSchedule(container)
+    await fireEvent.click(inp(container, '#controlStartNow'))
+    await sendAndConfirm()
+    const body = post.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(body.startTime).toBe(Math.floor(new Date(2031, 4, 6, 7, 8, 9).getTime() / 1000))
   })
 })

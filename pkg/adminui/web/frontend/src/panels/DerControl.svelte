@@ -42,6 +42,7 @@
     canCancel,
     expectedDeviceReadTime,
     fmtTime,
+    localDateTimeInput,
     keptControl,
     POLL_RATE_SECONDS,
     type DERControlListItem,
@@ -83,6 +84,7 @@
   let selectedTemplateId = $state('')
   let fsaControls = $state<FsaControlView[]>([])
   let fsaControlsError = $state('')
+  let fsaControlsLoaded = $state(false)
 
   let mode = $state<'scheduled' | 'default'>('scheduled')
   let ticked = $state<Record<string, boolean>>({})
@@ -107,6 +109,7 @@
 
   let controls = $state<DERControlListItem[]>([])
   let controlsError = $state('')
+  let controlsLoaded = $state(false)
   // The server's clock at the last successful controls read (its Date
   // header), which decides which Active rows have ended; null when the
   // response carried none.
@@ -203,6 +206,7 @@
     programFilter = ''
     controls = []
     controlsError = ''
+    controlsLoaded = false
     dropSelectionState()
     const pseq = ++programSeq
     const cseq = ++controlSeq
@@ -223,6 +227,7 @@
     selectedTemplateId = ''
     fsaControls = []
     fsaControlsError = ''
+    fsaControlsLoaded = false
     dropSelectionState()
     const seq = ++templateSeq
     if (!id) return
@@ -234,6 +239,7 @@
     const fsaId = untrack(() => selectedFsaId)
     fsaControls = []
     fsaControlsError = ''
+    fsaControlsLoaded = false
     dropSelectionState()
     const seq = ++fsaControlSeq
     if (!fsaId || !templateId) return
@@ -261,6 +267,7 @@
       return
     }
     fsaControlsError = ''
+    fsaControlsLoaded = true
     fsaControls = res.data.controls ?? []
   }
 
@@ -299,6 +306,7 @@
       return
     }
     controlsError = ''
+    controlsLoaded = true
     serverNow = res.serverTime === undefined ? null : Math.floor(res.serverTime / 1000)
     controls = res.data.controls ?? []
   }
@@ -368,6 +376,13 @@
     pendingSummary = built.summary
     result = ''
     primacyLine = ''
+  }
+
+  // The picker opens at the moment the box is unchecked, not at page load.
+  // A start time the user already typed is kept unless it has passed.
+  function onStartNowChange(e: Event) {
+    startNow = (e.currentTarget as HTMLInputElement).checked
+    if (!startNow && (startAt === '' || Date.parse(startAt) < Date.now())) startAt = localDateTimeInput()
   }
 
   function editPending() {
@@ -542,7 +557,15 @@
     reload(fsaControl ? 'fsa' : 'device')
   }
 
-  const shownControls = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
+  // liveOnly narrows both control tables to what is pending or running, so
+  // the controls still to come are not buried under cancelled and finished ones.
+  let liveOnly = $state(false)
+  const inProgram = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
+  const isLive = (c: DERControlListItem): boolean => canCancel(c.eventStatus.status, c.interval.start, c.interval.duration, serverNow)
+  const shownControls = $derived(liveOnly ? inProgram.filter(isLive) : inProgram)
+  const liveControlCount = $derived(inProgram.filter(isLive).length)
+  const shownFsaControls = $derived(liveOnly ? fsaControls.filter(canCancelFsaControl) : fsaControls)
+  const liveFsaControlCount = $derived(fsaControls.filter(canCancelFsaControl).length)
   const shownDefault = $derived(storedDefault && storedDefault.deviceId === selectedDeviceId ? storedDefault : null)
   const primacyOf = (href: string): string => {
     const p = programs.find((x) => x.href === href)
@@ -649,14 +672,16 @@
   {#if catalogError}
     <div class="result err" data-testid="control-catalog-error">Functions could not be read: {catalogError}</div>
   {/if}
-  {#each catalog as row (row.name)}
-    <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={values[row.name]} {curves} {curvesError} />
-  {/each}
+  <div class="control-functions" data-testid="control-functions">
+    {#each catalog as row (row.name)}
+      <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={values[row.name]} {curves} {curvesError} />
+    {/each}
+  </div>
 
   {#if mode === 'scheduled'}
     <div class="form-row">
       <label>
-        <input type="checkbox" id="controlStartNow" bind:checked={startNow} /> Start now
+        <input type="checkbox" id="controlStartNow" checked={startNow} onchange={onStartNowChange} /> Start now
       </label>
       {#if !startNow}
         <input type="datetime-local" id="controlStartAt" step="1" bind:value={startAt} />
@@ -719,6 +744,20 @@
     <div class="result err" data-testid="der-control-default-error">{defaultError}</div>
   {/if}
 
+  {#if (target === 'device' && selectedDeviceId) || (target === 'fsa' && selectedTemplate)}
+    <div class="form-row">
+      {#if target === 'device' ? controlsLoaded && !controlsError : fsaControlsLoaded && !fsaControlsError}
+        <span data-testid="der-control-live-count">
+          {target === 'device' ? liveControlCount : liveFsaControlCount} pending or active
+        </span>
+      {/if}
+      <label>
+        <input type="checkbox" data-testid="der-control-live-only" bind:checked={liveOnly} />
+        Show pending and active only
+      </label>
+    </div>
+  {/if}
+
   {#if target === 'device' && selectedDeviceId}
     <table id="derControlsTable">
       <thead>
@@ -747,7 +786,11 @@
             <td colspan="8" class="result err" data-testid="der-control-controls-error">{controlsError}</td>
           </tr>
         {:else if shownControls.length === 0}
-          <tr><td colspan="8" class="stat-label">No admin-issued controls for this selection</td></tr>
+          <tr>
+            <td colspan="8" class="stat-label" data-testid="der-control-empty">
+              {liveOnly && inProgram.length > 0 ? 'No pending or active controls for this selection' : 'No admin-issued controls for this selection'}
+            </td>
+          </tr>
         {:else}
           {#each shownControls as ctrl (ctrl.mRID)}
             <tr data-testid="der-control-row" data-mrid={ctrl.mRID}>
@@ -802,10 +845,14 @@
           <tr>
             <td colspan="7" class="result err" data-testid="fsa-control-controls-error">{fsaControlsError}</td>
           </tr>
-        {:else if fsaControls.length === 0}
-          <tr><td colspan="7" class="stat-label">No admin-issued controls for this program</td></tr>
+        {:else if shownFsaControls.length === 0}
+          <tr>
+            <td colspan="7" class="stat-label" data-testid="fsa-control-empty">
+              {liveOnly && fsaControls.length > 0 ? 'No pending or active controls for this program' : 'No admin-issued controls for this program'}
+            </td>
+          </tr>
         {:else}
-          {#each fsaControls as ctrl (ctrl.id)}
+          {#each shownFsaControls as ctrl (ctrl.id)}
             <tr data-testid="fsa-control-row" data-mrid={ctrl.mRID}>
               <td>{ctrl.type}</td>
               <td>{functionsText(ctrl.functions)}</td>

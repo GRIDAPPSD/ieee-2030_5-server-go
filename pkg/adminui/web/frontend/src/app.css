@@ -230,6 +230,20 @@ td {
   flex: 1;
 }
 
+/* The control function rows (opMod and friends) sit three to a row and
+   fall back to one column on a narrow window. */
+.control-functions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 16px;
+}
+
+@media (max-width: 800px) {
+  .control-functions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .compact-select {
   background: var(--bg);
   border: 1px solid var(--border);

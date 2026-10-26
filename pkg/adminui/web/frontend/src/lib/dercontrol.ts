@@ -110,6 +110,13 @@ export function fmtTime(seconds: number): string {
   return new Date(seconds * 1000).toISOString()
 }
 
+// localDateTimeInput formats a moment as a datetime-local value: the browser's
+// local date and time to the second, with no zone.
+export function localDateTimeInput(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 // expectedDeviceReadTime is a nominal estimate, never a delivery time: the
 // stored time plus the DERControlList pollRate, for a device that polls on
 // schedule and misses the push. An offline device never reads it.
@@ -124,6 +131,10 @@ export function expectedDeviceReadTime(creationTime: number): string {
 // With no server time the row keeps Cancel and the server decides: hiding
 // Cancel on a live curtailment because of a skewed browser clock is the
 // unsafe direction, while a refused cancel is loud.
+//
+// canCancel is also the definition of a live control (pending or running):
+// the Cancel button and the "pending and active only" filter both use it, so
+// they cannot disagree.
 export function canCancel(status: string, start: number, duration: number, serverNowSeconds: number | null): boolean {
   if (status === 'scheduled') return true
   if (status !== 'active') return false

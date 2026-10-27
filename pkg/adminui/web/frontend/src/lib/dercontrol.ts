@@ -32,6 +32,22 @@ export interface DERControlView {
   interval: { start: number; duration: number }
   eventStatus: { currentStatus: number; status: string; dateTime: number }
   executesGrant?: string | null
+  // Where the control came from; absent reads as admin.
+  origin?: ControlOrigin
+  direction?: ControlDirection | null
+}
+
+export type ControlOrigin = 'admin' | 'derms'
+
+// The flow of a control's power target, named by the server; null when it sets none.
+export type ControlDirection = 'discharge' | 'charge'
+
+// originMarker is the text shown beside a control that DERMS asked for:
+// "from DERMS", then the direction word the server reports.
+// An operator's control gets no marker.
+export function originMarker(origin: ControlOrigin | undefined, direction: ControlDirection | null | undefined): string {
+  if (origin !== 'derms') return ''
+  return direction ? `from DERMS, ${direction}` : 'from DERMS'
 }
 
 // The 201 body of POST /api/devices/{id}/controls: exactly one of control

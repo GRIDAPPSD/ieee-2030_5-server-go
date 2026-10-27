@@ -922,3 +922,30 @@ describe('DerControl: the start picker defaults to now', () => {
     expect(body.startTime).toBe(Math.floor(new Date(2031, 4, 6, 7, 8, 9).getTime() / 1000))
   })
 })
+
+describe('DerControl: where a control came from (#1155)', () => {
+  const now = Math.floor(Date.now() / 1000)
+  const rows = {
+    device: '0',
+    controls: [
+      item('FROMDERMS', 'scheduled', now + 3600, 600, { origin: 'derms', direction: 'discharge' }),
+      item('CHARGING', 'scheduled', now + 7200, 600, { origin: 'derms', direction: 'charge' }),
+      item('NOTARGET', 'scheduled', now + 9000, 600, { origin: 'derms', direction: null }),
+      item('MINE', 'scheduled', now + 10800, 600, { origin: 'admin', direction: 'discharge' }),
+      item('OLDER', 'scheduled', now + 12600, 600, { direction: 'discharge' }),
+    ],
+  } satisfies DERControlListResponse
+
+  it('marks a DERMS control "from DERMS" with its direction word, and leaves the others unmarked', async () => {
+    const { container } = await mount({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
+    const marker = (mrid: string) => container.querySelector(`[data-mrid="${mrid}"] [data-testid="control-origin"]`)
+    expect(marker('FROMDERMS')?.textContent).toBe('from DERMS, discharge')
+    expect(marker('CHARGING')?.textContent).toBe('from DERMS, charge')
+    expect(marker('NOTARGET')?.textContent).toBe('from DERMS')
+    expect(marker('MINE')).toBeNull()
+    expect(marker('OLDER')).toBeNull()
+    expect(container.querySelectorAll('[data-testid="control-origin"]')).toHaveLength(3)
+  })
+})

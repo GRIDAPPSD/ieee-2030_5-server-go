@@ -78,19 +78,23 @@ type FSAControlCopyView struct {
 // FSAControlView is one FSA control record with the copies of the devices
 // assigned to its FSA. Copies is always an array.
 type FSAControlView struct {
-	ID             string               `json:"id"`
-	MRID           string               `json:"mRID"`
-	Type           string               `json:"type"`
-	Description    string               `json:"description"`
-	DERControlBase DERControlBaseView   `json:"derControlBase"`
-	Functions      FunctionsView        `json:"functions"`
-	CreationTime   int64                `json:"creationTime"`
-	Interval       IntervalView         `json:"interval"`
-	Ended          bool                 `json:"ended"`
-	Cancelled      bool                 `json:"cancelled"`
-	CancelledAt    *int64               `json:"cancelledAt"`
-	CancelReason   string               `json:"cancelReason,omitempty"`
-	Copies         []FSAControlCopyView `json:"copies"`
+	ID             string             `json:"id"`
+	MRID           string             `json:"mRID"`
+	Type           string             `json:"type"`
+	Description    string             `json:"description"`
+	DERControlBase DERControlBaseView `json:"derControlBase"`
+	Functions      FunctionsView      `json:"functions"`
+	CreationTime   int64              `json:"creationTime"`
+	Interval       IntervalView       `json:"interval"`
+	Ended          bool               `json:"ended"`
+	// Origin is "admin" or "derms"; a record saved before the field reads admin.
+	Origin string `json:"origin"`
+	// Direction is "discharge" or "charge" from the sign of opModTargetW, or null.
+	Direction    *string              `json:"direction"`
+	Cancelled    bool                 `json:"cancelled"`
+	CancelledAt  *int64               `json:"cancelledAt"`
+	CancelReason string               `json:"cancelReason,omitempty"`
+	Copies       []FSAControlCopyView `json:"copies"`
 }
 
 // FSAControlCreated is the 201 body of a create.
@@ -176,20 +180,7 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			}
 		}
 
-		record := func(ctx context.Context, id string, ctrl sep2.DERControl) (func(context.Context) error, error) {
-			rec := recordOf(t.ID, id, ctrl)
-			if err := fh.AdminFSAs.CreateFSAControl(ctx, fsaID, rec); err != nil {
-				return nil, err
-			}
-			return func(ctx context.Context) error {
-				err := fh.AdminFSAs.DeleteFSAControl(ctx, fsaID, t.ID, id)
-				if err != nil {
-					// Reported as failed, so no device assigned later may get it.
-					fh.AdminFSAs.HoldFSAControl(fsaID, t.ID, id)
-				}
-				return err
-			}, nil
-		}
+		record := h.recorder(fsaID, t.ID, req.Origin)
 		routeHref := "/api/fsas/" + fsaID + "/der-programs/" + t.ID + "/controls"
 		res, err := h.issueAcross(ctx, req, devices, fsaID, t.ID, record)
 		var undo *dercontrol.UndoError
@@ -219,6 +210,31 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			NotificationAttempted: ch.Notifier != nil,
 			Persisted:             ch.Persisted && fh.AdminFSAs.Persists(),
 		})
+	}
+}
+
+// recorder is the RecordWriter for a control on fsaID's template tmplID: it
+// stores the FSA's record, marked derms when origin is dercontrol.OriginDERMS,
+// and returns how to remove it. IssueAcross owns the origin check and runs it
+// before it calls the writer, so a value it refused never reaches here.
+func (h *AdminFSAControlHandler) recorder(fsaID, tmplID, origin string) dercontrol.RecordWriter {
+	fh := h.FSAs
+	return func(ctx context.Context, id string, ctrl sep2.DERControl) (func(context.Context) error, error) {
+		rec := recordOf(tmplID, id, ctrl)
+		if origin == dercontrol.OriginDERMS {
+			rec.Origin = origin
+		}
+		if err := fh.AdminFSAs.CreateFSAControl(ctx, fsaID, rec); err != nil {
+			return nil, err
+		}
+		return func(ctx context.Context) error {
+			err := fh.AdminFSAs.DeleteFSAControl(ctx, fsaID, tmplID, id)
+			if err != nil {
+				// Reported as failed, so no device assigned later may get it.
+				fh.AdminFSAs.HoldFSAControl(fsaID, tmplID, id)
+			}
+			return err
+		}, nil
 	}
 }
 
@@ -435,6 +451,8 @@ func (h *AdminFSAControlHandler) view(ctx context.Context, fsaID string, rec mem
 		CreationTime:   rec.CreationTime,
 		Interval:       IntervalView{Start: rec.Start, Duration: rec.Duration},
 		Ended:          rec.Ended(now),
+		Origin:         dercontrol.OriginOf(rec.Origin),
+		Direction:      targetDirectionOf(dercontrol.TargetOf(&rec.Base)),
 		Cancelled:      rec.CancelledAt != nil,
 		CancelledAt:    rec.CancelledAt,
 		CancelReason:   rec.CancelReason,
@@ -559,6 +577,7 @@ func liveReplicas(ctx context.Context, admin *memory.AdminFSAStore, deviceID, fs
 				Target:  dercontrol.Target{Scope: dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID}},
 				ID:      rec.ID,
 				Control: controlOf(rec),
+				Origin:  rec.Origin,
 			})
 		}
 	}

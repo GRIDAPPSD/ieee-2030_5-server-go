@@ -207,6 +207,7 @@ var (
 	refuseClientGone          = derControlRefusal{http.StatusServiceUnavailable, "client_gone", "request cancelled"}
 	refuseMRIDFormat          = derControlRefusal{http.StatusBadRequest, "mrid_invalid", "mrid: invalid format"}
 	refuseReason              = derControlRefusal{http.StatusBadRequest, "reason_invalid", "reason: at most 192 octets"}
+	refuseOriginInvalid       = derControlRefusal{http.StatusBadRequest, "origin_invalid", "origin: must be admin or derms"}
 	refuseControlNotFound     = derControlRefusal{http.StatusNotFound, "control_not_found", "control not found"}
 	refuseAlreadyCancelled    = derControlRefusal{http.StatusConflict, "already_cancelled", "control already cancelled"}
 	refuseAlreadySuperseded   = derControlRefusal{http.StatusConflict, "already_superseded", "control already superseded"}
@@ -317,6 +318,13 @@ type DERControlView struct {
 	Ended         bool            `json:"ended"`
 	EventStatus   EventStatusView `json:"eventStatus"`
 	ExecutesGrant *string         `json:"executesGrant"`
+	// Origin is "admin" for a control an operator issued and "derms" for one
+	// the server issued on a DERMS request; a record saved before the field
+	// reads admin.
+	Origin string `json:"origin"`
+	// Direction is "discharge" or "charge" from the sign of opModTargetW,
+	// and null for a control with no target or a zero one.
+	Direction *string `json:"direction"`
 }
 
 // DERControlCreated is the 201 body of POST /api/der/controls. Supersedes
@@ -1022,6 +1030,9 @@ func mapIssuerError(err error, l *derControlLog) derControlRefusal {
 		l.add("issuer_code", string(refusal.Code))
 		return refuseInternal
 	}
+	if errors.Is(err, dercontrol.ErrInvalidOrigin) {
+		return refuseOriginInvalid
+	}
 	var undo *dercontrol.UndoError
 	if errors.As(err, &undo) {
 		l.add("cause", "undo_incomplete")
@@ -1132,8 +1143,10 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		DERControlListHref: scope.ControlListHref(),
 		Description:        ctrl.Description,
 		CreationTime:       ctrl.CreationTime,
+		Origin:             dercontrol.OriginOf(lc.Origin),
 	}
 	v.Type, v.DERControlBase, v.Functions = controlBaseViews(ctrl.DERControlBase)
+	v.Direction = targetDirectionOf(dercontrol.TargetOf(ctrl.DERControlBase))
 	if lc.GrantMRID != "" {
 		grant := lc.GrantMRID
 		v.ExecutesGrant = &grant

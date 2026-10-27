@@ -333,3 +333,16 @@ describe('DerControl, FSA target: pending and active controls', () => {
     expect(tid('fsa-control-empty')).toHaveTextContent('No pending or active controls for this program')
   })
 })
+
+describe('DerControl, FSA target: where a control came from (#1155)', () => {
+  it('marks a DERMS control "from DERMS" with its direction word', async () => {
+    const fromDerms = fsaControl({ id: 'd', mRID: 'DERMS', origin: 'derms', direction: 'charge' })
+    const mine = fsaControl({ id: 'a', mRID: 'MINE', origin: 'admin', direction: 'discharge' })
+    const { container } = await mountFsa({ templates: [template()], controls: [fromDerms, mine] })
+    await pickProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('fsa-control-row')).toHaveLength(2))
+    const marker = (mrid: string) => container.querySelector(`[data-mrid="${mrid}"] [data-testid="control-origin"]`)
+    expect(marker('DERMS')?.textContent).toBe('from DERMS, charge')
+    expect(marker('MINE')).toBeNull()
+  })
+})

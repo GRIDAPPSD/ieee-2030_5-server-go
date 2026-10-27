@@ -1,5 +1,7 @@
 package dercontrol
 
+import "errors"
+
 // LifecycleRecord is the server-owned companion to an admin-issued
 // DERControl, keyed identically (the same scope and id as the control).
 // It carries the state IEEE 2030.5 forbids storing on the DERControl
@@ -26,6 +28,45 @@ type LifecycleRecord struct {
 	GrantMRID string `json:",omitempty"` // response mRID carried out; "" is a plain dispatch
 	FleetKey  string `json:",omitempty"` // fleet resolved at create, so a later management change cannot move it
 	Reach     int    `json:",omitempty"` // devices of the fleet that read the control, counted at create
+
+	// Origin is OriginDERMS for a control the server issued on behalf of a
+	// DERMS request, and empty for an operator-issued one (#1155). omitempty
+	// keeps a plain record byte-identical to one written before the field.
+	Origin string `json:",omitempty"`
+}
+
+// Where a control came from. A record stores OriginDERMS or nothing, and
+// OriginOf reads nothing as OriginAdmin.
+const (
+	OriginAdmin = "admin"
+	OriginDERMS = "derms"
+)
+
+// ErrInvalidOrigin refuses a CreateRequest.Origin that is neither empty nor
+// one of the two origins.
+var ErrInvalidOrigin = errors.New("dercontrol: origin must be admin or derms")
+
+// OriginOf is the origin a stored value reads as: OriginDERMS for derms and
+// OriginAdmin for anything else, so a value this build does not know is never
+// served verbatim.
+func OriginOf(stored string) string {
+	if stored == OriginDERMS {
+		return OriginDERMS
+	}
+	return OriginAdmin
+}
+
+// StoredOrigin is the value a record keeps for origin: empty for
+// OriginAdmin, so an operator-issued control's record is unchanged. Any
+// value other than empty, OriginAdmin and OriginDERMS is ErrInvalidOrigin.
+func StoredOrigin(origin string) (string, error) {
+	switch origin {
+	case "", OriginAdmin:
+		return "", nil
+	case OriginDERMS:
+		return OriginDERMS, nil
+	}
+	return "", ErrInvalidOrigin
 }
 
 // Copy returns an independent copy, satisfying store.Copier for use with a

@@ -10,6 +10,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": null,
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -28,6 +29,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "supersedes": [],
       "type": "connect"
@@ -53,6 +55,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": null,
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -73,6 +76,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "supersedes": [],
       "type": "fixedPFInjectW"
@@ -92,6 +96,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -113,6 +118,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "supersedes": [],
       "type": "combined"
@@ -128,6 +134,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": null,
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -145,6 +152,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "supersedes": [],
       "type": "maxLimW"
@@ -175,6 +183,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -195,6 +204,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "supersedes": [],
       "type": "targetW"
@@ -770,6 +780,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": null,
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -788,6 +799,7 @@
         },
         "mRID": "MINTED-ID",
         "notificationAttempted": true,
+        "origin": "admin",
         "persisted": false,
         "supersedes": [],
         "type": "connect"
@@ -821,6 +833,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": null,
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -841,6 +854,7 @@
         },
         "mRID": "MINTED-ID",
         "notificationAttempted": true,
+        "origin": "admin",
         "persisted": false,
         "supersedes": [],
         "type": "fixedPFInjectW"
@@ -868,6 +882,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": "discharge",
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -889,6 +904,7 @@
         },
         "mRID": "MINTED-ID",
         "notificationAttempted": true,
+        "origin": "admin",
         "persisted": false,
         "supersedes": [],
         "type": "combined"
@@ -912,6 +928,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": null,
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -929,6 +946,7 @@
         },
         "mRID": "MINTED-ID",
         "notificationAttempted": true,
+        "origin": "admin",
         "persisted": false,
         "supersedes": [],
         "type": "maxLimW"
@@ -967,6 +985,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": "discharge",
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -987,6 +1006,7 @@
         },
         "mRID": "MINTED-ID",
         "notificationAttempted": true,
+        "origin": "admin",
         "persisted": false,
         "supersedes": [],
         "type": "targetW"
@@ -1051,6 +1071,7 @@
         "opModEnergize": true
       },
       "description": "",
+      "direction": null,
       "ended": false,
       "functions": {
         "opModConnect": true,
@@ -1063,6 +1084,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "type": "connect"
     }
@@ -1098,6 +1120,7 @@
         }
       },
       "description": "",
+      "direction": null,
       "ended": false,
       "functions": {
         "opModFixedPFInjectW": {
@@ -1112,6 +1135,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "type": "fixedPFInjectW"
     }
@@ -1141,6 +1165,7 @@
         }
       },
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "functions": {
         "opModMaxLimW": 5000,
@@ -1156,6 +1181,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "type": "combined"
     }
@@ -1181,6 +1207,7 @@
         "opModMaxLimW": 4000
       },
       "description": "",
+      "direction": null,
       "ended": false,
       "functions": {
         "opModMaxLimW": 4000
@@ -1192,6 +1219,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "type": "maxLimW"
     }
@@ -1232,6 +1260,7 @@
         }
       },
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "functions": {
         "opModTargetW": {
@@ -1246,6 +1275,7 @@
       },
       "mRID": "MINTED-ID",
       "notificationAttempted": true,
+      "origin": "admin",
       "persisted": false,
       "type": "targetW"
     }

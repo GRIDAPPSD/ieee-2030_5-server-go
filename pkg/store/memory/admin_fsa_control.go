@@ -34,6 +34,11 @@ type FSAControl struct {
 	CancelledAt  *int64              `json:"cancelledAt,omitempty"`
 	CancelReason string              `json:"cancelReason,omitempty"`
 
+	// Origin is "derms" for a control the server issued on a DERMS request,
+	// and empty for an operator's (#1155). A record saved before the field
+	// loads with it empty.
+	Origin string `json:"origin,omitempty"`
+
 	// Held is true for a record HoldFSAControl kept from replication: one a
 	// failed write left in a state other than the one the operator was told.
 	// It is never persisted, so it lasts until the next restart.

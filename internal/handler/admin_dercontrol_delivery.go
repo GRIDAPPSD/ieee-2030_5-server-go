@@ -556,13 +556,13 @@ func integrateSigned(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int6
 				continue
 			}
 			sums[k].covered += seconds
+			sums[k].wattSeconds += net * float64(seconds)
 			if net > 0 {
 				signed[k].exportWs += net * float64(seconds)
 			} else if net < 0 {
 				signed[k].importWs += net * float64(seconds)
 			}
 			for _, sp := range path {
-				sums[k].wattSeconds += sp.watts * float64(seconds)
 				if !usedOrder[sp.order] {
 					usedOrder[sp.order] = true
 					used = append(used, sp)

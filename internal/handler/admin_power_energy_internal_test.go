@@ -141,3 +141,56 @@ func TestPower_EnergyChartEmptyWithoutReportingDevices(t *testing.T) {
 		t.Fatalf("energy chart = %+v, want kWh and no series", a.EnergyChart)
 	}
 }
+
+// Partial coverage pins the scaling to the full bucket: in one 10 s bucket,
+// A covers 6 s (4 s at +3000 W then 2 s at -1500 W) and B covers 8 s at
+// -1000 W. Each device is averaged over its own covered seconds, so the
+// Total is the sum of those averages (500 W), and Discharged plus Charged
+// equals Total W times the bucket length.
+func TestFillPower_EnergyScalesPartialCoverageToTheBucket(t *testing.T) {
+	spansA := map[leg][]powerSpan{{}: {
+		{start: 0, end: 4, watts: 3000, order: 0},
+		{start: 4, end: 6, watts: -1500, order: 1},
+	}}
+	spansB := map[leg][]powerSpan{{}: {{start: 0, end: 8, watts: -1000, order: 0}}}
+	seen := map[leg]bool{{}: true}
+	bounds := []int64{0, 10}
+	mk := func(lfdi string, spans map[leg][]powerSpan) devicePower {
+		sums, signed, _ := integrateSigned(spans, seen, bounds)
+		return devicePower{lfdi: lfdi, sums: sums, signed: signed, covered: 1}
+	}
+	var resp PowerResponse
+	if err := fillPower(&resp, []devicePower{mk("A", spansA), mk("B", spansB)}, bounds); err != nil {
+		t.Fatal(err)
+	}
+	var w, e struct {
+		Series []powerChartSeries
+	}
+	if err := json.Unmarshal(resp.Chart, &w); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(resp.EnergyChart, &e); err != nil {
+		t.Fatal(err)
+	}
+	// A: net (12000-3000)/6 = 1500 W; B: -1000 W; Total 500 W.
+	// Discharged: 12000*10/6 = 20000 Ws; Charged: (-3000*10/6) + (-8000*10/8) = -15000 Ws.
+	total := w.Series[0].Points[0][1]
+	if total != 500 {
+		t.Fatalf("total = %v W, want 500", total)
+	}
+	var dis, chg float64
+	for _, s := range e.Series {
+		switch s.Name {
+		case "Discharged":
+			dis = s.Points[0][1]
+		case "Charged":
+			chg = s.Points[0][1]
+		}
+	}
+	if math.Abs(dis-20000/3.6e6) > 1e-12 || math.Abs(chg+15000/3.6e6) > 1e-12 {
+		t.Fatalf("discharged %v charged %v kWh, want %v and %v", dis, chg, 20000/3.6e6, -15000/3.6e6)
+	}
+	if math.Abs(dis+chg-total*10/3.6e6) > 1e-12 {
+		t.Fatalf("discharged+charged = %v kWh, total*bucket = %v kWh", dis+chg, total*10/3.6e6)
+	}
+}

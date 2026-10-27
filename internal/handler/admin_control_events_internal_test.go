@@ -69,7 +69,7 @@ func (h *ceHarness) issue(scope dercontrol.Scope, id, mrid string, start int64, 
 
 func (h *ceHarness) get(query string) (int, ControlEventsResponse) {
 	h.t.Helper()
-	hd := &AdminControlEventsHandler{Controls: h.ctrls, Lifecycles: h.lcs, EndDevices: h.devs, FSAs: h.fsas, Managers: h.mgr}
+	hd := &AdminControlEventsHandler{Controls: h.ctrls, Lifecycles: h.lcs, EndDevices: h.devs, FSAs: h.fsas, Fleet: &AdminFleetHandler{Managers: h.mgr}}
 	w := httptest.NewRecorder()
 	hd.HandleControlEvents()(w, httptest.NewRequest(http.MethodGet, "/api/derms/control-events?"+query, nil))
 	var out ControlEventsResponse
@@ -228,7 +228,7 @@ func TestControlEvents_ScopeFilterAndRefusals(t *testing.T) {
 
 func TestControlEvents_EmptyEventsIsArray(t *testing.T) {
 	h := newCEHarness(t)
-	hd := &AdminControlEventsHandler{Controls: h.ctrls, Lifecycles: h.lcs, EndDevices: h.devs, FSAs: h.fsas, Managers: h.mgr}
+	hd := &AdminControlEventsHandler{Controls: h.ctrls, Lifecycles: h.lcs, EndDevices: h.devs, FSAs: h.fsas, Fleet: &AdminFleetHandler{Managers: h.mgr}}
 	w := httptest.NewRecorder()
 	hd.HandleControlEvents()(w, httptest.NewRequest(http.MethodGet, "/api/derms/control-events?window=900", nil))
 	var raw map[string]json.RawMessage
@@ -237,5 +237,44 @@ func TestControlEvents_EmptyEventsIsArray(t *testing.T) {
 	}
 	if string(raw["events"]) != "[]" {
 		t.Errorf("events = %s, want []", raw["events"])
+	}
+}
+
+// The lanes are the power route's groups: the same keys in the same order,
+// aggregators sorted and Direct last, whatever order the events arrive in.
+func TestControlEvents_LanesEqualPowerGroups(t *testing.T) {
+	h := newCEHarness(t)
+	ctx := context.Background()
+	const aggB, d4 = "CCCC000000000000000000000000000000000001", "DDDD000000000000000000000000000000000004"
+	if err := h.mgr.Assign(ctx, aggB, powerD2); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.devs.Create(ctx, "d4", sep2.EndDevice{LFDI: d4, SFDI: "4"}); err != nil {
+		t.Fatal(err)
+	}
+	now := powerNow
+	for i, d := range []string{"d4", "d2", "d1"} {
+		h.issue(ceScope(d), "c"+d, "MR-"+d, now-600, 600, ceTarget(int16(100*(i+1))), dercontrol.LifecycleRecord{})
+	}
+
+	fleet := &AdminFleetHandler{Managers: h.mgr}
+	groups, err := energyGroupsOf(ctx, fleet, sortedAggregators(ctx, fleet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, g := range groups {
+		want = append(want, g.key)
+	}
+	_, got := h.get("window=900")
+	var lanes []string
+	for _, e := range got.Events {
+		lanes = append(lanes, e.Group)
+	}
+	if len(want) != 3 || len(lanes) != 3 || lanes[0] != want[0] || lanes[1] != want[1] || lanes[2] != want[2] || want[2] != "direct" {
+		t.Errorf("lanes = %v, want the power groups %v", lanes, want)
+	}
+	if want[0] != canonicalLFDI(powerAgg) || want[1] != aggB {
+		t.Errorf("power groups = %v, want [%s %s direct]", want, canonicalLFDI(powerAgg), aggB)
 	}
 }

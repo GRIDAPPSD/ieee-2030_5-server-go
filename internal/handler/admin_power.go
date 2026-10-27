@@ -496,16 +496,7 @@ func aggregatorEnergyOf(h *AdminFleetHandler, groups []energyGroup, all powerSli
 		}
 		for k := 0; k+1 < len(bounds); k++ {
 			start, end := bounds[k], bounds[k+1]
-			// The total decides which source answers the bucket; the group
-			// follows it, so a gap is a gap in every series.
-			ap, gp := allLive(start, end), groupLive(start, end)
-			if allHist != nil {
-				if hp := allHist(start, end); hp != nil {
-					if _, hs := foldParts(hp); hs != historyNone {
-						ap, gp = hp, groupHist(start, end)
-					}
-				}
-			}
+			ap, gp := answerParts(allLive, groupLive, allHist, groupHist, start, end)
 			t, state := foldParts(maskParts(ap, gp))
 			dis, chg := energyPoint{at: start}, energyPoint{at: start}
 			if state == historyCovered {
@@ -626,17 +617,59 @@ func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error
 	return fillPowerFrom(resp, devices, bounds, live, nil)
 }
 
-// answerBucket is the route's answer for the bucket [start, end): the live
-// one, replaced by what history (when not nil) has recorded for it. It is the
-// one place a bucket is answered, for the total and for every group.
-func answerBucket(live, history func(start, end int64) (bucketTotal, historyState), start, end int64) (bucketTotal, historyState) {
-	t, state := live(start, end)
+// liveOrHistory is the one rule for which source answers a bucket
+// [start, end): the live answer, replaced by what history (when not nil) has
+// recorded for it, as recorded decides. The total and every group answer
+// through it.
+func liveOrHistory[T any](live, history func(start, end int64) T, recorded func(T) bool, start, end int64) T {
 	if history != nil {
-		if ht, hs := history(start, end); hs != historyNone {
-			return ht, hs
+		if h := history(start, end); recorded(h) {
+			return h
 		}
 	}
-	return t, state
+	return live(start, end)
+}
+
+// totalAnswer is a bucket's total and the state it was answered in.
+type totalAnswer struct {
+	t     bucketTotal
+	state historyState
+}
+
+// answerBucket is the route's answer for the bucket [start, end): the live
+// one, replaced by what history (when not nil) has recorded for it.
+func answerBucket(live, history func(start, end int64) (bucketTotal, historyState), start, end int64) (bucketTotal, historyState) {
+	pair := func(f func(int64, int64) (bucketTotal, historyState)) func(int64, int64) totalAnswer {
+		if f == nil {
+			return nil
+		}
+		return func(s, e int64) totalAnswer { t, st := f(s, e); return totalAnswer{t, st} }
+	}
+	a := liveOrHistory(pair(live), pair(history), func(a totalAnswer) bool { return a.state != historyNone }, start, end)
+	return a.t, a.state
+}
+
+// answerParts is answerBucket's rule over 5 s parts: the total decides which
+// source answers the bucket, and the group follows it, so a gap is a gap in
+// every series. It returns the total's parts and the group's.
+func answerParts(allLive, groupLive, allHist, groupHist func(start, end int64) []part, start, end int64) (all, group []part) {
+	type both struct{ all, group []part }
+	var hist func(int64, int64) both
+	if allHist != nil {
+		hist = func(s, e int64) both {
+			hp := allHist(s, e)
+			if hp == nil {
+				return both{}
+			}
+			return both{hp, groupHist(s, e)}
+		}
+	}
+	r := liveOrHistory(
+		func(s, e int64) both { return both{allLive(s, e), groupLive(s, e)} },
+		hist,
+		func(b both) bool { _, st := foldParts(b.all); return b.all != nil && st != historyNone },
+		start, end)
+	return r.all, r.group
 }
 
 // fillPowerFrom builds the chart, device list and gap counts of resp. The

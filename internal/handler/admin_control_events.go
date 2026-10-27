@@ -34,11 +34,6 @@ const (
 	controlEventDirect     = "direct"
 )
 
-// controlEventDirectKey is the group of devices no aggregator manages. It
-// equals the power route's key for the same group, so the two charts share a
-// lane.
-const controlEventDirectKey = "direct"
-
 // Scope of a control event: sent to one device, or to an FSA's devices.
 const (
 	controlEventDevice = "device"
@@ -65,7 +60,9 @@ type AdminControlEventsHandler struct {
 	Lifecycles DERControlLifecycleReader
 	EndDevices EndDeviceGetter
 	FSAs       ControlEventFSAs
-	Managers   fleetManagerReader
+	// Fleet supplies the management pairs that place a device in a lane; no
+	// other field of it is read.
+	Fleet *AdminFleetHandler
 }
 
 // ControlEvent is one control in a window. DeviceIDs are the EndDevice store
@@ -109,9 +106,10 @@ func (h *AdminControlEventsHandler) HandleControlEvents() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "window must be 900, 3600, 21600 or 86400 seconds")
 			return
 		}
-		groups, err := h.groupsOf(ctx)
+		aggregators := sortedAggregators(ctx, h.Fleet)
+		groups, err := energyGroupsOf(ctx, h.Fleet, aggregators)
 		if err != nil {
-			h.fail(w, err)
+			h.fail(w, fmt.Errorf("%w: %w", errControlEventsRead, err))
 			return
 		}
 		only := ""
@@ -121,7 +119,7 @@ func (h *AdminControlEventsHandler) HandleControlEvents() http.HandlerFunc {
 				writeError(w, http.StatusBadRequest, "scope must be all or an aggregator LFDI of 40 hex digits")
 				return
 			}
-			if !slices.Contains(groups.aggregators, agg) {
+			if !slices.Contains(aggregators, agg) {
 				writeError(w, http.StatusNotFound, "no such aggregator")
 				return
 			}
@@ -142,8 +140,11 @@ func (h *AdminControlEventsHandler) HandleControlEvents() http.HandlerFunc {
 				resp.Events = append(resp.Events, e)
 			}
 		}
+		lane := func(key string) int {
+			return slices.IndexFunc(groups, func(g energyGroup) bool { return g.key == key })
+		}
 		slices.SortStableFunc(resp.Events, func(a, b ControlEvent) int {
-			return cmp.Or(cmp.Compare(a.Start, b.Start), cmp.Compare(a.Group, b.Group), cmp.Compare(a.MRID, b.MRID), cmp.Compare(a.FSAID, b.FSAID))
+			return cmp.Or(cmp.Compare(a.Start, b.Start), cmp.Compare(lane(a.Group), lane(b.Group)), cmp.Compare(a.MRID, b.MRID), cmp.Compare(a.FSAID, b.FSAID))
 		})
 		writeJSON(w, http.StatusOK, resp)
 	}
@@ -154,52 +155,10 @@ func (h *AdminControlEventsHandler) fail(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "control events read failed, see server log")
 }
 
-// eventGroups maps canonical device LFDIs to the groups the power route puts
-// them in: every aggregator whose fleet holds the device, else Direct.
-type eventGroups struct {
-	aggregators []string
-	members     map[string]map[string]bool
-}
-
-func (g eventGroups) of(lfdi string) []string {
-	c := canonicalLFDI(lfdi)
-	var out []string
-	for _, agg := range g.aggregators {
-		if g.members[agg][c] {
-			out = append(out, agg)
-		}
-	}
-	if out == nil {
-		out = []string{controlEventDirectKey}
-	}
-	return out
-}
-
-func (h *AdminControlEventsHandler) groupsOf(ctx context.Context) (eventGroups, error) {
-	aggs := make([]string, 0)
-	for _, a := range h.Managers.Managers(ctx) {
-		aggs = append(aggs, canonicalLFDI(a))
-	}
-	slices.Sort(aggs)
-	g := eventGroups{aggregators: aggs, members: map[string]map[string]bool{}}
-	for _, agg := range aggs {
-		members, err := fleetMembers(ctx, h.Managers, agg)
-		if err != nil {
-			return eventGroups{}, fmt.Errorf("%w: %w", errControlEventsRead, err)
-		}
-		set := map[string]bool{}
-		for _, m := range members {
-			set[canonicalLFDI(m)] = true
-		}
-		g.members[agg] = set
-	}
-	return g, nil
-}
-
 // controlEventBuilder resolves device ids to groups once per request.
 type controlEventBuilder struct {
 	h      *AdminControlEventsHandler
-	groups eventGroups
+	groups []energyGroup
 	now    int64
 	lfdis  map[string]string // device id to LFDI, "" for a device with no record
 }
@@ -232,8 +191,11 @@ func (b *controlEventBuilder) byGroup(ctx context.Context, deviceIDs []string) (
 		if lfdi == "" {
 			continue
 		}
-		for _, g := range b.groups.of(lfdi) {
-			out[g] = append(out[g], id)
+		c := canonicalLFDI(lfdi)
+		for _, g := range b.groups {
+			if g.has(c) {
+				out[g.key] = append(out[g.key], id)
+			}
 		}
 	}
 	return out, nil
@@ -241,7 +203,7 @@ func (b *controlEventBuilder) byGroup(ctx context.Context, deviceIDs []string) (
 
 // events is every control with in-force time, device scope then FSA scope,
 // before the window filter.
-func (h *AdminControlEventsHandler) events(ctx context.Context, groups eventGroups, now int64) ([]ControlEvent, error) {
+func (h *AdminControlEventsHandler) events(ctx context.Context, groups []energyGroup, now int64) ([]ControlEvent, error) {
 	b := &controlEventBuilder{h: h, groups: groups, now: now, lfdis: map[string]string{}}
 	out, err := b.deviceEvents(ctx)
 	if err != nil {
@@ -389,7 +351,7 @@ func (b *controlEventBuilder) eventsOf(ctrl sep2.DERControl, lc dercontrol.Lifec
 		e := ev
 		e.Group, e.DeviceIDs = g, slices.Sorted(slices.Values(groups[g]))
 		e.GroupKind = controlEventAggregator
-		if g == controlEventDirectKey {
+		if g == powerDirectKey {
 			e.GroupKind = controlEventDirect
 		}
 		out = append(out, e)

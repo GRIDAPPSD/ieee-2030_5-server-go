@@ -3,7 +3,6 @@ package adminplane
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // newAdminControlEventsHandler builds the #1190 control-events read handler.
@@ -15,9 +14,9 @@ func newAdminControlEventsHandler(stores *Stores) *handler.AdminControlEventsHan
 		stores.AdminFSAs == nil || store.IsAbsent(stores.EndDeviceManagers) {
 		return nil
 	}
-	// The fleet route logs a store of another type once; this route stays quiet.
-	managers, ok := stores.EndDeviceManagers.(*memory.EndDeviceManagementStore)
-	if !ok {
+	// The fleet handler is nil, and logged once, for a store of another type.
+	fleet := newAdminFleetHandler(stores)
+	if fleet == nil {
 		return nil
 	}
 	return &handler.AdminControlEventsHandler{
@@ -25,6 +24,6 @@ func newAdminControlEventsHandler(stores *Stores) *handler.AdminControlEventsHan
 		Lifecycles: stores.DERControlLifecycles,
 		EndDevices: stores.EndDevices,
 		FSAs:       stores.AdminFSAs,
-		Managers:   managers,
+		Fleet:      fleet,
 	}
 }

@@ -37,8 +37,8 @@ test('a submitted batch shows in the timeline and the list, and a cancelled bloc
   await expect(timeline.getByTestId('events-bar')).toHaveCount(2);
   await expect(list.nth(0).getByTestId('grid-block-direction')).toHaveText('DISCHARGE');
   await expect(list.nth(1).getByTestId('grid-block-direction')).toHaveText('CHARGE');
-  await expect(page.getByTestId('grid-timeline-discharge').getByTestId('events-bar')).toContainText('discharge 50.0 kW');
-  await expect(page.getByTestId('grid-timeline-charge').getByTestId('events-bar')).toContainText('charge 20.0 kW');
+  await expect(page.getByTestId('grid-timeline-discharge').getByTestId('events-bar')).toContainText('DISCHARGE 50.0 kW');
+  await expect(page.getByTestId('grid-timeline-charge').getByTestId('events-bar')).toContainText('CHARGE 20.0 kW');
   await expect(page.getByTestId('grid-timeline-discharge').getByTestId('events-detail')).toBeVisible();
   await expect(page.getByTestId('grid-timeline-charge').getByTestId('events-detail')).toBeVisible();
   // The server has no delivery reading for a block nothing has run, and says so.

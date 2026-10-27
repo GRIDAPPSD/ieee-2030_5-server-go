@@ -4,8 +4,9 @@
 // given: a null deliveredW is "no reading", never 0, and liveness is the one
 // rule the Controls tab uses (canCancel), never a second one here.
 import { fetchJSON, postJSON, type RequestOptions } from './api'
-import type { ControlEvent, ControlEventStatus } from './controlEvents'
+import { isControlEventStatus, type ControlEvent } from './controlEvents'
 import { canCancel } from './dercontrol'
+import { isDirection, type Direction } from './direction'
 import { isObject } from './json'
 
 export const GRID_REQUESTS_PATH = '/api/derms/grid-requests'
@@ -25,7 +26,7 @@ export interface GridBlockShare {
 
 export interface GridBlock {
   row: number
-  direction: 'discharge' | 'charge'
+  direction: Direction
   requestedW: number | null
   encodedW: number | null
   differenceW: number | null
@@ -62,7 +63,7 @@ function readShare(s: unknown): GridBlockShare | null {
 }
 
 function readBlock(r: unknown): GridBlock | null {
-  if (!isObject(r) || typeof r.row !== 'number' || (r.direction !== 'discharge' && r.direction !== 'charge')) return null
+  if (!isObject(r) || typeof r.row !== 'number' || !isDirection(r.direction)) return null
   if (typeof r.start !== 'number' || typeof r.end !== 'number' || typeof r.durationSeconds !== 'number' || typeof r.status !== 'string') return null
   if (!nullableNumber(r.requestedW) || !nullableNumber(r.encodedW) || !nullableNumber(r.differenceW) || !nullableNumber(r.deliveredW)) return null
   if (typeof r.basisChanged !== 'boolean' || !Array.isArray(r.shares)) return null
@@ -121,14 +122,12 @@ export function shownBlocks(entries: BlockEntry[], liveOnly: boolean, serverNowS
   return liveOnly ? entries.filter((e) => isLiveBlock(e, serverNowSeconds)) : entries
 }
 
-const EVENT_STATUSES: readonly string[] = ['scheduled', 'active', 'completed', 'cancelled', 'superseded']
-
 // blockEvent is the block as the Overview timeline's event, so the same bar
 // layout and labels draw it. The target is the encoded figure the devices
 // receive, falling back to the requested one; a block with neither has none.
 export function blockEvent(e: BlockEntry): ControlEvent {
   const { block } = e
-  const status = EVENT_STATUSES.includes(block.status) ? (block.status as ControlEventStatus) : 'unknown'
+  const status = isControlEventStatus(block.status) ? block.status : 'unknown'
   return {
     group: block.direction,
     groupKind: 'aggregator',

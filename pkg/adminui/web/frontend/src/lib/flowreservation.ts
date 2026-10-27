@@ -125,11 +125,6 @@ export function formatMeasured(n: number | null | undefined, unit: string): stri
   return sign + abs.toFixed(1) + ' ' + unit
 }
 
-export function directionLabel(direction: string | null | undefined): string {
-  if (direction === 'charge' || direction === 'discharge') return direction
-  return 'direction missing'
-}
-
 // remainingSeconds is the countdown to a deadline measured on the server's
 // clock: serverNow is the payload's `now` (or the response Date header when
 // the payload has none) and elapsedSeconds is how long this page has held

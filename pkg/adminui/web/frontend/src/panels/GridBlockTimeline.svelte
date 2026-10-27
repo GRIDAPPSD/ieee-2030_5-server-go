@@ -4,10 +4,11 @@
   // data; the pane decides which blocks are shown, so this view and the list
   // beside it cannot disagree. Bar layout, labels and colors are the Overview
   // timeline's (controlEvents.ts, EventBar, the ev-* styles).
+  import type { Direction } from '../lib/direction'
   import { barsFor, nowPercent, type Bar } from '../lib/controlEvents'
   import { formatClock } from '../lib/power'
   import { blockEvent, TIMELINE_AHEAD_SECONDS, TIMELINE_BEHIND_SECONDS, type BlockEntry } from '../lib/gridblocks'
-  import { gridDirectionWord } from '../lib/gridrows'
+  import { gridWord } from '../lib/gridrows'
   import { formatQuantity } from '../lib/flowreservation'
   import EventBar from './EventBar.svelte'
 
@@ -41,7 +42,7 @@
     entry: BlockEntry
   }
 
-  function lane(direction: 'discharge' | 'charge', r: [number, number]): { bars: DrawnBar[]; height: number } {
+  function lane(direction: Direction, r: [number, number]): { bars: DrawnBar[]; height: number } {
     const mine = entries.filter((e) => e.block.direction === direction)
     const byId = new Map(mine.map((e) => [`${e.batch}:${e.block.row}`, e]))
     const events = mine.map(blockEvent)
@@ -63,6 +64,8 @@
   const above = $derived(lane('discharge', range))
   const below = $derived(lane('charge', range))
   const beyond = $derived(entries.filter((e) => e.block.start * 1000 >= range[1]).length)
+  // A block that ended before the look-behind has no bar either.
+  const earlier = $derived(entries.filter((e) => e.block.end * 1000 <= range[0]).length)
 
   // A tick every six hours from now, labelled in the viewer's clock. The
   // six and eighteen hour ticks are dropped on a narrow screen.
@@ -75,7 +78,7 @@
   const clock = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
   const titleOf = (e: BlockEntry): string =>
-    `${gridDirectionWord(e.block.direction)} ${formatQuantity(Math.abs(e.block.encodedW ?? e.block.requestedW ?? NaN), 'W')}, batch ${e.batch} block ${e.block.row}, ${e.block.status}, ${formatClock(e.block.start * 1000)} to ${formatClock(e.block.end * 1000)}`
+    `${gridWord(e.block.direction)} ${formatQuantity(Math.abs(e.block.encodedW ?? e.block.requestedW ?? NaN), 'W')}, batch ${e.batch} block ${e.block.row}, ${e.block.status}, ${formatClock(e.block.start * 1000)} to ${formatClock(e.block.end * 1000)}`
 </script>
 
 {#snippet track(drawn: { bars: DrawnBar[]; height: number }, label: string, testid: string)}
@@ -83,7 +86,7 @@
     <span class="ev-lane-label">{label}</span>
     <ul class="ev-track" style:height="calc({drawn.height} * var(--ev-bar-h))">
       {#each drawn.bars as { bar, entry } (bar.event.mrid)}
-        <EventBar {bar} title={titleOf(entry)} block={bar.event.mrid} />
+        <EventBar {bar} title={titleOf(entry)} block={bar.event.mrid} capitals />
       {/each}
       {#if now !== null}<li class="ev-now" aria-hidden="true" style:left="{now}%"></li>{/if}
     </ul>
@@ -104,6 +107,11 @@
   {#if beyond > 0}
     <p class="hint ev-empty" data-testid="grid-timeline-beyond">
       {beyond} block{beyond === 1 ? ' starts' : 's start'} after the next 24 hours and {beyond === 1 ? 'is' : 'are'} listed below only.
+    </p>
+  {/if}
+  {#if earlier > 0}
+    <p class="hint ev-empty" data-testid="grid-timeline-earlier">
+      {earlier} block{earlier === 1 ? ' ended' : 's ended'} more than an hour ago and {earlier === 1 ? 'is' : 'are'} listed below only.
     </p>
   {/if}
 </section>

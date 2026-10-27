@@ -8,6 +8,7 @@
   // actions post to the write routes (#670) and the row is replaced from the
   // view the server returns, never patched here.
   import { onDestroy, onMount } from 'svelte'
+  import { directionWord } from '../lib/direction'
   import { fetchJSON } from '../lib/api'
   import { deviceLabel } from '../lib/devices'
   import { formatAge } from '../lib/fleet'
@@ -21,7 +22,6 @@
     type ActionKind,
   } from '../lib/flowreservationWrite'
   import {
-    directionLabel,
     formatActor,
     formatCountdown,
     formatInterval,
@@ -448,7 +448,7 @@
     <div>
       {formatInterval(r.interval)}:
       <span data-testid="response-energy">{formatQuantity(scaledNumber(r.energyAvailable), 'Wh')}</span>
-      {directionLabel(r.direction)},
+      {directionWord(r.direction, 'direction missing')},
       <span data-testid="response-power">{formatQuantity(scaledNumber(r.powerAvailable), 'W')}</span>
     </div>
     <div class="hint" data-testid="response-source">Source: this server's grant record (not a reading)</div>
@@ -467,7 +467,7 @@
       {#each r.executions as ex (ex.mRID)}
         <div class="hint" data-testid="response-execution">
           control {ex.eventStatus?.status ?? 'status missing'}, {formatInterval(ex.interval)}, target
-          {formatQuantity(scaledNumber(ex.targetW), 'W')} {directionLabel(r.direction)} (DER frame)
+          {formatQuantity(scaledNumber(ex.targetW), 'W')} {directionWord(r.direction, 'direction missing')} (DER frame)
           <div data-testid="response-execution-source">Source: this server's DER control record</div>
         </div>
       {/each}
@@ -543,7 +543,7 @@
                   {formatInterval(entry.request.intervalRequested)}
                   <div data-testid="frq-requested">
                     {formatQuantity(scaledNumber(entry.request.energyRequested), 'Wh')}
-                    {directionLabel(entry.request.direction)},
+                    {directionWord(entry.request.direction, 'direction missing')},
                     {formatQuantity(scaledNumber(entry.request.powerRequested), 'W')}
                   </div>
                   <div class="hint" data-testid="frq-requested-source">Source: the aggregator's request</div>

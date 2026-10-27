@@ -8,6 +8,7 @@ import { postJSON, type RequestOptions } from './api'
 import { localDateTimeInput, localDateTimeSeconds } from './dercontrol'
 import { deviceLabel } from './devices'
 import { formatQuantity, scaledNumber, type ScaledValue } from './flowreservation'
+import { directionWord, type Direction } from './direction'
 import { isObject } from './json'
 
 export const MAX_GRID_ROWS = 24
@@ -15,24 +16,18 @@ export const MIN_DURATION_MINUTES = 1
 export const MAX_DURATION_MINUTES = 24 * 60
 const MAX_AMOUNT = 999_999_999
 
-export type GridDirection = 'discharge' | 'charge'
+export type GridDirection = Direction
 
-// Everything the page says about a direction, in one place: the word, where
-// the power goes, and the sign opModTargetW carries (discharge positive).
-const DIRECTION: Record<GridDirection, { word: string; toFrom: string; sign: '+' | '-'; meaning: string }> = {
-  discharge: { word: 'DISCHARGE', toFrom: 'TO the grid', sign: '+', meaning: 'positive = discharge' },
-  charge: { word: 'CHARGE', toFrom: 'FROM the grid', sign: '-', meaning: 'negative = charge' },
+// What the page says about a direction beyond its word: where the power goes,
+// and the sign opModTargetW carries (discharge positive).
+const DIRECTION: Record<GridDirection, { toFrom: string; sign: '+' | '-'; meaning: string }> = {
+  discharge: { toFrom: 'TO the grid', sign: '+', meaning: 'positive = discharge' },
+  charge: { toFrom: 'FROM the grid', sign: '-', meaning: 'negative = charge' },
 }
 
-function isDirection(d: string): d is GridDirection {
-  return d === 'discharge' || d === 'charge'
-}
-
-// gridDirectionWord is the upper-case word for a direction as the server names
-// it, and any other word as given.
-export function gridDirectionWord(direction: string): string {
-  return isDirection(direction) ? DIRECTION[direction].word : direction
-}
+// gridWord is the word a direction carries in the grid views, in capitals so
+// the list, the confirm step and the timeline bars read alike.
+export const gridWord = (direction: string): string => directionWord(direction, direction).toUpperCase()
 
 // One block as typed. start is a datetime-local value and is read only when
 // neither startNow nor follows is set; follows chains the block to the end of
@@ -201,7 +196,7 @@ export function buildGridRequest(rows: GridRowDraft[]): BuiltGrid {
       row: i + 1,
       direction,
       text:
-        `Block ${i + 1}: ${DIRECTION[direction].word} ${formatQuantity(x * Math.pow(10, y), 'W')} ${DIRECTION[direction].toFrom}, ${whenText(rows, i, m)}. ` +
+        `Block ${i + 1}: ${gridWord(direction)} ${formatQuantity(x * Math.pow(10, y), 'W')} ${DIRECTION[direction].toFrom}, ${whenText(rows, i, m)}. ` +
         `Wire, batch total: ${signedWire(direction, x, y)}.`,
     })
   })

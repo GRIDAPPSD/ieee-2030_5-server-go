@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import fixture from './flowreservation.fixture.json'
 import {
-  directionLabel,
   formatActor,
   formatCountdown,
   formatInterval,
@@ -37,9 +36,6 @@ describe('flowreservation helpers', () => {
   it('prints the value with its wire sign', () => {
     expect(formatQuantity(-8000, 'Wh')).toBe('-8,000 Wh')
     expect(formatQuantity(8000, 'Wh')).toBe('8,000 Wh')
-    expect(directionLabel('discharge')).toBe('discharge')
-    expect(directionLabel(null)).toBe('direction missing')
-    expect(directionLabel('sideways')).toBe('direction missing')
   })
 
   it('counts down against the server clock', () => {

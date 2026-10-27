@@ -17,7 +17,7 @@
     type BlockEntry,
     type FailedShare,
   } from '../lib/gridblocks'
-  import { gridDirectionWord } from '../lib/gridrows'
+  import { gridWord } from '../lib/gridrows'
   import { startPoll } from '../lib/poll'
   import ConfirmAction from './ConfirmAction.svelte'
   import GridBlockTimeline from './GridBlockTimeline.svelte'
@@ -187,7 +187,7 @@
               <tr data-testid="grid-block" data-block="{e.batch}:{e.block.row}" class="dir-{e.block.direction}">
                 <td>{when(e.block.start)}</td>
                 <td>{when(e.block.end)}</td>
-                <td><strong data-testid="grid-block-direction">{gridDirectionWord(e.block.direction)}</strong></td>
+                <td><strong data-testid="grid-block-direction">{gridWord(e.block.direction)}</strong></td>
                 <td>{watts(e.block.requestedW)}</td>
                 <td>{watts(e.block.encodedW)}</td>
                 <td data-testid="grid-block-status">{e.block.status}</td>

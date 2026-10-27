@@ -10,7 +10,7 @@
   import { formatQuantity } from '../lib/flowreservation'
   import {
     buildGridRequest,
-    gridDirectionWord,
+    gridWord,
     newRow,
     refusedRows,
     shareText,
@@ -167,7 +167,7 @@
     </div>
     {#each created.rows as r (r.row)}
       <div data-testid="grid-created-row">
-        <strong>{gridDirectionWord(r.direction)}</strong>
+        <strong>{gridWord(r.direction)}</strong>
         block {r.row}: requested {formatQuantity(r.requestedW, 'W')}, encoded {formatQuantity(r.encodedW, 'W')}
         (difference {formatQuantity(r.differenceW, 'W')}).
         <ul>

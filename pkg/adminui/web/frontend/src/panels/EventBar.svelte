@@ -5,9 +5,11 @@
   // event's own.
   import { eventLabelParts, eventTitle, type Bar } from '../lib/controlEvents'
 
-  let { bar, title = undefined, block = undefined }: { bar: Bar; title?: string; block?: string } = $props()
+  // capitals shows a direction word in capitals, as the grid list does.
+  let { bar, title = undefined, block = undefined, capitals = false }: { bar: Bar; title?: string; block?: string; capitals?: boolean } = $props()
 
-  const label = $derived(eventLabelParts(bar.event))
+  const parts = $derived(eventLabelParts(bar.event))
+  const label = $derived(capitals && parts.word ? { ...parts, lead: parts.lead.toUpperCase() } : parts)
   const text = $derived(title ?? eventTitle(bar.event))
 </script>
 

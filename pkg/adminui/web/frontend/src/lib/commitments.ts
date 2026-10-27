@@ -74,9 +74,3 @@ export function isCommitments(v: unknown): v is Commitments {
   )
 }
 
-// The route's own words for the direction; anything else, including null,
-// is stated as not sent rather than guessed from the sign of the power.
-export function grantDirectionWord(direction: string | null): string {
-  if (direction === 'charge' || direction === 'discharge') return direction
-  return 'direction not sent'
-}

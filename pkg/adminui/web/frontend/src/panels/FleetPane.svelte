@@ -5,7 +5,7 @@
   // GET /api/derms/commitments (#801), one read per fleet.
   //
   // This panel computes no commitment or sign of its own: the export-
-  // positive convention in directionWord is a label for the sign the
+  // positive convention in flowSignWord is a label for the sign the
   // server already applied (admin_fleet.go's considerMeasurement), and
   // sumFigure's 'none' branch is the same "never a filled value" trap the
   // server's own FleetSum contract states, read off the counts the server
@@ -14,9 +14,10 @@
   import { fetchJSON } from '../lib/api'
   import { deviceLabel } from '../lib/devices'
   import { formatInterval, formatQuantity } from '../lib/flowreservation'
-  import { grantDirectionWord, isCommitments, type Commitments } from '../lib/commitments'
+  import { directionWord } from '../lib/direction'
+  import { isCommitments, type Commitments } from '../lib/commitments'
   import {
-    directionWord,
+    flowSignWord,
     formatAge,
     formatContributionNote,
     formatValue,
@@ -192,7 +193,7 @@
               {#if power.kind === 'none'}
                 No devices reporting
               {:else}
-                {formatValue(power.value)} W{power.directionKnown && directionWord(power.value) ? ` ${directionWord(power.value)}` : ''}
+                {formatValue(power.value)} W{power.directionKnown && flowSignWord(power.value) ? ` ${flowSignWord(power.value)}` : ''}
                 {#if !power.directionKnown}
                   <span class="hint" data-testid="fleet-power-direction-unknown">direction unknown</span>
                 {/if}
@@ -232,7 +233,7 @@
               {:else}
                 {#each held.data.grants as g, i (`${g.edevId}/${g.mRID}/${i}`)}
                   <div data-testid="fleet-grant">
-                    Grant {formatInterval(g.window)}: {grantDirectionWord(g.direction)},
+                    Grant {formatInterval(g.window)}: {directionWord(g.direction, 'direction not sent')},
                     {g.powerW === null ? 'power not sent' : formatQuantity(g.powerW, 'W')},
                     {g.energyRemainingWh === null ? 'energy left not sent' : `${formatQuantity(g.energyRemainingWh, 'Wh')} left`}
                   </div>

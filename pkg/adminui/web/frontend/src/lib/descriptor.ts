@@ -6,6 +6,7 @@
 // server ahead of this build can send a kind this frontend does not
 // know, and the renderer has to say so rather than the types hiding it.
 // Every collection is [] on the wire, never null.
+import type { Direction } from './direction'
 
 export interface DescriptorCell {
   kind: string
@@ -153,7 +154,7 @@ export interface DescriptorChartSeries {
 // How a series is drawn, which the wire does not carry: a series with no type
 // is a line; direction picks the discharge or charge palette for a bar.
 export type ChartSeriesType = 'line' | 'bar'
-export type ChartDirection = 'discharge' | 'charge'
+export type ChartDirection = Direction
 
 export interface DrawnChartSeries extends DescriptorChartSeries {
   type?: ChartSeriesType

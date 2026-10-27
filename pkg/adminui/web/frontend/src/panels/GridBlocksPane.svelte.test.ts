@@ -79,8 +79,8 @@ describe('GridBlocksPane views', () => {
     const down = within(screen.getByTestId('grid-timeline-charge')).getAllByTestId('events-bar')
     expect(up.map((b) => b.dataset.block)).toEqual(['b1:1'])
     expect(down.map((b) => b.dataset.block)).toEqual(['b1:2'])
-    expect(up[0]).toHaveTextContent('discharge 50.0 kW')
-    expect(down[0]).toHaveTextContent('charge 20.0 kW')
+    expect(up[0]).toHaveTextContent('DISCHARGE 50.0 kW')
+    expect(down[0]).toHaveTextContent('CHARGE 20.0 kW')
   })
 
   it('stacks two short blocks of one direction in separate rows so their labels do not overlap', async () => {
@@ -223,5 +223,76 @@ describe('GridBlocksPane cancel', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm cancel block 1 of batch b1' }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
     expect(await screen.findByTestId('grid-cancel-error')).toHaveTextContent('no such grid request or block')
+  })
+})
+
+// The poll belongs to the effect: these count reads under fake timers, so a
+// poll that outlives its effect, or a second one started beside it, shows as
+// an extra read.
+describe('GridBlocksPane poll ownership', () => {
+  const REFRESH = 15_000
+  const flush = () => vi.advanceTimersByTimeAsync(0)
+
+  afterEach(() => vi.useRealTimers())
+
+  async function start(props: { refreshKey?: number } = {}) {
+    vi.useFakeTimers()
+    listOf([block(1, 10, 'scheduled')])
+    const get = mockGet()
+    const view = render(GridBlocksPane, props)
+    await flush()
+    expect(screen.getByTestId('grid-blocks-table')).toBeInTheDocument()
+    return { get, view }
+  }
+
+  it('reads again every 15 seconds while mounted and stops reading once unmounted', async () => {
+    const { get, view } = await start()
+    expect(get).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(REFRESH)
+    expect(get).toHaveBeenCalledTimes(2)
+    view.unmount()
+    await vi.advanceTimersByTimeAsync(REFRESH * 4)
+    expect(get).toHaveBeenCalledTimes(2)
+  })
+
+  it('aborts the read in flight when unmounted', async () => {
+    vi.useFakeTimers()
+    listOf([block(1, 10, 'scheduled')])
+    let signal: AbortSignal | undefined
+    vi.spyOn(api, 'fetchJSON').mockImplementation(((_p: string, opts?: { signal?: AbortSignal }) => {
+      signal = opts?.signal
+      return new Promise(() => {})
+    }) as never)
+    const view = render(GridBlocksPane)
+    await flush()
+    expect(signal?.aborted).toBe(false)
+    view.unmount()
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it('a new refreshKey restarts the poll and does not leave two running', async () => {
+    const { get, view } = await start({ refreshKey: 0 })
+    expect(get).toHaveBeenCalledTimes(1)
+    await view.rerender({ refreshKey: 1 })
+    await flush()
+    expect(get).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(REFRESH)
+    expect(get).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(REFRESH)
+    expect(get).toHaveBeenCalledTimes(4)
+    view.unmount()
+  })
+
+  it('a cancel causes exactly one reread, and one poll carries on after it', async () => {
+    const { get, view } = await start()
+    const post = vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: true, data: { batch: 'b1', row: 1, cancelled: [{ row: 1 }], failed: [] } } as never)
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel block 1 of batch b1' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm cancel block 1 of batch b1' }))
+    await flush()
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(REFRESH)
+    expect(get).toHaveBeenCalledTimes(3)
+    view.unmount()
   })
 })

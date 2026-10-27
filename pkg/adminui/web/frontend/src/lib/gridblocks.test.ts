@@ -121,6 +121,15 @@ describe('postCancel', () => {
     expect((await postCancel('/x', {})) as { retry: string | null }).toMatchObject({ retry: null })
   })
 
+  it('refuses a retry route that climbs out of the grid requests path', async () => {
+    const body = { batch: 'b1', failed: [], retry: '/api/derms/grid-requests/../../admin/cancel' }
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: false, status: 500, error: 'x', body })
+    expect(await postCancel('/x', {})).toMatchObject({ retry: null })
+    // The same shape without the climb is taken, so the refusal is the dot-dot.
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: false, status: 500, error: 'x', body: { ...body, retry: '/api/derms/grid-requests/b1/cancel' } })
+    expect(await postCancel('/x', {})).toMatchObject({ retry: '/api/derms/grid-requests/b1/cancel' })
+  })
+
   it('carries the text of a 409 and a 404 with no failed shares', async () => {
     vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: false, status: 409, error: 'nothing left to cancel' })
     expect(await postCancel('/x', {})).toEqual({ ok: false, message: 'nothing left to cancel', failed: [], retry: null })

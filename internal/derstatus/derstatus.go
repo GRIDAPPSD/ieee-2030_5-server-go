@@ -173,3 +173,34 @@ func Decode(s sep2.DERStatus, now int64, pollRate uint32) Decoded {
 		Freshness: Assess(s.ReadingTime, now, pollRate),
 	}
 }
+
+// alarmBits is how many alarmStatus bits the 2018 standard defines (bits 0
+// to 10); bits 11 to 31 are reserved.
+const alarmBits = 11
+
+// Alarm is a DERStatus alarmStatus decoded to the bit numbers that are set.
+// Bits names no bit: the words belong to the UI, beside the inverter labels.
+type Alarm struct {
+	Raw uint32 `json:"raw"`
+	// Bits holds each set bit among the defined ones, ascending. It is never
+	// nil, so a status with no alarm reads as an empty list on the wire.
+	Bits []int `json:"bits"`
+	// ReservedBits is Raw with the defined bits cleared.
+	ReservedBits uint32 `json:"reservedBits"`
+}
+
+// AlarmOf decodes the alarmStatus, or returns nil when the status carries
+// none: no alarmStatus is a different report from an alarmStatus of 0.
+func AlarmOf(s sep2.DERStatus) *Alarm {
+	if s.AlarmStatus == nil {
+		return nil
+	}
+	raw := uint32(*s.AlarmStatus)
+	a := &Alarm{Raw: raw, Bits: []int{}, ReservedBits: raw &^ (1<<alarmBits - 1)}
+	for bit := 0; bit < alarmBits; bit++ {
+		if raw&(1<<bit) != 0 {
+			a.Bits = append(a.Bits, bit)
+		}
+	}
+	return a
+}

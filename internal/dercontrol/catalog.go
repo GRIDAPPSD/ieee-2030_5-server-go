@@ -805,3 +805,38 @@ func (s shape) describe() Descriptor {
 	}
 	return d
 }
+
+// modeBits names each DERControlType bit in the standard's order: bits 0 and
+// 1 are the charge and discharge modes, bits 2 to 26 the control elements.
+// A DERCapability modesSupported and a DERSettings modesEnabled are read
+// through it.
+var modeBits = [...]string{
+	"Charge mode", "Discharge mode",
+	FuncConnect, FuncEnergize, FuncFixedPFAbsorbW, FuncFixedPFInjectW, FuncFixedVar,
+	FuncFixedW, FuncFreqDroop, FuncFreqWatt, FuncHFRTMayTrip, FuncHFRTMustTrip,
+	FuncHVRTMayTrip, FuncHVRTMomentaryCessation, FuncHVRTMustTrip, FuncLFRTMayTrip,
+	FuncLFRTMustTrip, FuncLVRTMayTrip, FuncLVRTMomentaryCessation, FuncLVRTMustTrip,
+	FuncMaxLimW, FuncTargetVar, FuncTargetW, FuncVoltVar, FuncVoltWatt, FuncWattPF,
+	FuncWattVar,
+}
+
+// Modes is a DERControlType decoded: the names of the set defined bits, in
+// bit order, and the set bits the standard reserves.
+type Modes struct {
+	Raw uint32 `json:"raw"`
+	// Names is never nil, so no mode set reads as an empty list on the wire.
+	Names        []string `json:"names"`
+	ReservedBits uint32   `json:"reservedBits"`
+}
+
+// ModesOf decodes a DERControlType bitmap.
+func ModesOf(t sep2.DERControlType) Modes {
+	raw := uint32(t)
+	m := Modes{Raw: raw, Names: []string{}, ReservedBits: raw &^ (1<<len(modeBits) - 1)}
+	for bit, name := range modeBits {
+		if raw&(1<<bit) != 0 {
+			m.Names = append(m.Names, name)
+		}
+	}
+	return m
+}

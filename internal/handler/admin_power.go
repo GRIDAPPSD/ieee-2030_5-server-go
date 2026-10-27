@@ -28,6 +28,16 @@ const powerSeriesCap = sep2admin.MaxChartSeries - 1
 
 const powerTotalName = "Total"
 
+// The energy chart's series: export-positive, so a PV fleet's generation is
+// Discharged too.
+const (
+	powerEnergyDischarged = "Discharged"
+	powerEnergyCharged    = "Charged"
+)
+
+// wattSecondsPerKWh converts watt-seconds to kilowatt-hours.
+const wattSecondsPerKWh = 3.6e6
+
 // powerBucketCap is the most buckets one window may split into.
 const powerBucketCap = sep2admin.MaxChartSeriesPoints
 
@@ -143,6 +153,9 @@ type PowerDevice struct {
 // PowerResponse is the body of GET /api/derms/power. Chart is a
 // sep2admin.MarshalChart body, series named by LFDI. TotalGapBuckets counts
 // buckets where at least one device has a value and no Total is drawn.
+// EnergyChart is a sep2admin.MarshalChart body in kWh per bucket with a
+// Discharged series (values at or above zero) and a Charged series (at or
+// below zero); each has a point exactly where Chart's Total does.
 type PowerResponse struct {
 	Scope           string          `json:"scope"`
 	AggregatorLFDI  string          `json:"aggregatorLFDI,omitempty"`
@@ -151,6 +164,7 @@ type PowerResponse struct {
 	WindowEnd       int64           `json:"windowEnd"`
 	BucketSeconds   int64           `json:"bucketSeconds"`
 	Chart           json.RawMessage `json:"chart"`
+	EnergyChart     json.RawMessage `json:"energyChart"`
 	Devices         []PowerDevice   `json:"devices"`
 	NotReporting    []string        `json:"notReporting"`
 	TotalGapBuckets int             `json:"totalGapBuckets"`
@@ -172,6 +186,7 @@ func powerBucketSeconds(window int64) int64 {
 type devicePower struct {
 	lfdi    string
 	sums    []bucketSum
+	signed  []bucketSigned
 	energy  float64 // watt-seconds over the window, signed
 	covered int     // buckets with at least one covered second
 	flags   PowerDevice
@@ -180,8 +195,8 @@ type devicePower struct {
 func devicePowerOf(lfdi string, mirrors []deviceMirror, edition SEP2Edition, bounds []int64) devicePower {
 	ws, we := bounds[0], bounds[len(bounds)-1]
 	lr := powerLegs(mirrors, edition, ws, we)
-	sums, _ := integrateBuckets(lr.spans, lr.seen, bounds)
-	d := devicePower{lfdi: lfdi, sums: sums}
+	sums, signed, _ := integrateSigned(lr.spans, lr.seen, bounds)
+	d := devicePower{lfdi: lfdi, sums: sums, signed: signed}
 	for _, s := range sums {
 		if s.covered > 0 {
 			d.covered++
@@ -335,24 +350,38 @@ func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error
 	}
 
 	chart := sep2admin.ChartBody{Unit: "W"}
+	energy := sep2admin.ChartBody{Unit: "kWh"}
 	if len(reporting) > 0 {
 		total := sep2admin.ChartSeries{Name: powerTotalName}
+		discharged := sep2admin.ChartSeries{Name: powerEnergyDischarged}
+		charged := sep2admin.ChartSeries{Name: powerEnergyCharged}
 		for k := 0; k+1 < len(bounds); k++ {
-			covering, sum := 0, 0.0
+			covering, sum, exportWs, importWs := 0, 0.0, 0.0, 0.0
+			bucketLen := float64(bounds[k+1] - bounds[k])
 			for _, d := range reporting {
 				if s := d.sums[k]; s.covered > 0 {
 					covering++
 					sum += s.wattSeconds / float64(s.covered)
+					// Scaled to the full bucket as the W line averages over
+					// covered seconds, so Discharged plus Charged equals
+					// Total times the bucket length.
+					scale := bucketLen / float64(s.covered)
+					exportWs += d.signed[k].exportWs * scale
+					importWs += d.signed[k].importWs * scale
 				}
 			}
 			switch {
 			case covering == len(reporting):
-				total.Points = append(total.Points, sep2admin.ChartPoint{At: time.Unix(bounds[k], 0), Value: sum})
+				at := time.Unix(bounds[k], 0)
+				total.Points = append(total.Points, sep2admin.ChartPoint{At: at, Value: sum})
+				discharged.Points = append(discharged.Points, sep2admin.ChartPoint{At: at, Value: exportWs / wattSecondsPerKWh})
+				charged.Points = append(charged.Points, sep2admin.ChartPoint{At: at, Value: importWs / wattSecondsPerKWh})
 			case covering > 0:
 				resp.TotalGapBuckets++
 			}
 		}
 		chart.Series = append(chart.Series, total)
+		energy.Series = append(energy.Series, discharged, charged)
 	}
 
 	ranked := slices.Clone(reporting)
@@ -380,6 +409,9 @@ func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error
 		return err
 	}
 	resp.Chart = body
+	if resp.EnergyChart, err = sep2admin.MarshalChart(energy); err != nil {
+		return err
+	}
 	return nil
 }
 

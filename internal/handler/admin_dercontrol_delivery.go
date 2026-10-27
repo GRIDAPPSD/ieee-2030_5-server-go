@@ -474,6 +474,13 @@ type bucketSum struct {
 	covered     int64
 }
 
+// bucketSigned splits one bucket's energy by the sign of the device's net
+// power in each covered second: exportWs is the positive part and importWs
+// the negative part (zero or below). Their sum is the bucket's wattSeconds.
+type bucketSigned struct {
+	exportWs, importWs float64
+}
+
 // integrateBuckets is integrate over consecutive buckets: bucket k is
 // [bounds[k], bounds[k+1]) and bounds is ascending with at least two entries.
 // Each second is valued once by the path integrate describes, and credited to
@@ -481,7 +488,17 @@ type bucketSum struct {
 // with no covered second has zero covered and is a gap, never 0 W. used holds
 // the spans that valued a second inside some bucket.
 func integrateBuckets(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int64) (sums []bucketSum, used []powerSpan) {
+	sums, _, used = integrateSigned(spans, seen, bounds)
+	return sums, used
+}
+
+// integrateSigned is integrateBuckets that also splits each bucket's energy
+// by sign. The sign is taken per covered second on the path's net W, before
+// anything is summed across a bucket or across devices, so a device that
+// flips sign inside a bucket reports both parts.
+func integrateSigned(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int64) (sums []bucketSum, signed []bucketSigned, used []powerSpan) {
 	sums = make([]bucketSum, len(bounds)-1)
+	signed = make([]bucketSigned, len(bounds)-1)
 	type edge struct {
 		at    int64
 		leg   leg
@@ -528,6 +545,10 @@ func integrateBuckets(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int
 			continue
 		}
 		end := edges[i].at
+		var net float64
+		for _, sp := range path {
+			net += sp.watts
+		}
 		// First bucket ending after x; later ones follow while they start before end.
 		for k := sort.Search(len(sums), func(k int) bool { return bounds[k+1] > x }); k < len(sums) && bounds[k] < end; k++ {
 			seconds := min(end, bounds[k+1]) - max(x, bounds[k])
@@ -535,8 +556,13 @@ func integrateBuckets(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int
 				continue
 			}
 			sums[k].covered += seconds
+			sums[k].wattSeconds += net * float64(seconds)
+			if net > 0 {
+				signed[k].exportWs += net * float64(seconds)
+			} else if net < 0 {
+				signed[k].importWs += net * float64(seconds)
+			}
 			for _, sp := range path {
-				sums[k].wattSeconds += sp.watts * float64(seconds)
 				if !usedOrder[sp.order] {
 					usedOrder[sp.order] = true
 					used = append(used, sp)
@@ -544,7 +570,7 @@ func integrateBuckets(spans map[leg][]powerSpan, seen map[leg]bool, bounds []int
 			}
 		}
 	}
-	return sums, used
+	return sums, signed, used
 }
 
 func boolInt(b bool) int {

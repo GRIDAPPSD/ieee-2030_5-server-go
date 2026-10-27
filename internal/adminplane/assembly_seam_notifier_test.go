@@ -87,3 +87,47 @@ func TestNotifierAdapterNotifyRemovedNoopWhenInnerUnsupported(t *testing.T) {
 		t.Errorf("NotifyRemoved: got err=%v, want nil (inner does not implement notifyRemover)", gotErr)
 	}
 }
+
+// prepNotifier records the order of PrepareNotify and the delivery it returns.
+type prepNotifier struct {
+	noopNotifierBasic
+	prepared  string
+	delivered []uint8
+}
+
+func (p *prepNotifier) PrepareNotify(_ context.Context, href string) func(uint8) {
+	p.prepared = href
+	return func(status uint8) { p.delivered = append(p.delivered, status) }
+}
+
+// TestNotifierAdapterPrepareNotifyForwards: the deleted-EndDevice notice
+// depends on the adapter keeping the inner's prepared recipient set, so
+// delivery after the delete does not re-run the subscriber check.
+func TestNotifierAdapterPrepareNotifyForwards(t *testing.T) {
+	t.Parallel()
+
+	inner := &prepNotifier{}
+	send := (&notifierAdapter{inner: inner}).PrepareNotify(context.Background(), "/edev/9")
+	if inner.prepared != "/edev/9" || len(inner.delivered) != 0 {
+		t.Fatalf("after prepare: prepared %q, delivered %v; want /edev/9 and nothing delivered", inner.prepared, inner.delivered)
+	}
+	send(4)
+	if len(inner.delivered) != 1 || inner.delivered[0] != 4 {
+		t.Errorf("delivered = %v, want [4]", inner.delivered)
+	}
+}
+
+// An inner without PrepareNotify notifies at send time.
+func TestNotifierAdapterPrepareNotifyFallsBackToNotify(t *testing.T) {
+	t.Parallel()
+
+	inner := &fwdNotifier{}
+	send := (&notifierAdapter{inner: inner}).PrepareNotify(context.Background(), "/edev/9")
+	if inner.notifyCalled {
+		t.Fatal("Notify ran at prepare time, want it at send time")
+	}
+	send(4)
+	if !inner.notifyCalled {
+		t.Error("Notify was not called at send time")
+	}
+}

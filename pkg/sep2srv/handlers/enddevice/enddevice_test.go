@@ -1165,3 +1165,137 @@ func TestCreateEndDeviceStillReturnsTheExistingDeviceOnACleanMiss(t *testing.T) 
 		t.Errorf("the store holds %d device(s) after two POSTs for one identity, want 1", count)
 	}
 }
+
+// notice is one Notify call a recording notifier saw.
+type notice struct {
+	href   string
+	status uint8
+}
+
+// TestHandleDeleteEndDevice_NotifiesInstanceSubscribers: the list keeps its
+// Default notice and /edev/{id} gets CanceledDeleted, both queued before the
+// after-notify cleanup runs (it removes the device's own subscriptions).
+func TestHandleDeleteEndDevice_NotifiesInstanceSubscribers(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	if err := s.Create(context.Background(), "7", sep2.EndDevice{SFDI: testSFDI}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var seen []notice
+	n := notifierFunc(func(_ context.Context, href string, status uint8) {
+		seen = append(seen, notice{href, status})
+	})
+	var seenAtCleanup int
+	h := coreedev.HandleDeleteEndDevice(s, n, coreedev.WithAfterNotify(func(context.Context, string) error {
+		seenAtCleanup = len(seen)
+		return nil
+	}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /edev/{id}", h)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/edev/7", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204", rec.Code)
+	}
+	want := []notice{
+		{coreedev.EndDeviceListHref, sep2.NotificationStatusDefault},
+		{"/edev/7", sep2.NotificationStatusCanceledDeleted},
+	}
+	if len(seen) != len(want) || seen[0] != want[0] || seen[1] != want[1] {
+		t.Fatalf("notifications = %+v, want %+v", seen, want)
+	}
+	if seenAtCleanup != len(want) {
+		t.Errorf("notifications queued before cleanup = %d, want %d", seenAtCleanup, len(want))
+	}
+}
+
+// TestHandleDeleteEndDevice_InstanceSubscriberReceivesStatus4 reads the notice
+// as the subscriber's receiver gets it off the wire.
+func TestHandleDeleteEndDevice_InstanceSubscriberReceivesStatus4(t *testing.T) {
+	t.Parallel()
+
+	var got atomic.Pointer[sep2.Notification]
+	notifyPath := "/notify/" + rand.Text()
+	callbackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == notifyPath {
+			body, _ := io.ReadAll(r.Body)
+			var n sep2.Notification
+			if err := xml.Unmarshal(body, &n); err == nil {
+				got.Store(&n)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer callbackSrv.Close()
+
+	edevStore := memory.NewEndDeviceStore()
+	if err := edevStore.Create(context.Background(), "1", sep2.EndDevice{SFDI: "123"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	subStore := memory.NewSubscriptionStore()
+	sub := sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/1/sub/s1"}},
+		SubscribedResource:   "/edev/1",
+		NotificationURI:      callbackSrv.URL + notifyPath,
+	}
+	if err := subStore.Create(context.Background(), "s1", sub); err != nil {
+		t.Fatalf("seed sub: %v", err)
+	}
+	mgr := coresub.NewManager(subStore, 2, 16, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
+	mgrCtx, mgrCancel := context.WithCancel(context.Background())
+	mgrDone := make(chan struct{})
+	go func() {
+		mgr.Start(mgrCtx)
+		close(mgrDone)
+	}()
+	defer func() {
+		mgrCancel()
+		<-mgrDone
+	}()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(edevStore, mgr))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/edev/1", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204", rec.Code)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for got.Load() == nil {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for the /edev/1 notification")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	n := got.Load()
+	if n.Status != sep2.NotificationStatusCanceledDeleted {
+		t.Errorf("Status = %d, want %d (CanceledDeleted)", n.Status, sep2.NotificationStatusCanceledDeleted)
+	}
+	if n.SubscribedResource != "/edev/1" || n.Resource.Href != "/edev/1" {
+		t.Errorf("SubscribedResource = %q, Resource.Href = %q, want /edev/1 for both", n.SubscribedResource, n.Resource.Href)
+	}
+}
+
+// TestHandleDeleteEndDevice_NoInstanceNoticeOnNotFound: a 404 DELETE tells
+// the instance's subscribers nothing.
+func TestHandleDeleteEndDevice_NoInstanceNoticeOnNotFound(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	n := notifierFunc(func(context.Context, string, uint8) { calls++ })
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /edev/{id}", coreedev.HandleDeleteEndDevice(memory.NewEndDeviceStore(), n))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/edev/missing", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE status = %d, want 404", rec.Code)
+	}
+	if calls != 0 {
+		t.Errorf("Notify calls = %d, want 0", calls)
+	}
+}

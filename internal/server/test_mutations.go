@@ -40,6 +40,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
@@ -85,7 +86,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores, notifier handl
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /test/mutations/edev-delete-oob", handleEdevDeleteOOB(stores))
+	mux.HandleFunc("POST /test/mutations/edev-delete-oob", handleEdevDeleteOOB(stores, notifier))
 	mux.HandleFunc("POST /test/mutations/derprog-primacy", handleDERProgPrimacy(stores))
 	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores, notifier))
 	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
@@ -140,15 +141,15 @@ type edevDeleteOOBRequest struct {
 
 // handleEdevDeleteOOB deletes an EndDevice from the server's authoritative
 // store. Unlike the client-driven DELETE /edev/{id}, this is modeled as
-// an out-of-band server-side cleanup: no subscription notification is
-// emitted. Used by CSIP MAINT-001 (OOB delete path).
+// an out-of-band server-side cleanup: the /edev list notice is left to the
+// caller, and /edev/{id} subscribers get the status 4 notice. Used by CSIP MAINT-001 (OOB delete path).
 //
 // It deletes through assembly.OwnedEndDevices, the chain DELETE /edev/{id}
 // uses, so the device's DERs do not outlive it, and runs the subscription
 // cleanup that keeps the device's own EndDeviceList subscription deliverable:
 // MAINT-001 notifies it after this returns, and the next registration of the
 // index sweeps it (GRIDAPPSD/ieee-2030_5-server-go#1100).
-func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
+func handleEdevDeleteOOB(stores *Stores, notifier handler.ResourceNotifier) http.HandlerFunc {
 	coreStores := NewCoreStores(stores)
 	edevs := assembly.OwnedEndDevices(coreStores)
 	cleanup := assembly.EndDeviceCleanupDeferringNotification(coreStores)
@@ -162,6 +163,7 @@ func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
 			http.Error(w, "bad request: end_device_id required", http.StatusBadRequest)
 			return
 		}
+		sendDeleted := coreedev.PrepareDeleted(r.Context(), notifier, req.EndDeviceID)
 		if err := edevs.Delete(r.Context(), req.EndDeviceID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "end device not found", http.StatusNotFound)
@@ -170,6 +172,7 @@ func handleEdevDeleteOOB(stores *Stores) http.HandlerFunc {
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		sendDeleted()
 		if cleanup != nil {
 			if err := cleanup(r.Context(), req.EndDeviceID); err != nil {
 				http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)

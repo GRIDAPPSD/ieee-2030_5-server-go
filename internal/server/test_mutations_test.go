@@ -124,6 +124,33 @@ func TestEdevDeleteOOB_Success(t *testing.T) {
 	}
 }
 
+// TestEdevDeleteOOB_NotifiesInstanceSubscribers: the hook's delete tells
+// /edev/{id} subscribers with status 4, and sends no list notice (MAINT-001
+// fans that out itself). A missing device notifies nobody.
+func TestEdevDeleteOOB_NotifiesInstanceSubscribers(t *testing.T) {
+	h, stores, n := newRouterWithNotifier(t)
+	if err := stores.EndDevices.Create(context.Background(), "edev-1", sep2.EndDevice{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := postJSON(t, h, tmEdevDelete, tmTestToken, map[string]string{"end_device_id": "edev-1"})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+	got := n.snapshot()
+	want := recordedNotify{resourceHref: "/edev/edev-1", status: sep2.NotificationStatusCanceledDeleted}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("notifications = %+v, want exactly [%+v]", got, want)
+	}
+
+	rr = postJSON(t, h, tmEdevDelete, tmTestToken, map[string]string{"end_device_id": "missing"})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("missing device status = %d, want 404", rr.Code)
+	}
+	if got := n.snapshot(); len(got) != 1 {
+		t.Errorf("a 404 delete added notifications: %+v", got)
+	}
+}
+
 func TestEdevDeleteOOB_NotFound(t *testing.T) {
 	h, _ := newRouterWithTokenAndStores(t)
 	rr := postJSON(t, h, tmEdevDelete, tmTestToken, map[string]string{"end_device_id": "missing"})

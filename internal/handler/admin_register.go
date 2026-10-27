@@ -16,6 +16,7 @@ import (
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -247,7 +248,7 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profile
 		enabled := req.Enabled
 		dev := sep2.EndDevice{
 			SubscribableResource: sep2.SubscribableResource{
-				Resource: sep2.Resource{Href: "/edev/" + id},
+				Resource: sep2.Resource{Href: coreedev.DeviceHref(id)},
 			},
 			SFDI:                           req.SFDI,
 			LFDI:                           lfdiUpper,

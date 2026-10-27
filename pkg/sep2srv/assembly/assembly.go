@@ -703,13 +703,24 @@ func registrationBoundEndDevices(stores *Stores) store.EndDeviceStore {
 // does: an embedder that seeds devices at boot builds the binding itself, and a
 // second wrapper in front of the configured one buys nothing.
 func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
-	if store.IsAbsent(devs) || store.IsAbsent(stores.LogEvents) {
+	return linkedEndDevices(devs, !store.IsAbsent(stores.LogEvents), func(devs store.EndDeviceStore) *memory.LogEventLinkedEndDeviceStore {
+		return memory.NewLogEventLinkedEndDeviceStore(devs, stores.LogEvents)
+	})
+}
+
+// linkedEndDevices is the one wiring for an EndDevice link decorator whose
+// function set is served only when its backing store is wired: it decorates
+// devs exactly when mounted is true, and declines to decorate twice. An
+// embedder that seeds devices at boot builds the binding itself, and a second
+// wrapper in front of the configured one buys nothing.
+func linkedEndDevices[T store.EndDeviceStore](devs store.EndDeviceStore, mounted bool, build func(store.EndDeviceStore) T) store.EndDeviceStore {
+	if store.IsAbsent(devs) || !mounted {
 		return devs
 	}
-	if linked, ok := devs.(*memory.LogEventLinkedEndDeviceStore); ok {
+	if linked, ok := devs.(T); ok {
 		return linked
 	}
-	return memory.NewLogEventLinkedEndDeviceStore(devs, stores.LogEvents)
+	return build(devs)
 }
 
 // deviceKeyedCascadeEndDevices returns the EndDevice store the /edev routes

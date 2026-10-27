@@ -66,7 +66,7 @@ func FlowReservationResponseListHref(key string) string { return "/edev/" + key 
 // never served as stored, so a value a client tried to install through
 // PUT /edev/{id} is not served back to anyone.
 type FlowReservationLinkedEndDeviceStore struct {
-	devs   store.EndDeviceStore
+	linkedEndDevices
 	served bool
 
 	// reqs and resps are set only on the served arm: the unserved arm's
@@ -74,6 +74,32 @@ type FlowReservationLinkedEndDeviceStore struct {
 	// under this server's own function set for it to cascade.
 	reqs  store.ScopedStore[sep2.FlowReservationRequest]
 	resps store.ScopedStore[sep2.FlowReservationResponse]
+}
+
+// flowReservationLinks is the flow reservation half of the shared decorator:
+// derive the pair from the key on the served arm, clear it on the unserved arm.
+type flowReservationLinks struct{ served bool }
+
+func (l flowReservationLinks) derive(_ context.Context, d *sep2.EndDevice, key string) {
+	d.FlowReservationRequestListLink, d.FlowReservationResponseListLink = nil, nil
+	if l.served {
+		d.FlowReservationRequestListLink = &sep2.ListLink{Href: FlowReservationRequestListHref(key)}
+		d.FlowReservationResponseListLink = &sep2.ListLink{Href: FlowReservationResponseListHref(key)}
+	}
+}
+
+func (l flowReservationLinks) forWrite(ctx context.Context, d *sep2.EndDevice, key string) {
+	l.derive(ctx, d, key)
+}
+
+func (flowReservationLinks) strip(d *sep2.EndDevice) bool {
+	had := d.FlowReservationRequestListLink != nil || d.FlowReservationResponseListLink != nil
+	d.FlowReservationRequestListLink, d.FlowReservationResponseListLink = nil, nil
+	return had
+}
+
+func (flowReservationLinks) linkNames() string {
+	return "FlowReservationRequestListLink or FlowReservationResponseListLink"
 }
 
 // compile-time proof the decorator is substitutable for what it decorates,
@@ -111,7 +137,7 @@ func NewFlowReservationLinkedEndDeviceStore(
 	if store.IsAbsent(reqs) || store.IsAbsent(resps) {
 		panic("memory: NewFlowReservationLinkedEndDeviceStore: reqs and resps (ScopedStore) must not be nil")
 	}
-	return &FlowReservationLinkedEndDeviceStore{devs: devs, served: true, reqs: reqs, resps: resps}
+	return &FlowReservationLinkedEndDeviceStore{linkedEndDevices: linkedEndDevices{devs: devs, fields: flowReservationLinks{served: true}}, served: true, reqs: reqs, resps: resps}
 }
 
 // NewFlowReservationUnservedEndDeviceStore decorates devs so every served
@@ -130,33 +156,7 @@ func NewFlowReservationUnservedEndDeviceStore(devs store.EndDeviceStore) *FlowRe
 	if store.IsAbsent(devs) {
 		panic("memory: NewFlowReservationUnservedEndDeviceStore: devs (EndDeviceStore) must not be nil")
 	}
-	return &FlowReservationLinkedEndDeviceStore{devs: devs, served: false}
-}
-
-// links returns the pair to stamp on the device stored under id: derived
-// from id on the served arm, both nil on the unserved arm. Every write and
-// read path goes through this one place so the two links cannot drift apart
-// or disagree with the arm that constructed the store.
-func (s *FlowReservationLinkedEndDeviceStore) links(id string) (req, resp *sep2.ListLink) {
-	if !s.served {
-		return nil, nil
-	}
-	return &sep2.ListLink{Href: FlowReservationRequestListHref(id)}, &sep2.ListLink{Href: FlowReservationResponseListHref(id)}
-}
-
-// Create stores the device with its flow reservation links derived from the
-// key it is stored under (or cleared, on the unserved arm), discarding
-// whatever the caller supplied.
-func (s *FlowReservationLinkedEndDeviceStore) Create(ctx context.Context, id string, device sep2.EndDevice) error {
-	device.FlowReservationRequestListLink, device.FlowReservationResponseListLink = s.links(id)
-	return s.devs.Create(ctx, id, device)
-}
-
-// Update replaces the stored device, re-deriving both links from id. A
-// client's PUT body cannot install a link of its own choosing.
-func (s *FlowReservationLinkedEndDeviceStore) Update(ctx context.Context, id string, device sep2.EndDevice) error {
-	device.FlowReservationRequestListLink, device.FlowReservationResponseListLink = s.links(id)
-	return s.devs.Update(ctx, id, device)
+	return &FlowReservationLinkedEndDeviceStore{linkedEndDevices: linkedEndDevices{devs: devs, fields: flowReservationLinks{served: false}}, served: false}
 }
 
 // probeDelete checks whether Delete(ctx, id) looks likely to succeed,
@@ -358,75 +358,4 @@ func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id str
 		return fail(err)
 	}
 	return nil
-}
-
-// Get returns the device stored under id with its links derived from id.
-func (s *FlowReservationLinkedEndDeviceStore) Get(ctx context.Context, id string) (sep2.EndDevice, error) {
-	device, err := s.devs.Get(ctx, id)
-	if err != nil {
-		return sep2.EndDevice{}, err
-	}
-	device.FlowReservationRequestListLink, device.FlowReservationResponseListLink = s.links(id)
-	return device, nil
-}
-
-// GetBySFDI returns the device with the given SFDI, link-derived.
-func (s *FlowReservationLinkedEndDeviceStore) GetBySFDI(ctx context.Context, sfdi string) (sep2.EndDevice, error) {
-	device, err := s.devs.GetBySFDI(ctx, sfdi)
-	if err != nil {
-		return sep2.EndDevice{}, err
-	}
-	return s.deriveByHref(device), nil
-}
-
-// GetByLFDI returns the device with the given LFDI, link-derived.
-func (s *FlowReservationLinkedEndDeviceStore) GetByLFDI(ctx context.Context, lfdi string) (sep2.EndDevice, error) {
-	device, err := s.devs.GetByLFDI(ctx, lfdi)
-	if err != nil {
-		return sep2.EndDevice{}, err
-	}
-	return s.deriveByHref(device), nil
-}
-
-// List returns a page of devices, each link-derived.
-func (s *FlowReservationLinkedEndDeviceStore) List(ctx context.Context, opts store.ListOptions) (store.ListResult[sep2.EndDevice], error) {
-	result, err := s.devs.List(ctx, opts)
-	if err != nil {
-		return store.ListResult[sep2.EndDevice]{}, err
-	}
-	for i := range result.Items {
-		result.Items[i] = s.deriveByHref(result.Items[i])
-	}
-	return result, nil
-}
-
-// Count delegates: the links change what a device advertises, not how many
-// devices exist.
-func (s *FlowReservationLinkedEndDeviceStore) Count(ctx context.Context) (uint32, error) {
-	return s.devs.Count(ctx)
-}
-
-// deriveByHref applies the derivation on the read paths that hand back a
-// device without its store key, recovering the key from the device's own
-// Href with the same helper [RegisteredEndDeviceStore] uses.
-//
-// A key that cannot be recovered STRIPS both links rather than guessing one,
-// the same fail-closed direction [LogEventLinkedEndDeviceStore.deriveByHref]
-// argues for: an unadvertised pair is recoverable by a client re-reading the
-// device under its canonical href, while links derived from a malformed href
-// would point at lists this server may not serve under that address. A strip
-// that discards a link is logged, since it means an EndDevice was stored off
-// the addressing scheme the rest of the package depends on.
-func (s *FlowReservationLinkedEndDeviceStore) deriveByHref(device sep2.EndDevice) sep2.EndDevice {
-	key, ok := keyFromEndDeviceHref(device.Href)
-	if !ok {
-		if device.FlowReservationRequestListLink != nil || device.FlowReservationResponseListLink != nil {
-			log.Printf("memory: EndDevice href %q does not follow the /edev/{key} addressing invariant; serving it without FlowReservationRequestListLink or FlowReservationResponseListLink", device.Href)
-		}
-		device.FlowReservationRequestListLink = nil
-		device.FlowReservationResponseListLink = nil
-		return device
-	}
-	device.FlowReservationRequestListLink, device.FlowReservationResponseListLink = s.links(key)
-	return device
 }

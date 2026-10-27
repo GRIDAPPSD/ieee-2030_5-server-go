@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
@@ -53,6 +55,52 @@ type AdminManagementHandler struct {
 	// hasRecord; nil Activity leaves lastSeen null.
 	EndDevices store.EndDeviceReader
 	Activity   *activity.Recorder
+
+	// MirrorUsagePoints lets a managed-side rekey see the mirrors an old
+	// LFDI still owns. Nil skips that part of the check.
+	MirrorUsagePoints store.ResourceReader[sep2.MirrorUsagePoint]
+}
+
+// errNoEndDeviceReader fails a managed-side rekey closed: without a reader
+// the handler cannot tell whether the old LFDI still owns a record.
+var errNoEndDeviceReader = errors.New("no EndDevice reader to check the old LFDI against")
+
+// directDeviceWarning is the warning a pairing carries for an LFDI that has
+// made requests on its own, or "" when it has not.
+func directDeviceWarning(h pairMemberHealth) string {
+	if h.LastSeen == nil {
+		return ""
+	}
+	return "managed device has connected directly (last seen " + *h.LastSeen +
+		"); it is paired anyway, and its manager now acts for it"
+}
+
+// remainingState names what the old LFDI still owns after a managed rekey
+// would orphan it: its EndDevice record, and any mirror whose stored
+// deviceLFDI it is (the mirror outlives the record's delete, and the
+// ownership gate would hand it to the retired certificate). Empty means
+// nothing. It reads through memberHealth and mirrorReadingsFor, the same
+// lookups the listing and the fleet routes use.
+func (h *AdminManagementHandler) remainingState(ctx context.Context, lfdi string) (string, error) {
+	if h.EndDevices == nil {
+		return "", errNoEndDeviceReader
+	}
+	old, err := h.memberHealth(ctx, lfdi)
+	if err != nil {
+		return "", err
+	}
+	var parts []string
+	if old.HasRecord != nil && *old.HasRecord {
+		parts = append(parts, "an EndDevice record")
+	}
+	mirrors, err := mirrorReadingsFor(ctx, "admin management rekey", h.MirrorUsagePoints, nil, func(d string) bool { return canonicalLFDI(d) == lfdi })
+	if err != nil {
+		return "", err
+	}
+	if len(mirrors) > 0 {
+		parts = append(parts, fmt.Sprintf("%d MirrorUsagePoint(s)", len(mirrors)))
+	}
+	return strings.Join(parts, " and "), nil
 }
 
 // pairMemberHealth is one side of a pair as the listing reports it.
@@ -99,10 +147,20 @@ type managementPairResponse struct {
 	ManagedLFDI string `json:"managedLFDI"`
 }
 
+// managementPairCreated is the 201 body of a create: the pair plus the
+// managed LFDI's health, and a warning when that LFDI has already made
+// requests on its own.
+type managementPairCreated struct {
+	managementPairResponse
+	Managed pairMemberHealth `json:"managed"`
+	Warning string           `json:"warning,omitempty"`
+}
+
 // HandleCreateManagementPair returns a handler for POST /api/management-pairs.
 // Idempotent: assigning the same pair again still answers 201. A device
 // already managed by someone else answers 409; an empty LFDI or a device
-// named as its own manager answers 400.
+// named as its own manager answers 400. A managed LFDI that has already made
+// requests as a direct device is allowed, with a warning in the 201 body.
 func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req managementPairRequest
@@ -133,11 +191,23 @@ func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 			!h.kindAllowedManaged(r.Context(), w, "create", managedLFDI) {
 			return
 		}
+		// Read before the write so a failed lookup cannot follow a
+		// committed pair.
+		health, err := h.memberHealth(r.Context(), managedLFDI)
+		if err != nil {
+			writeManagementInternalError(w, "create", err)
+			return
+		}
 		if err := h.Managers.Assign(r.Context(), managerLFDI, managedLFDI); err != nil {
 			writeManagementPairError(w, "create", err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, managementPairResponse{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI})
+		out := managementPairCreated{
+			managementPairResponse: managementPairResponse{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI},
+			Managed:                health,
+		}
+		out.Warning = directDeviceWarning(health)
+		writeJSON(w, http.StatusCreated, out)
 	}
 }
 
@@ -283,6 +353,23 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 			return
 		}
 
+		// Refuse the impossible before anything that reads state: a rekey
+		// onto itself is a bad request, and an LFDI with no pair has
+		// nothing to move.
+		if req.Role == "managed" {
+			if from == to {
+				writeError(w, http.StatusBadRequest, "from and to are the same LFDI")
+				return
+			}
+			if _, isManaged, err := coreedev.ManagerOf(r.Context(), h.Managers, from); err != nil {
+				writeManagementInternalError(w, "rekey", err)
+				return
+			} else if !isManaged {
+				writeError(w, http.StatusNotFound, "device is not managed")
+				return
+			}
+		}
+
 		// Rekeying a manager makes "to" the manager of everything "from"
 		// managed; rekeying a managed device makes "to" the managed side
 		// of its existing manager.
@@ -292,6 +379,28 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 			}
 		} else if !h.kindAllowedManaged(r.Context(), w, "rekey", to) {
 			return
+		}
+
+		// A managed-side rekey while the old LFDI still owns state would
+		// leave it behind for the retired certificate; the admin removes
+		// that first.
+		var warning string
+		if req.Role == "managed" {
+			left, err := h.remainingState(r.Context(), from)
+			if err != nil {
+				writeManagementInternalError(w, "rekey", err)
+				return
+			}
+			if left != "" {
+				writeError(w, http.StatusConflict, "old LFDI "+from+" still owns "+left+"; remove it before rekeying")
+				return
+			}
+			dest, err := h.memberHealth(r.Context(), to)
+			if err != nil {
+				writeManagementInternalError(w, "rekey", err)
+				return
+			}
+			warning = directDeviceWarning(dest)
 		}
 
 		var opErr error
@@ -304,7 +413,11 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 			writeManagementRekeyError(w, req.Role, opErr)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"role": req.Role, "from": from, "to": to})
+		resp := map[string]string{"role": req.Role, "from": from, "to": to}
+		if warning != "" {
+			resp["warning"] = warning
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 

@@ -3,9 +3,12 @@ package adminplane
 import (
 	"context"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -102,5 +105,46 @@ func TestNewAdminManagementHandler_WiresRecordAndActivity(t *testing.T) {
 	}
 	if h.Activity != rec {
 		t.Errorf("Activity = %p, want the recorder passed in (%p)", h.Activity, rec)
+	}
+}
+
+// TestNewAdminManagementHandler_RekeyRefusesWhileMirrorSurvives drives the
+// production-wired handler through the reviewer's sequence: the old LFDI's
+// record is gone but a mirror naming it remains, so the managed rekey must
+// answer 409 and move nothing.
+func TestNewAdminManagementHandler_RekeyRefusesWhileMirrorSurvives(t *testing.T) {
+	const oldLFDI = "C001000000000000000000000000000000000001"
+	const newLFDI = "C002000000000000000000000000000000000002"
+	const mgr = "AAAA000000000000000000000000000000000001"
+	managers := memory.NewEndDeviceManagementStore()
+	mups := memory.NewStore[sep2.MirrorUsagePoint]()
+	if err := mups.Create(context.Background(), "1", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/1"}, DeviceLFDI: oldLFDI}); err != nil {
+		t.Fatalf("seed mirror: %v", err)
+	}
+	h := newAdminManagementHandler(&Stores{
+		EndDeviceManagers: managers,
+		EndDevices:        memory.NewEndDeviceStore(),
+		MirrorUsagePoints: mups,
+	}, nil)
+	if h == nil {
+		t.Fatal("newAdminManagementHandler returned nil")
+	}
+	if err := managers.Assign(context.Background(), mgr, oldLFDI); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/management-pairs/rekey",
+		strings.NewReader(`{"role":"managed","from":"`+oldLFDI+`","to":"`+newLFDI+`"}`))
+	w := httptest.NewRecorder()
+	h.HandleRekeyManagementPair().ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
+	}
+	if got, _ := managers.ManagerOf(context.Background(), oldLFDI); got != mgr {
+		t.Errorf("ManagerOf(old) = %q, want %q unmoved", got, mgr)
+	}
+	if got, _ := managers.ManagerOf(context.Background(), newLFDI); got != "" {
+		t.Errorf("ManagerOf(new) = %q, want no pair", got)
 	}
 }

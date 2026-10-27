@@ -243,6 +243,12 @@ configured, and staying pure in-memory otherwise.
   handler has no EndDevice reader) and `lastSeen` (RFC 3339 UTC time of its
   last request since the server started, or null). A manager that is quiet
   while an unpaired LFDI starts connecting is the rotation to rekey.
+  A managed-side rekey is refused with 409 while the old LFDI still owns an
+  EndDevice record or any MirrorUsagePoint naming it (a mirror outlives the
+  record's delete); remove them first. It answers 404 for an LFDI with no
+  pair and 400 for from equal to to. Creating a pair for an LFDI that
+  has already connected directly is allowed and answers 201 with its health
+  and a `warning`.
 - A write is durable before it is live: a create, remove, or rekey writes
   the candidate snapshot to disk first, and only then updates the in-memory
   pairs. A write reported as failed is therefore never granting access in

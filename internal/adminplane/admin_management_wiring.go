@@ -5,6 +5,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -38,5 +39,11 @@ func newAdminManagementHandler(stores *Stores, rec *activity.Recorder) *handler.
 		log.Printf("server: Stores.EndDeviceManagers is %T, not *memory.EndDeviceManagementStore: no management-pair admin routes mounted", stores.EndDeviceManagers)
 		return nil
 	}
-	return &handler.AdminManagementHandler{Managers: managers, Profiles: stores.DeviceProfiles, EndDevices: stores.EndDevices, Activity: rec}
+	h := &handler.AdminManagementHandler{Managers: managers, Profiles: stores.DeviceProfiles, EndDevices: stores.EndDevices, Activity: rec}
+	// A managed-side rekey refuses while the old LFDI still owns a mirror;
+	// an unwired reader skips that check.
+	if !store.IsAbsent(stores.MirrorUsagePoints) {
+		h.MirrorUsagePoints = stores.MirrorUsagePoints
+	}
+	return h
 }

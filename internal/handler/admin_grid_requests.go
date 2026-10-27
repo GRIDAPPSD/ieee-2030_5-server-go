@@ -584,13 +584,19 @@ func (h *AdminGridRequestHandler) nameplateW(ctx context.Context, edevID string)
 	return sum, sum != nil && sum.Cmp(big.NewRat(h.MaxDeviceW, 1)) > 0, nil
 }
 
-// splitRows splits every row over fleets, returning one share per row and
-// fleet in that order.
-func splitRows(rows []gridRow, fleets []gridFleet) ([]gridShare, []GridRowRefusal) {
+// fleetWeights is each fleet's weight, in fleet order, the input of a split.
+func fleetWeights(fleets []gridFleet) []*big.Rat {
 	weights := make([]*big.Rat, len(fleets))
 	for n, f := range fleets {
 		weights[n] = f.weight
 	}
+	return weights
+}
+
+// splitRows splits every row over fleets, returning one share per row and
+// fleet in that order.
+func splitRows(rows []gridRow, fleets []gridFleet) ([]gridShare, []GridRowRefusal) {
+	weights := fleetWeights(fleets)
 	var shares []gridShare
 	var refused []GridRowRefusal
 	for n, row := range rows {

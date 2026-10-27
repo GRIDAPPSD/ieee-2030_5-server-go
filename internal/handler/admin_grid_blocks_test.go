@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -445,5 +447,105 @@ func TestGridBlocks_CancelRefusals(t *testing.T) {
 	}
 	if after, _ := g.dc.storedCounts(t); after != before {
 		t.Errorf("stored controls %d after refusals, want %d", after, before)
+	}
+}
+
+// failingDeviceUpdates fails every lifecycle update under a device's scopes, so a
+// cancel of that device's copy stops there.
+type failingDeviceUpdates struct {
+	*dercontrol.LifecycleStore
+	devicePrefix string
+	fail         bool
+}
+
+func (f *failingDeviceUpdates) Update(ctx context.Context, parent, id string, lc dercontrol.LifecycleRecord) error {
+	if f.fail && strings.HasPrefix(parent, f.devicePrefix) {
+		return errors.New("injected lifecycle failure")
+	}
+	return f.LifecycleStore.Update(ctx, parent, id, lc)
+}
+
+// A cancel that fails at one share still tries every other share, and the
+// reply names the batch, each share cancelled and each failed with its mRID
+// and reason. Retrying the batch route finishes the failed share only.
+func TestGridBlocks_CancelBatchTriesEveryShareAfterAFailure(t *testing.T) {
+	g := newGridFixture(t)
+	created := decodeGridCreated(t, g.post(gridBody(gridRow("discharge", 40, 3, soon(), 600))))
+	a, b := created.Rows[0].Shares[0], created.Rows[0].Shares[1]
+	wrap := &failingDeviceUpdates{LifecycleStore: g.dc.lifecycles, devicePrefix: "a1/", fail: true}
+	issuer, err := dercontrol.NewIssuer(g.dc.programs, g.dc.controls, wrap, dercontrol.Config{PEN: ptrU32(dcPEN)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.fsa.Issuer, g.dc.h.Issuer = issuer, issuer
+
+	path := "/api/derms/grid-requests/" + created.Batch + "/cancel"
+	w := g.cancel(path, `{}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("cancel = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var got handler.GridCancelled
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body %s: %v", w.Body.String(), err)
+	}
+	if got.Batch != created.Batch || len(got.Cancelled) != 1 || got.Cancelled[0].MRID != b.Control.MRID || got.Cancelled[0].Copies != 1 {
+		t.Errorf("reply = %+v, want the batch id and B's share cancelled over 1 copy", got)
+	}
+	if len(got.Failed) != 1 || got.Failed[0].MRID != a.Control.MRID || got.Failed[0].AggregatorLFDI != gridAggA || got.Failed[0].Row != 1 ||
+		!strings.Contains(got.Failed[0].Reason, "a1") {
+		t.Errorf("failed = %+v, want A's share naming device a1", got.Failed)
+	}
+	if got.Retry != path || !strings.Contains(got.Error, path) {
+		t.Errorf("error %q retry %q name no retry route", got.Error, got.Retry)
+	}
+	if st := g.servedStatus("b1", b.Control.MRID); st != "cancelled" {
+		t.Errorf("b1 serves B's control as %q after A's failure, want cancelled", st)
+	}
+	if st := g.servedStatus("a2", a.Control.MRID); st != "scheduled" {
+		t.Errorf("a2 serves A's control as %q, want it still scheduled", st)
+	}
+	logs := g.dc.logs.String()
+	if n := strings.Count(logs, "der_grid_request_cancel_failed"); n != 1 || !strings.Contains(logs, a.Control.MRID) {
+		t.Errorf("%d failure lines, want one naming %s: %s", n, a.Control.MRID, logs)
+	}
+
+	wrap.fail = false
+	w = g.cancel(path, `{}`)
+	var retry handler.GridCancelled
+	if err := json.Unmarshal(w.Body.Bytes(), &retry); err != nil || w.Code != http.StatusOK || len(retry.Cancelled) != 1 || retry.Cancelled[0].MRID != a.Control.MRID || len(retry.Failed) != 0 {
+		t.Errorf("retry = %d %s, want only A's share cancelled", w.Code, w.Body.String())
+	}
+}
+
+// A stored share that cannot be read as a share is shown with its error and
+// the rest of the view is kept.
+func TestGridBlocks_UnreadableShareDoesNotFailTheView(t *testing.T) {
+	g := newGridFixture(t)
+	created := decodeGridCreated(t, g.post(gridBody(gridRow("discharge", 40, 3, soon(), 600), gridRow("discharge", 10, 3, soon()+7200, 600))))
+	ctx := context.Background()
+	rewrite := func(s handler.GridShareView, edit func(*memory.FSAControl)) {
+		rec, err := g.f.h.AdminFSAs.FSAControl(ctx, s.FSA, s.Program, s.Control.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edit(&rec)
+		if err := g.f.h.AdminFSAs.UpdateFSAControl(ctx, s.FSA, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewrite(created.Rows[0].Shares[0], func(r *memory.FSAControl) { r.GridShare.Direction = "sideways" })
+	rewrite(created.Rows[1].Shares[1], func(r *memory.FSAControl) { r.Base.OpModTargetW = nil })
+
+	l := g.get()
+	r1, r2 := l.Batches[0].Rows[0], l.Batches[0].Rows[1]
+	if r1.Direction != "discharge" || r1.RequestedW != 40000 || len(r1.Shares) != 2 {
+		t.Fatalf("row 1 = %+v, want the request read from B's share", r1)
+	}
+	a, b := r1.Shares[0], r1.Shares[1]
+	if a.Error == "" || a.Status != "error" || !strings.Contains(a.Error, "sideways") || b.Error != "" || b.TargetW.Value != 10 || r1.EncodedW != 10000 {
+		t.Errorf("row 1 shares A %+v B %+v encoded %v, want A flagged and B kept at 10 x 10^3", a, b, r1.EncodedW)
+	}
+	if r2.Shares[1].Error == "" || r2.Shares[1].Status != "error" || r2.Shares[0].Error != "" || r2.EncodedW != 8000 {
+		t.Errorf("row 2 shares %+v encoded %v, want B flagged and A kept", r2.Shares, r2.EncodedW)
 	}
 }

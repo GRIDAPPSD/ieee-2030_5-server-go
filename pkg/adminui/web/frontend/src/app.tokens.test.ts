@@ -3,28 +3,8 @@
 // is parsed and the chains resolved here; what is asserted is the declared value
 // the browser would compute on :root.
 /// <reference types="node" />
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { DIRECTION_COLORS } from './lib/chart'
-
-const css = readFileSync('src/app.css', 'utf8')
-
-function block(selector: string): Record<string, string> {
-  const start = css.indexOf(`${selector} {`)
-  if (start < 0) throw new Error(`no ${selector} block in app.css`)
-  const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('\n}', start))
-  const out: Record<string, string> = {}
-  for (const m of body.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim()
-  return out
-}
-
-function resolve(vars: Record<string, string>, name: string, depth = 0): string {
-  const v = vars[name]
-  if (v === undefined) throw new Error(`${name} is not declared`)
-  if (depth > 8) throw new Error(`${name} loops`)
-  const ref = v.match(/^var\((--[a-z0-9-]+)\)$/)
-  return ref ? resolve(vars, ref[1], depth + 1) : v
-}
+import { block, css, resolve } from './test-tokens'
 
 const squash = (v: string) => v.replace(/\s+/g, '')
 
@@ -87,13 +67,6 @@ describe('app.css design tokens', () => {
     expect(dark['--bg']).toBe('var(--surface-page)')
     expect(dark['--card']).toBe('var(--surface-card)')
     expect(dark['--dim']).toBe('var(--text-muted)')
-  })
-
-  it('declares the power direction tokens equal to the chart literals', () => {
-    expect(squash(resolve(dark, '--power-discharge'))).toBe(DIRECTION_COLORS.discharge.edge)
-    expect(squash(resolve(dark, '--power-discharge-fill'))).toBe(DIRECTION_COLORS.discharge.fill)
-    expect(squash(resolve(dark, '--power-charge'))).toBe(DIRECTION_COLORS.charge.edge)
-    expect(squash(resolve(dark, '--power-charge-fill'))).toBe(DIRECTION_COLORS.charge.fill)
   })
 
   it('gives the light theme a value for every themed token and keeps the legacy names unset', () => {

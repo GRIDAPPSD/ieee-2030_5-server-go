@@ -24,19 +24,19 @@
     color: var(--text);
   }
   .badge-info {
-    background: #1e3a5f;
-    color: #93c5fd;
+    background: var(--surface-raised);
+    color: var(--accent);
   }
   .badge-ok {
-    background: #14532d;
-    color: #86efac;
+    background: var(--status-ok-bg);
+    color: var(--text);
   }
   .badge-warn {
-    background: #713f12;
-    color: #fde68a;
+    background: var(--status-warn-bg);
+    color: var(--text);
   }
   .badge-error {
-    background: #7f1d1d;
-    color: #fca5a5;
+    background: var(--status-fault-bg);
+    color: var(--text);
   }
 </style>

@@ -103,8 +103,8 @@ export function chartTooltip(unit: string): (params: TooltipParam | TooltipParam
 }
 
 // Charge carries a diagonal hatch so the two directions never rest on hue.
-function chargeDecal(theme: ChartTheme) {
-  return { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: Math.PI / 4, color: theme.direction.charge.edge }
+function chargeDecal(color: string) {
+  return { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: Math.PI / 4, color }
 }
 
 // The palette holds 5 colors and ECharts cycles it, so lines 6 to 10 repeat
@@ -114,6 +114,18 @@ function lineType(index: number): 'solid' | 'dashed' | 'dotted' {
   return round === 1 ? 'dashed' : round === 2 ? 'dotted' : 'solid'
 }
 
+// #rrggbb with an alpha; any other color form is returned as given.
+function withAlpha(color: string, alpha: number): string {
+  const m = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)
+  if (m === null) return color
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`
+}
+
+// One palette color as a bar's colors: solid for discharge, a lighter fill for charge.
+function paletteColors(color: string, charge: boolean): { edge: string; fill: string } {
+  return { edge: color, fill: charge ? withAlpha(color, 0.35) : color }
+}
+
 // The ECharts series for one body series. Bars on one stack share a
 // timestamp, so discharge above zero and charge below never sit side by side.
 export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0): Record<string, unknown> {
@@ -121,8 +133,15 @@ export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0):
     const type = lineType(index)
     return { name: s.name, type: 'line', showSymbol: false, data: s.points, ...(type === 'solid' ? {} : { lineStyle: { type } }) }
   }
-  const colors = theme.direction[s.direction ?? 'discharge']
+  const charge = s.direction === 'charge'
+  // A palette slot colors an aggregator; otherwise the direction does. Charge
+  // takes a lighter fill either way, and both carry the hatch in the edge color.
+  const colors =
+    s.colorIndex === undefined
+      ? theme.direction[s.direction ?? 'discharge']
+      : paletteColors(theme.palette[s.colorIndex % theme.palette.length], charge)
   return {
+    ...(s.id === undefined ? {} : { id: s.id }),
     name: s.name,
     type: 'bar',
     stack: 'energy',
@@ -131,7 +150,7 @@ export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0):
       color: colors.fill,
       borderColor: colors.edge,
       borderWidth: 1,
-      ...(s.direction === 'charge' ? { decal: chargeDecal(theme) } : {}),
+      ...(charge ? { decal: chargeDecal(colors.edge) } : {}),
     },
   }
 }

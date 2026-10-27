@@ -102,3 +102,12 @@ describe('app.css design tokens', () => {
     expect(resolve(dark, '--radius-md')).toBe('8px')
   })
 })
+
+describe('narrow tab bar', () => {
+  it('declares the phone tab padding after the base rule, so it wins the cascade', () => {
+    const base = css.indexOf('.tab-bar a {\n  padding: 10px 16px;')
+    const phone = css.indexOf('.tab-bar a {\n    padding: 10px 12px;')
+    expect(base).toBeGreaterThan(-1)
+    expect(phone).toBeGreaterThan(base)
+  })
+})

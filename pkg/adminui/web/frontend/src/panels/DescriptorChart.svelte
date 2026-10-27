@@ -12,7 +12,15 @@
 
   echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-  let { body, empty }: { body: DrawnChartBody; empty: string } = $props()
+  // frame draws the axes even with no points, with the empty message inside the
+  // frame. range, in epoch milliseconds, fixes the time axis, so charts given
+  // the same range line up.
+  let {
+    body,
+    empty,
+    frame = false,
+    range = null,
+  }: { body: DrawnChartBody; empty: string; frame?: boolean; range?: [number, number] | null } = $props()
 
   let container: HTMLDivElement | null = $state(null)
   let chart: echarts.ECharts | null = $state.raw(null)
@@ -40,6 +48,32 @@
     }
   })
 
+  // Hover text per legend name, for series that carry a hint such as an LFDI.
+  const hints = $derived(new Map(body.series.flatMap((s) => (s.hint === undefined ? [] : [[s.name, s.hint] as const]))))
+
+  // A long legend name is cut to a width that leaves a scroll page room for
+  // one whole entry on a phone; the hover text carries the full name.
+  function legendOption(textColor: string) {
+    const width = container?.clientWidth ?? 1000
+    const narrow = width < 600
+    return {
+      type: 'scroll',
+      textStyle: { color: textColor, ...(narrow ? { width: width - 158, overflow: 'truncate' } : {}) },
+      // A set width makes each scroll page hold whole entries, never a cut one.
+      ...(narrow ? { width: width - 100, left: 0 } : {}),
+      pageTextStyle: { color: textColor },
+      top: 0,
+      tooltip: {
+        show: true,
+        renderMode: 'richText',
+        formatter: (p: { name?: string }) => {
+          const name = p.name ?? ''
+          return richTextSafe(hints.has(name) ? `${name} (${hints.get(name)})` : name)
+        },
+      },
+    }
+  }
+
   $effect(() => {
     if (chart === null) return
     const theme = chartTheme()
@@ -50,17 +84,20 @@
         backgroundColor: 'transparent',
         animation: false,
         tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit), ...tooltipStyle(theme) },
-        legend: { type: 'scroll', textStyle: { color: textColor }, pageTextStyle: { color: textColor }, top: 0 },
+        legend: legendOption(textColor),
         grid: { left: 60, right: 30, top: 56, bottom: 30 },
         xAxis: {
           type: 'time',
           splitNumber: 4,
+          ...(range !== null ? { min: range[0], max: range[1] } : {}),
           axisLabel: { color: textColor, formatter: '{HH}:{mm}:{ss}', hideOverlap: true },
         },
         yAxis: {
           type: 'value',
           // Bars start at zero, or a discharge-only window exaggerates them.
           scale: !body.series.some((s) => s.type === 'bar'),
+          // An empty frame has no data to size the axis from.
+          ...(frame && !hasPoints ? { min: -1, max: 1 } : {}),
           boundaryGap: ['5%', '5%'],
           name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },
@@ -74,8 +111,13 @@
   })
 </script>
 
-{#if hasPoints}
-  <div class="chart-container chart-tall" data-testid="descriptor-chart" bind:this={container}></div>
+{#if hasPoints || frame}
+  <div class:chart-frame={frame}>
+    <div class="chart-container chart-tall" data-testid="descriptor-chart" bind:this={container}></div>
+    {#if !hasPoints}
+      <p class="chart-empty" data-testid="descriptor-chart-empty">{empty || 'No data points.'}</p>
+    {/if}
+  </div>
   {#if initError}
     <div class="result err" data-testid="descriptor-chart-error">Chart unavailable: {initError}</div>
   {/if}

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   cachedPower,
+  aggregatorBars,
+  aggregatorLabels,
   energyBars,
   energyTotals,
   forgetPower,
@@ -113,7 +115,9 @@ describe('energyTotals', () => {
       }),
     )!
     expect(energyTotals(a.energyChart)).toEqual({ discharged: 0.75, charged: -0.125 })
-    expect(formatKwh(0.75)).toBe('0.7500 kWh')
+    expect(formatKwh(0.75)).toBe('0.750 kWh')
+    expect(formatKwh(0.168)).toBe('0.168 kWh')
+    expect(formatKwh(0.0004)).toBe('0.000 kWh')
   })
 
   it('reads a missing series as zero', () => {
@@ -136,5 +140,56 @@ describe('energyBars', () => {
     ])
     expect(energyBars(chart).unit).toBe('kWh')
     expect(chart.series[0]).not.toHaveProperty('type')
+  })
+})
+
+describe('aggregatorBars', () => {
+  const entry = (key: string, name: string, charged: [number, number | null][] = [[10, 0.2]]) => ({
+    key,
+    name,
+    latestW: null,
+    latestMissing: [],
+    discharged: [[10, 0.5], [15, null]] as [number, number | null][],
+    charged,
+  })
+  const labelOf = (l: string) => `dev-${l}`
+
+  it('splits each aggregator into discharge above zero and charge below, dropping empty buckets', () => {
+    const body = aggregatorBars([entry('A', 'wire-name'), entry('direct', 'Direct')], 'kWh', labelOf)
+    expect(body.unit).toBe('kWh')
+    expect(body.series).toEqual([
+      { id: 'A:discharge', name: 'dev-A discharge', hint: 'A', points: [[10000, 0.5]], type: 'bar', direction: 'discharge', colorIndex: 0 },
+      { id: 'A:charge', name: 'dev-A charge', hint: 'A', points: [[10000, -0.2]], type: 'bar', direction: 'charge', colorIndex: 0 },
+      { id: 'direct:discharge', name: 'Direct discharge', points: [[10000, 0.5]], type: 'bar', direction: 'discharge', colorIndex: 4 },
+      { id: 'direct:charge', name: 'Direct charge', points: [[10000, -0.2]], type: 'bar', direction: 'charge', colorIndex: 4 },
+    ])
+  })
+
+  it('draws charge below zero whichever sign the wire used', () => {
+    const body = aggregatorBars([entry('A', 'n', [[10, 0.2], [20, -0.3]])], 'kWh', labelOf)
+    expect(body.series[1].points).toEqual([[10000, -0.2], [20000, -0.3]])
+  })
+
+  it('labels by device label, not the wire name, and keeps same-label aggregators apart', () => {
+    const lfdi1 = 'AABBCCDD11223344'
+    const lfdi2 = 'EEFF001122334455'
+    const body = aggregatorBars([entry(lfdi1, lfdi1), entry(lfdi2, lfdi2)], 'kWh', () => 'Roof')
+    expect(body.series.map((x) => x.name)).toEqual([
+      'Roof (AABBCCDD) discharge',
+      'Roof (AABBCCDD) charge',
+      'Roof (EEFF0011) discharge',
+      'Roof (EEFF0011) charge',
+    ])
+    expect(new Set(body.series.map((x) => x.id)).size).toBe(4)
+    expect(aggregatorLabels([entry('direct', 'x')], () => 'never')).toEqual(['Direct'])
+  })
+})
+
+describe('parsePower per-aggregator energy', () => {
+  it('reads an absent field as null and refuses a malformed one', () => {
+    expect(parsePower(wireAnswer())?.aggregatorEnergy).toBeNull()
+    expect(parsePower(wireAnswer({ aggregatorEnergy: [{ key: 'A' }] }))).toBeNull()
+    const ok = { key: 'A', name: 'N', latestW: null, latestMissing: [], discharged: [[1, null]], charged: [] }
+    expect(parsePower(wireAnswer({ aggregatorEnergy: [ok] }))?.aggregatorEnergy).toEqual([ok])
   })
 })

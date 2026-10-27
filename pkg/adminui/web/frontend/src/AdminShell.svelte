@@ -279,13 +279,13 @@
   {#if dashboardError}
     <div class="card result err" role="alert" data-testid="dashboard-error">{dashboardError}</div>
   {/if}
-  <div class="grid">
+  <div class="grid" class:overview-grid={activeTab === 'overview'}>
     {#if activeTab === 'overview'}
-      <Overview {data} />
       {#if streaming}
         <!-- Gated like the other admin reads: an unauthenticated load issues none. -->
         <PowerCard />
       {/if}
+      <Overview {data} />
       <ServerInfo {data} />
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}

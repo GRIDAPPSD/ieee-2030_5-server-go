@@ -96,10 +96,10 @@ test('the Overview power card shows a seeded device\'s discharged and charged en
   // The chart draws on a canvas, so the sums the card prints under it are
   // what the page shows of the two series.
   const totals = card.getByTestId('power-energy-totals');
-  await expect(totals).toHaveText(/discharged (\d+\.\d+) kWh, charged (-\d+\.\d+) kWh/);
+  await expect(totals).toHaveText(/discharged (\d+\.\d+) kWh, charged (\d+\.\d+) kWh/);
   const [, discharged, charged] = (await totals.innerText()).match(/discharged (\S+) kWh, charged (\S+) kWh/)!;
   expect(Number(discharged)).toBeGreaterThan(0);
-  expect(Number(charged)).toBeLessThan(0);
+  expect(Number(charged)).toBeGreaterThan(0);
 
   // Leaving the tab stops the polling, and a return draws the kept chart at
   // once, marked with its time, while the next read has not answered.

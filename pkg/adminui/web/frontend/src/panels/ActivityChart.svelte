@@ -53,6 +53,7 @@
           smooth: true,
           symbol: 'none' as const,
           lineStyle: { width: 2, color: registered },
+          itemStyle: { color: registered },
           areaStyle: { color: theme.area },
           data: [] as number[],
         },
@@ -62,6 +63,7 @@
           smooth: true,
           symbol: 'none' as const,
           lineStyle: { width: 2, color: comms },
+          itemStyle: { color: comms },
           data: [] as number[],
         },
         {
@@ -71,6 +73,7 @@
           symbol: 'none' as const,
           yAxisIndex: 1,
           lineStyle: { width: 2, color: mups },
+          itemStyle: { color: mups },
           data: [] as number[],
         },
       ],

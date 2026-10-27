@@ -264,6 +264,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		authed.HandleFunc("GET /api/derms/power", handler.HandlePower(fleetH, stores.MirrorReadingRetention))
 	}
 
+	// #1190 DERMS read API: the controls in force in a window, by lane, for the
+	// Overview timeline under the power chart.
+	if ceH := newAdminControlEventsHandler(stores); ceH != nil {
+		authed.HandleFunc("GET /api/derms/control-events", ceH.HandleControlEvents())
+	}
+
 	// #764 DERMS read API: a fleet's flow reservation requests, their
 	// responses and executions, and the live grants a dispatch can carry out.
 	// #670 adds the writes that answer, revise and cancel them. They change

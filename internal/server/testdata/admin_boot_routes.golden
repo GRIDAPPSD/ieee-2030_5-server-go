@@ -12,6 +12,7 @@
     GET /api/der/controls
     GET /api/der/curves
     GET /api/derms/commitments
+    GET /api/derms/control-events
     GET /api/derms/fleets
     GET /api/derms/flow-reservations
     GET /api/derms/flow-reservations/{edevId}/{frqId}

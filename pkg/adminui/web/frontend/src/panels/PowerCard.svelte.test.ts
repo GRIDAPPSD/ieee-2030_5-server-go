@@ -6,6 +6,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import PowerCard from './PowerCard.svelte'
 import * as api from '../lib/api'
+import { forgetLookAhead, rememberLookAhead } from '../lib/controlEvents'
 import { POWER_WINDOWS, forgetPower } from '../lib/power'
 import { wireAnswer } from '../lib/power.fixture'
 import { installCanvasStub } from '../test-canvas-stub'
@@ -18,6 +19,7 @@ useAppCss()
 beforeEach(() => {
   vi.useFakeTimers()
   forgetPower()
+  forgetLookAhead()
 })
 
 afterEach(() => {
@@ -29,6 +31,9 @@ const chartOption = () => {
   const el = screen.getByTestId('descriptor-chart') as HTMLElement
   return echarts.getInstanceByDom(el)!.getOption() as { series: { name: string; type: string; data: [number, number][] }[] }
 }
+// The card's power reads only; the events timeline under it reads its own route.
+const powerReads = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.filter((c) => String(c[0]).startsWith('/api/derms/power'))
+
 const chartSeries = () => chartOption().series.map((s) => [s.name, s.data.map((p) => p[1])])
 
 describe('PowerCard', () => {
@@ -113,9 +118,9 @@ describe('PowerCard', () => {
     const { unmount } = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(4999)
-    expect(spy).toHaveBeenCalledTimes(1)
+    expect(powerReads(spy)).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
-    expect(spy).toHaveBeenCalledTimes(2)
+    expect(powerReads(spy)).toHaveLength(2)
     unmount()
   })
 
@@ -169,12 +174,16 @@ describe('PowerCard', () => {
     const { unmount } = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
     const signal = spy.mock.calls[0][1]?.signal
+    const eventsSignal = spy.mock.calls[1][1]?.signal
     expect(signal?.aborted).toBe(false)
+    expect(eventsSignal?.aborted).toBe(false)
 
     unmount()
     expect(signal?.aborted).toBe(true)
+    expect(eventsSignal?.aborted).toBe(true)
     await vi.advanceTimersByTimeAsync(5000 * 6)
-    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(powerReads(spy)).toHaveLength(1)
   })
 
   it('does not read again when the read settles as cancelled after unmount', async () => {
@@ -214,7 +223,7 @@ describe('PowerCard', () => {
     await vi.advanceTimersByTimeAsync(0)
     const at = new Date(Date.now()).toLocaleTimeString()
     a.unmount()
-    expect(first).toHaveBeenCalledTimes(1)
+    expect(powerReads(first)).toHaveLength(1)
 
     await vi.advanceTimersByTimeAsync(60000)
     // The next read never settles, so anything drawn came from the kept answer.
@@ -223,7 +232,7 @@ describe('PowerCard', () => {
     const b = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(pending).toHaveBeenCalledTimes(1)
+    expect(powerReads(pending)).toHaveLength(1)
     expect(chartSeries()).toEqual([
       ['Discharged', [0.5]],
       ['Charged', [-0.25]],
@@ -246,7 +255,7 @@ describe('PowerCard', () => {
     select.value = '3600'
     select.dispatchEvent(new Event('change', { bubbles: true }))
     await vi.advanceTimersByTimeAsync(0)
-    expect(spy.mock.calls.map((c) => c[0])).toEqual([
+    expect(powerReads(spy).map((c) => c[0])).toEqual([
       '/api/derms/power?window=900&scope=all',
       '/api/derms/power?window=3600&scope=all',
     ])
@@ -256,7 +265,7 @@ describe('PowerCard', () => {
     spy.mockReturnValue(new Promise(() => {}))
     const b = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
-    expect(spy.mock.calls.at(-1)![0]).toBe('/api/derms/power?window=3600&scope=all')
+    expect(powerReads(spy).at(-1)![0]).toBe('/api/derms/power?window=3600&scope=all')
     expect(screen.getByTestId('power-now')).toHaveTextContent('9.0 kW')
     b.unmount()
   })
@@ -273,7 +282,7 @@ describe('PowerCard', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(screen.queryByLabelText('Devices')).toBeNull()
-    expect(spy.mock.calls.map((c) => c[0])).toEqual(['/api/derms/power?window=900&scope=all'])
+    expect(powerReads(spy).map((c) => c[0])).toEqual(['/api/derms/power?window=900&scope=all'])
     unmount()
   })
 
@@ -372,5 +381,129 @@ describe('PowerCard', () => {
 
     expect(screen.getByTestId('power-energy-totals')).not.toHaveClass('visually-hidden')
     unmount()
+  })
+
+  describe('look-ahead', () => {
+    const answerAtNow = () => {
+      const t = Date.now() - 60000
+      return wireAnswer({
+        energyChart: { unit: 'kWh', series: [{ name: 'Discharged', points: [[t, 0.5]] }, { name: 'Charged', points: [] }] },
+      })
+    }
+    const serve = (events: Record<string, unknown>) =>
+      vi.spyOn(api, 'fetchJSON').mockImplementation(async (path) =>
+        String(path).startsWith('/api/derms/control-events')
+          ? { ok: true, data: events }
+          : { ok: true, data: answerAtNow() },
+      )
+    const axis = () => {
+      const el = screen.getByTestId('descriptor-chart') as HTMLElement
+      const o = echarts.getInstanceByDom(el)!.getOption() as { xAxis: { min: number; max: number }[] }
+      return o.xAxis[0]
+    }
+
+    it('extends both charts to the look-ahead end, marks now on both, and stops the power bars at now', async () => {
+      const win = POWER_WINDOWS[0].seconds
+      serve({ windowStart: 0, windowEnd: win, aheadEnd: win * 2, events: [] })
+      const { unmount, container } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const x = axis()
+      expect(x.max - x.min).toBe(win * 2 * 1000)
+      const now = x.min + win * 1000
+      expect(Date.now()).toBe(now)
+      expect(screen.getByTestId('chart-now').style.left).toBe('50%')
+      expect(container.querySelector<HTMLElement>('.ev-now')!.style.left).toBe('50%')
+      const lastBar = Math.max(...chartOption().series.flatMap((s) => s.data.map((p) => p[0])))
+      expect(lastBar).toBeLessThanOrEqual(now)
+      unmount()
+    })
+
+    it('draws the chart grid at the --plot margins the timeline lines up by', async () => {
+      serve({ windowStart: 0, windowEnd: 900, aheadEnd: 1800, events: [] })
+      const { unmount } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+      const el = screen.getByTestId('descriptor-chart') as HTMLElement
+      const o = echarts.getInstanceByDom(el)!.getOption() as { grid: Record<string, number>[] }
+      expect([o.grid[0].left, o.grid[0].right, o.grid[0].top, o.grid[0].bottom]).toEqual([60, 30, 56, 30])
+      unmount()
+    })
+
+    it('sets the look-ahead at once on a window change and on return, so the range does not rescale', async () => {
+      serve({ windowStart: 0, windowEnd: 900, aheadEnd: 1800, events: [] })
+      const a = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(900 * 2 * 1000)
+
+      // The events read for the new window never answers.
+      vi.spyOn(api, 'fetchJSON').mockImplementation(async (path) =>
+        String(path).startsWith('/api/derms/control-events') ? new Promise(() => {}) : { ok: true, data: answerAtNow() },
+      )
+      await fireEvent.change(screen.getByLabelText('Window'), { target: { value: '3600' } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(3600 * 2 * 1000)
+      a.unmount()
+
+      const b = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(3600 * 2 * 1000)
+      b.unmount()
+    })
+
+    it('keeps no look-ahead on a window change once the route answered 404', async () => {
+      vi.spyOn(api, 'fetchJSON').mockImplementation(async (path) =>
+        String(path).startsWith('/api/derms/control-events') ? { ok: false, status: 404, error: 'nf' } : { ok: true, data: answerAtNow() },
+      )
+      const { unmount } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(900 * 1000)
+      await fireEvent.change(screen.getByLabelText('Window'), { target: { value: '3600' } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(3600 * 1000)
+      unmount()
+    })
+
+    it('drops the look-ahead when a server that had one answers 404', async () => {
+      rememberLookAhead(true)
+      vi.spyOn(api, 'fetchJSON').mockImplementation(async (path) =>
+        String(path).startsWith('/api/derms/control-events') ? { ok: false, status: 404, error: 'nf' } : { ok: true, data: answerAtNow() },
+      )
+      const { unmount } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(900 * 1000)
+      unmount()
+    })
+
+    it('ignores a look-ahead answer that lands after the window changed', async () => {
+      const settles: ((r: Awaited<ReturnType<typeof api.fetchJSON>>) => void)[] = []
+      vi.spyOn(api, 'fetchJSON').mockImplementation((path) =>
+        String(path).startsWith('/api/derms/control-events')
+          ? new Promise((resolve) => settles.push(resolve))
+          : Promise.resolve({ ok: true, data: answerAtNow() }),
+      )
+      const { unmount } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+      await fireEvent.change(screen.getByLabelText('Window'), { target: { value: '3600' } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settles.length).toBeGreaterThan(1)
+
+      // The read for the old window settles late, with a look-ahead.
+      settles[0]({ ok: true, data: { windowStart: 0, windowEnd: 900, aheadEnd: 900 + 99999, events: [] } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axis().max - axis().min).toBe(3600 * 1000)
+      unmount()
+    })
+
+    it('ends at now when the server sends no aheadEnd', async () => {
+      const win = POWER_WINDOWS[0].seconds
+      serve({ windowStart: 0, windowEnd: win, events: [] })
+      const { unmount } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const x = axis()
+      expect(x.max - x.min).toBe(win * 1000)
+      expect(screen.queryByTestId('chart-ahead')).toBeNull()
+      unmount()
+    })
   })
 })

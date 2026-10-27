@@ -100,6 +100,7 @@ describe('seriesOption bars', () => {
       discharge: { edge: '#fb923c', fill: 'rgba(251,146,60,0.45)' },
       charge: { edge: '#c4b5fd', fill: 'rgba(196,181,253,0.40)' },
     },
+    plot: { left: 0, right: 0, top: 0, bottom: 0 },
   }
   type Item = { color: string; borderColor: string; decal?: { color: string } }
   const item = (o: Record<string, unknown>) => o.itemStyle as Item

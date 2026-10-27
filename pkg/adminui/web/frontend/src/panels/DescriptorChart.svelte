@@ -85,7 +85,7 @@
         animation: false,
         tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit), ...tooltipStyle(theme) },
         legend: legendOption(textColor),
-        grid: { left: 60, right: 30, top: 56, bottom: 30 },
+        grid: theme.plot,
         xAxis: {
           type: 'time',
           splitNumber: 4,

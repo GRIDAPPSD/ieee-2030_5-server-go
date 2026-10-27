@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -142,7 +143,7 @@ func (h *AdminFSAHandler) replicateControls(r *http.Request, deviceID, fsaID str
 		// The copies and the assignment stay, so the replica is not orphaned.
 		h.logged(r).ErrorContext(r.Context(), "admin: FSA control replica may be left after a failed assign", "event", "assign_replica_incomplete",
 			"device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "scope", logsafe.Str(undo.Scope.Key()), "mrid", logsafe.Str(undo.MRID),
-			"undo_step", logsafe.Str(string(undo.Step)), "control_kept", undo.ControlKept, "lifecycle_kept", undo.LifecycleKept, "error", logsafe.Err(err))
+			"undo_step", logsafe.Str(string(undo.Step)), "control_kept", logsafe.Str(strconv.FormatBool(undo.ControlKept)), "lifecycle_kept", logsafe.Str(strconv.FormatBool(undo.LifecycleKept)), "error", logsafe.Err(err))
 		return h.incompleteFault(err, deviceID, fsaID)
 	}
 	if !h.rolledBack(r, err, steps, nil) {

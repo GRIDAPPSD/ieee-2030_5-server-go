@@ -4,6 +4,8 @@
 // server check, made so a refused value never leaves the page; the server
 // stays the authority.
 
+import { SIGN_IN_AGAIN } from './descriptor'
+
 export interface ActionChoice {
   id: string
   label: string
@@ -211,7 +213,7 @@ export function describeOutcome(
     case 422:
       return { kind: 'refused', text: res.error }
     case 401:
-      return { kind: 'error', text: 'Admin session required. Sign in again.' }
+      return { kind: 'error', text: SIGN_IN_AGAIN }
     case 403:
       return { kind: 'error', text: `The server refused this request: ${res.error}.` }
     case 404:

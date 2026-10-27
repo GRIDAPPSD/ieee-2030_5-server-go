@@ -21,6 +21,7 @@
   import { currentPath, currentSearch, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
+  import PowerCard from './panels/PowerCard.svelte'
   import ServerInfo from './panels/ServerInfo.svelte'
   import CertPanel from './panels/CertPanel.svelte'
   import DerControl from './panels/DerControl.svelte'
@@ -281,6 +282,10 @@
   <div class="grid">
     {#if activeTab === 'overview'}
       <Overview {data} />
+      {#if streaming}
+        <!-- Gated like the other admin reads: an unauthenticated load issues none. -->
+        <PowerCard />
+      {/if}
       <ServerInfo {data} />
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}

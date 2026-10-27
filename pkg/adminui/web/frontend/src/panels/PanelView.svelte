@@ -7,6 +7,7 @@
   import {
     PANEL_POLL_MS,
     PANEL_REQUEST_TIMEOUT_MS,
+    SIGN_IN_AGAIN,
     parseChoices,
     readSelection,
     writeSelection,
@@ -14,6 +15,7 @@
     type PanelPickerInfo,
     type PickerChoice,
   } from '../lib/descriptor'
+  import { startPoll } from '../lib/poll'
   import DescriptorPanel from './DescriptorPanel.svelte'
   import PanelPicker from './PanelPicker.svelte'
 
@@ -53,7 +55,7 @@
       case 503:
         return 'The request for this panel was canceled. It will be retried.'
       case 401:
-        return 'Admin session required. Sign in again.'
+        return SIGN_IN_AGAIN
       case 404:
         return 'No such panel.'
       case 400:
@@ -70,8 +72,6 @@
     const selection = applied
     let retry = retryAfterApply
     retryAfterApply = false
-    const ctrl = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
     // A re-run for the same panel (an Apply) keeps the last good view; a
     // different panel starts clean.
     if (shownId !== panelId) {
@@ -87,12 +87,12 @@
     // Returns the ids to send. When the choices cannot be read it says so
     // beside the panel and returns the last good selection (none if there
     // never was one), so the view keeps refreshing. Null means aborted.
-    async function loadChoices(): Promise<string[] | null> {
+    async function loadChoices(signal: AbortSignal): Promise<string[] | null> {
       const res = await fetchJSON<unknown>(`/api/ui/panels/${encodeURIComponent(panelId)}/choices`, {
-        signal: ctrl.signal,
+        signal,
         timeoutMs: PANEL_REQUEST_TIMEOUT_MS,
       })
-      if (ctrl.signal.aborted) return null
+      if (signal.aborted) return null
       const parsed = res.ok ? parseChoices(res.data) : null
       if (parsed === null) {
         choicesError = res.ok ? 'The server sent a list of choices that could not be read.' : `Could not load the choices: ${res.error}`
@@ -109,12 +109,11 @@
       return sendable
     }
 
-    async function load() {
+    return startPoll(async (signal) => {
       let sel: string[] = []
       if (hasPicker) {
-        const ids = await loadChoices()
-        if (ctrl.signal.aborted) return
-        if (ids === null) return
+        const ids = await loadChoices(signal)
+        if (signal.aborted || ids === null) return undefined
         sel = ids
       }
       let path = `/api/ui/panels/${encodeURIComponent(panelId)}`
@@ -123,12 +122,11 @@
         for (const sid of sel) q.append('sel', sid)
         path += `?${q.toString()}`
       }
-      const res = await fetchJSON<Descriptor>(path, { signal: ctrl.signal, timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
-      if (ctrl.signal.aborted) return
+      const res = await fetchJSON<Descriptor>(path, { signal, timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
+      if (signal.aborted) return undefined
       if (!res.ok && res.status === 504 && retry) {
         retry = false
-        timer = setTimeout(load, APPLY_RETRY_MS)
-        return
+        return APPLY_RETRY_MS
       }
       retry = false
       if (res.ok && typeof res.data === 'object' && res.data !== null) {
@@ -142,14 +140,8 @@
         if (res.status !== 400) descriptor = null
         error = describe(res.status, res.error)
       }
-      timer = setTimeout(load, PANEL_POLL_MS)
-    }
-    void load()
-
-    return () => {
-      ctrl.abort()
-      clearTimeout(timer)
-    }
+      return PANEL_POLL_MS
+    })
   })
 </script>
 

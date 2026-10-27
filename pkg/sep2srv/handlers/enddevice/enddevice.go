@@ -339,7 +339,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 			srverr.Internal(w, r, fmt.Errorf("allocate a device index: %w", err))
 			return
 		}
-		dev.Href = "/edev/" + id
+		dev.Href = DeviceHref(id)
 		dev.FunctionSetAssignmentsListLink = &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa", id)}
 
 		// RegistrationLink is deliberately NOT stamped here.
@@ -629,7 +629,7 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 			return
 		}
 
-		dev.Href = "/edev/" + id
+		dev.Href = DeviceHref(id)
 		dev.LFDI, dev.SFDI = current.LFDI, current.SFDI
 		dev.ChangedTime = time.Now().Unix()
 
@@ -767,10 +767,27 @@ func WithAfterNotify(fn func(ctx context.Context, id string) error) DeleteOption
 	return func(c *deleteConfig) { c.afterNotify = fn }
 }
 
+// DeviceHref is the href of the EndDevice stored under id.
+func DeviceHref(id string) string { return EndDeviceListHref + "/" + id }
+
+// NotifyDeleted tells the subscribers of /edev/{id} that the EndDevice is
+// gone, with NotificationStatusCanceledDeleted (IEEE 2030.5-2023 status 4).
+// It is the one owner of that notice: the DELETE route and the out-of-band
+// test hook both call it. It must run after the store delete and before the
+// device's subscriptions are removed, because Notify looks its subscribers up
+// when called. A nil n sends nothing.
+func NotifyDeleted(ctx context.Context, n ResourceNotifier, id string) {
+	if n == nil {
+		return
+	}
+	n.Notify(ctx, DeviceHref(id), sep2.NotificationStatusCanceledDeleted)
+}
+
 // HandleDeleteEndDevice returns a handler for DELETE /edev/{id}. CSIP V1.2
 // MAINT-002 step 5 mandates that on successful deletion the server fires a
 // Notification on the EndDeviceList subscription (SubscribedResource =
-// "/edev") with NotificationStatusDefault: the list changed, no subscription ended. The notifier is optional:
+// "/edev") with NotificationStatusDefault: the list changed, no subscription ended.
+// Subscribers of /edev/{id} itself get [NotifyDeleted]. The notifier is optional:
 // passing nil disables notification fan-out (useful for tests that don't
 // exercise the subscription path).
 //
@@ -823,6 +840,7 @@ func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier, opts ...D
 		if n != nil {
 			n.Notify(r.Context(), EndDeviceListHref, sep2.NotificationStatusDefault)
 		}
+		NotifyDeleted(r.Context(), n, id)
 
 		if cfg.afterNotify != nil {
 			if err := cfg.afterNotify(r.Context(), id); err != nil {

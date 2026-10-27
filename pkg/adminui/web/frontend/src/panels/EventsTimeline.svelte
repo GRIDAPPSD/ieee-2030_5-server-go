@@ -10,10 +10,12 @@
     barsFor,
     controlEventsPath,
     eventLabelParts,
+    lookAheadFor,
     eventTitle,
     lanesFor,
     nowPercent,
     parseControlEvents,
+    rememberLookAhead,
     type ControlEventsAnswer,
   } from '../lib/controlEvents'
   import { deviceLabel } from '../lib/devices'
@@ -39,7 +41,9 @@
   $effect(() => {
     const win = windowSeconds
     events = null
-    ahead = 0
+    // The look-ahead equals the window, so a window change or a return to the
+    // tab sets it at once and the range does not rescale when the answer lands.
+    ahead = lookAheadFor(win)
     absent = false
     error = ''
     return startPoll(async (signal) => {
@@ -48,12 +52,14 @@
       if (!res.ok && res.status === 404) {
         absent = true
         ahead = 0
+        rememberLookAhead(false)
         return undefined
       }
       const parsed = res.ok ? parseControlEvents(res.data) : null
       if (parsed !== null) {
         events = parsed
         ahead = parsed.aheadSeconds ?? 0
+        rememberLookAhead(parsed.aheadSeconds !== null)
         error = ''
       } else {
         error = res.ok ? 'The server sent a scheduled events reply that could not be read.' : `Could not load scheduled events: ${res.error}`
@@ -84,6 +90,7 @@
         <span class="ev-lane-label" data-testid="events-lane-label">{lane.label}</span>
         <ul class="ev-track" style:height="calc({Math.max(1, ...bars.map((b) => b.row + 1))} * var(--ev-bar-h))">
           {#each bars as bar (bar.event.mrid + ':' + bar.event.group + ':' + (bar.event.fsaID ?? '') + ':' + bar.event.start)}
+            {@const label = eventLabelParts(bar.event)}
             <li
               class="ev-bar ev-{bar.event.status} ev-dir-{bar.event.direction ?? 'none'}"
               data-testid="events-bar"
@@ -96,7 +103,7 @@
               aria-label={eventTitle(bar.event)}
             >
               {#if bar.event.origin === 'derms'}<span class="ev-derms" data-testid="events-derms">DERMS</span>{/if}
-              <span class="ev-text">{eventLabelParts(bar.event)[0]}<span class="ev-detail">{eventLabelParts(bar.event)[1]}</span></span>
+              <span class="ev-text"><span class="ev-lead" class:ev-dirword={label.word}>{label.lead}</span><span class="ev-detail">{label.detail}</span></span>
             </li>
           {/each}
           {#if now !== null}

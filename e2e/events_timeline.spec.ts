@@ -103,6 +103,24 @@ test('the Overview draws a lane per aggregator and Direct with each event as a l
   expect(future!.x).toBeGreaterThan(nowLine!.x);
   await expect(bars.nth(2)).toHaveAttribute('data-status', 'cancelled');
 
+  // On a phone every bar keeps its direction word on screen, and the DERMS
+  // marker does not sit over it.
+  await page.setViewportSize({ width: 400, height: 900 });
+  await expect(timeline).toBeVisible();
+  const words = ['dis', 'cha', 'dis'];
+  for (let i = 0; i < 3; i++) {
+    const lead = bars.nth(i).locator('.ev-lead');
+    await expect(lead).toBeVisible();
+    const box = (await lead.boundingBox())!;
+    const bar = (await bars.nth(i).boundingBox())!;
+    expect(box.width).toBeGreaterThan(12);
+    expect(box.x + box.width).toBeLessThanOrEqual(bar.x + bar.width + 1);
+    expect((await lead.innerText()).toLowerCase().startsWith(words[i])).toBe(true);
+  }
+  const marker = (await timeline.getByTestId('events-derms').boundingBox())!;
+  const derms = (await bars.nth(0).locator('.ev-lead').boundingBox())!;
+  expect(marker.x >= derms.x + derms.width - 1 || marker.y + marker.height <= derms.y + 1).toBe(true);
+
   const dir = process.env.SCREENSHOT_DIR;
   if (dir) {
     await page.setViewportSize({ width: 1600, height: 1000 });

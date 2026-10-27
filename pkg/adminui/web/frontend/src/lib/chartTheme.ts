@@ -12,6 +12,8 @@ export interface ChartTheme {
   tooltipBg: string
   tooltipBorder: string
   direction: Record<ChartDirection, { edge: string; fill: string }>
+  // The plot-area margins in pixels, from the --plot-* tokens.
+  plot: { left: number; right: number; top: number; bottom: number }
 }
 
 // A browser returns a custom property already substituted; the loop only
@@ -41,6 +43,7 @@ function read(style: CSSStyleDeclaration, name: string): string {
 export function chartTheme(root: Element = document.documentElement): ChartTheme {
   const style = getComputedStyle(root)
   const get = (name: string) => read(style, name)
+  const px = (name: string) => parseFloat(get(name))
   return {
     palette: [1, 2, 3, 4, 5].map((n) => get(`--chart-${n}`)),
     area: get('--chart-area'),
@@ -53,6 +56,7 @@ export function chartTheme(root: Element = document.documentElement): ChartTheme
       discharge: { edge: get('--power-discharge'), fill: get('--power-discharge-fill') },
       charge: { edge: get('--power-charge'), fill: get('--power-charge-fill') },
     },
+    plot: { left: px('--plot-left'), right: px('--plot-right'), top: px('--plot-top'), bottom: px('--plot-bottom') },
   }
 }
 

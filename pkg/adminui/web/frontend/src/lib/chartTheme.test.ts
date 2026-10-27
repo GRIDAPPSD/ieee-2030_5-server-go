@@ -20,6 +20,27 @@ describe('chartTheme', () => {
 
   })
 
+  describe('plot margins', () => {
+    useAppCss()
+
+    it('reads the grid margins from the --plot tokens', () => {
+      expect(chartTheme().plot).toEqual({ left: 60, right: 30, top: 56, bottom: 30 })
+    })
+
+    // The timeline and the look-ahead overlay line up with the chart only
+    // while they take the same margins, so no rule may write them as a number.
+    it('has every stylesheet rule that positions by them read the tokens', () => {
+      const rules = ['.ev-lane-label', '.ev-track', '.ev-axis', '.ev-empty', '.chart-ahead']
+      for (const sel of rules) {
+        const body = css.match(new RegExp(`\\n${sel.replace('.', '\\.')} \\{([^}]*)\\}`))?.[1]
+        expect(body, sel).toBeDefined()
+        expect(body, sel).toMatch(/var\(--plot-(left|right)\)/)
+        expect(body, sel).not.toMatch(/\b(60|30|56)px/)
+      }
+      expect(css.match(/\.chart-ahead \{[^}]*\}/)![0]).toMatch(/top: var\(--plot-top\);\s*bottom: var\(--plot-bottom\)/)
+    })
+  })
+
   it('throws when one token is missing from the stylesheet', () => {
     const style = document.createElement('style')
     style.textContent = css.replace('--chart-grid: var(--border);', '')

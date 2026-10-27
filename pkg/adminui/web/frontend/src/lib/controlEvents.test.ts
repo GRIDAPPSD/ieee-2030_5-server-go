@@ -1,7 +1,7 @@
 // The events timeline's narrowing and layout. Every assertion is on a value
 // the chart draws: the parsed fields, the lane order, the bar percentages.
 import { describe, expect, it } from 'vitest'
-import { barsFor, controlEventsPath, eventLabel, eventLabelParts, eventTitle, lanesFor, nowPercent, parseControlEvents } from './controlEvents'
+import { barsFor, forgetLookAhead, lookAheadFor, rememberLookAhead, controlEventsPath, eventLabel, eventLabelParts, eventTitle, lanesFor, nowPercent, parseControlEvents } from './controlEvents'
 import { END, wireEvent, wireEvents } from './controlEvents.fixture'
 import { parsePower } from './power'
 import { wireAnswer } from './power.fixture'
@@ -21,6 +21,15 @@ describe('parseControlEvents', () => {
     expect(parseControlEvents(wireEvents([], null))?.aheadSeconds).toBeNull()
     expect(parseControlEvents(wireEvents([], END - 1))).toBeNull()
     expect(parseControlEvents({ ...wireEvents([]), aheadEnd: 'x' })).toBeNull()
+  })
+
+  it('reads status unknown and a null modes as none instead of refusing the reply', () => {
+    const wire = wireEvents([{ ...wireEvent({ mrid: 'a', status: 'unknown' }), modes: null } as never, wireEvent({ mrid: 'b' })])
+    const got = parseControlEvents(wire)
+    expect(got?.events.map((e) => [e.mrid, e.status, e.modes])).toEqual([
+      ['a', 'unknown', []],
+      ['b', 'active', ['opModTargetW']],
+    ])
   })
 
   it('refuses the whole reply when one event has an unknown status or a missing field', () => {
@@ -45,8 +54,9 @@ describe('eventLabel', () => {
   })
 
   it('splits the direction word from the target so a narrow bar keeps the word', () => {
-    expect(eventLabelParts(wireEvent({ targetW: -3000, direction: 'charge' }))).toEqual(['charge', ' 3.0 kW'])
-    expect(eventLabelParts(wireEvent({ targetW: null, direction: null, modes: ['opModConnect'] }))).toEqual(['opModConnect', ''])
+    expect(eventLabelParts(wireEvent({ targetW: -3000, direction: 'charge' }))).toEqual({ lead: 'charge', detail: ' 3.0 kW', word: true })
+    expect(eventLabelParts(wireEvent({ targetW: null, direction: null, modes: ['opModConnect'] }))).toEqual({ lead: 'opModConnect', detail: '', word: false })
+    expect(eventLabelParts(wireEvent({ targetW: null, direction: 'discharge', modes: [] }))).toEqual({ lead: 'discharge', detail: '', word: true })
   })
 
   it('puts the status in the hover text', () => {
@@ -120,5 +130,17 @@ describe('nowPercent', () => {
     expect(nowPercent(RS + 1800_000, RS, RE)).toBeCloseTo(50, 6)
     expect(nowPercent(RE + 5000, RS, RE)).toBe(100)
     expect(nowPercent(RS - 1, RS, RE)).toBeNull()
+  })
+})
+
+describe('look-ahead memory', () => {
+  it('is zero until a server has answered with one, then one window', () => {
+    forgetLookAhead()
+    expect(lookAheadFor(900)).toBe(0)
+    rememberLookAhead(true)
+    expect(lookAheadFor(900)).toBe(900)
+    expect(lookAheadFor(3600)).toBe(3600)
+    rememberLookAhead(false)
+    expect(lookAheadFor(900)).toBe(0)
   })
 })

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/svelte'
 import EventsTimeline from './EventsTimeline.svelte'
 import * as api from '../lib/api'
+import { forgetLookAhead } from '../lib/controlEvents'
 import { END, wireEvent, wireEvents } from '../lib/controlEvents.fixture'
 import { parsePower, windowRange, type PowerAnswer } from '../lib/power'
 import { css } from '../test-tokens'
@@ -22,6 +23,7 @@ const answer = (): PowerAnswer => {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(END * 1000)
+  forgetLookAhead()
 })
 
 afterEach(() => {
@@ -179,15 +181,31 @@ describe('EventsTimeline', () => {
     unmount()
   })
 
-  it('splits each label so a narrow bar can drop the target, and the stylesheet drops it under a width', async () => {
-    reply(wireEvents([wireEvent()]))
+  it('keeps the direction word in its own span, never in the droppable detail', async () => {
+    reply(wireEvents([wireEvent({ origin: 'derms' }), wireEvent({ mrid: 'm', group: 'AGG2', targetW: null, direction: null, modes: ['opModConnect'] })]))
     const { unmount } = mount()
     await vi.advanceTimersByTimeAsync(0)
-    const bar = screen.getByTestId('events-bar')
-    expect(bar.querySelector('.ev-detail')).toHaveTextContent('5.0 kW')
-    expect(bar.querySelector('.ev-text')!.firstChild!.textContent).toBe('discharge')
-    expect(bar).toHaveTextContent('discharge 5.0 kW')
-    expect(css).toMatch(/@container \(max-width: 140px\)\s*\{\s*\.ev-detail\s*\{\s*display: none;/)
+    const [direction, modes] = screen.getAllByTestId('events-bar')
+    expect(direction.querySelector('.ev-lead')).toHaveTextContent('discharge')
+    expect(direction.querySelector('.ev-lead')).toHaveClass('ev-dirword')
+    expect(direction.querySelector('.ev-detail')).toHaveTextContent('5.0 kW')
+    expect(direction).toHaveTextContent('discharge 5.0 kW')
+    expect(modes.querySelector('.ev-lead')).not.toHaveClass('ev-dirword')
     unmount()
+  })
+
+  // jsdom does not run container queries, so the rules that keep the word
+  // visible on a narrow bar are pinned in the stylesheet text.
+  it('has the stylesheet drop the target, then shorten the word, before it ever hides the word', () => {
+    const rule = (query: string) => css.match(new RegExp(`@container \\(${query}\\) \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
+    const medium = rule('max-width: 140px')
+    expect(medium).toMatch(/\.ev-detail \{\s*display: none;/)
+    expect(medium).toMatch(/\.ev-derms \{[^}]*position: absolute;[^}]*font-size: 0;/)
+    expect(medium).not.toMatch(/\.ev-dirword[^{]*\{[^}]*display: none/)
+    expect(rule('max-width: 64px')).toMatch(/\.ev-dirword \{\s*max-width: 3ch;\s*overflow: hidden;/)
+    expect(css).not.toMatch(/\.ev-(lead|dirword|text)[^{]*\{[^}]*display: none/)
+    const bar = css.match(/\n\.ev-bar \{([^}]*)\}/)![1]
+    expect(bar).toMatch(/min-width: 44px;/)
+    expect(bar).toMatch(/container-type: inline-size;/)
   })
 })

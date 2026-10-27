@@ -15,6 +15,7 @@
     cachedPower,
     energyBars,
     energyTotals,
+    formatClock,
     formatKw,
     formatKwh,
     keepPower,
@@ -53,8 +54,6 @@
         return `Could not load the power card: ${message}`
     }
   }
-
-  const time = (ms: number) => new Date(ms).toLocaleTimeString()
 
   // The one time range and window every chart on the card shares. A second
   // chart under the energy chart takes this same range, so the two axes match.
@@ -167,7 +166,7 @@
 
   {#if answer !== null && answerAt !== null}
     {#if !fresh}
-      <p class="hint" data-testid="power-stale">Showing the answer from {time(answerAt)}.</p>
+      <p class="hint" data-testid="power-stale">Showing the answer from {formatClock(answerAt)}.</p>
     {/if}
     <!-- Charts stack here, each given the same range. -->
     <div class="power-charts">

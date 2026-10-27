@@ -2,9 +2,10 @@
 // internal/handler admin_control_events.go), its narrowing, and the pure
 // layout the timeline draws: lanes in the power chart's order, bar spans on
 // the shared time range, labels in words.
-import { DIRECT_KEY, aggregatorLabels, formatKw, type PowerAnswer } from './power'
+import { DIRECT_KEY, aggregatorKeyLabels, formatClock, formatKw, isStrings, type PowerAnswer } from './power'
 
-export type ControlEventStatus = 'scheduled' | 'active' | 'completed' | 'cancelled' | 'superseded'
+// 'unknown' is a status the server sends when it cannot derive one.
+export type ControlEventStatus = 'scheduled' | 'active' | 'completed' | 'cancelled' | 'superseded' | 'unknown'
 export type ControlEventDirection = 'discharge' | 'charge'
 
 export interface ControlEvent {
@@ -34,12 +35,24 @@ export interface ControlEventsAnswer {
   events: ControlEvent[]
 }
 
+// Whether the server has answered with a look-ahead, kept here so the card
+// reopens on the range it left. An answer states the exact look-ahead; until
+// one does, a server known to send one is taken to look ahead one window.
+let aheadSupported = false
+
+export const lookAheadFor = (windowSeconds: number): number => (aheadSupported ? windowSeconds : 0)
+
+export function rememberLookAhead(supported: boolean): void {
+  aheadSupported = supported
+}
+
+// forgetLookAhead resets the memory; the tests call it.
+export const forgetLookAhead = (): void => rememberLookAhead(false)
+
 export const controlEventsPath = (windowSeconds: number): string =>
   `/api/derms/control-events?window=${windowSeconds}&scope=all`
 
-const STATUSES: readonly string[] = ['scheduled', 'active', 'completed', 'cancelled', 'superseded']
-
-const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
+const STATUSES: readonly string[] = ['scheduled', 'active', 'completed', 'cancelled', 'superseded', 'unknown']
 
 function isEvent(v: unknown): v is ControlEvent {
   if (typeof v !== 'object' || v === null) return false
@@ -68,27 +81,33 @@ export function parseControlEvents(value: unknown): ControlEventsAnswer | null {
   if (typeof value !== 'object' || value === null) return null
   const v = value as Record<string, unknown>
   if (typeof v.windowStart !== 'number' || typeof v.windowEnd !== 'number' || !Array.isArray(v.events)) return null
-  if (!v.events.every(isEvent)) return null
+  // The server sends null for a control with no modes; it reads as none.
+  const events = v.events.map((e) => (typeof e === 'object' && e !== null && (e as { modes?: unknown }).modes === null ? { ...e, modes: [] } : e))
+  if (!events.every(isEvent)) return null
   if (v.aheadEnd !== undefined && (typeof v.aheadEnd !== 'number' || v.aheadEnd < v.windowEnd)) return null
   const aheadSeconds = typeof v.aheadEnd === 'number' ? v.aheadEnd - v.windowEnd : null
-  return { windowStart: v.windowStart, windowEnd: v.windowEnd, aheadSeconds, events: v.events }
+  return { windowStart: v.windowStart, windowEnd: v.windowEnd, aheadSeconds, events }
 }
 
-// The bar text in words, split so a narrow bar can drop the second part and
-// keep the first: the direction, then the target ("discharge", " 5.0 kW"), or
-// the mode names when the control has no target.
-export function eventLabelParts(e: ControlEvent): [string, string] {
+// The bar text in words, split so a narrow bar can drop the detail and keep
+// the lead: the direction, then the target ("discharge", " 5.0 kW"), or the
+// mode names when the control has no target. word is true when the lead is
+// the direction word, which a bar never hides.
+export function eventLabelParts(e: ControlEvent): { lead: string; detail: string; word: boolean } {
   if (e.targetW !== null) {
     const kw = formatKw(Math.abs(e.targetW))
-    return e.direction === null ? [kw, ''] : [e.direction, ` ${kw}`]
+    return e.direction === null ? { lead: kw, detail: '', word: false } : { lead: e.direction, detail: ` ${kw}`, word: true }
   }
-  if (e.modes.length > 0) return [e.modes.join(', '), '']
-  return [e.direction ?? 'control', '']
+  if (e.modes.length > 0) return { lead: e.modes.join(', '), detail: '', word: false }
+  return { lead: e.direction ?? 'control', detail: '', word: e.direction !== null }
 }
 
-export const eventLabel = (e: ControlEvent): string => eventLabelParts(e).join('')
+export const eventLabel = (e: ControlEvent): string => {
+  const { lead, detail } = eventLabelParts(e)
+  return lead + detail
+}
 
-const time = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString()
+const time = (seconds: number) => formatClock(seconds * 1000)
 
 // The hover and assistive text: the label, who sent it, its status and span.
 export function eventTitle(e: ControlEvent): string {
@@ -106,22 +125,16 @@ export interface Lane {
 // not list still gets a lane after those, so no event goes undrawn.
 export function lanesFor(answer: PowerAnswer, events: ControlEvent[], labelOf: (lfdi: string) => string): Lane[] {
   const per = answer.aggregatorEnergy
-  const base: { key: string }[] =
-    per !== null && per.length > 0
-      ? per.map((e) => ({ key: e.key }))
-      : [...answer.aggregators.map((key) => ({ key })), { key: DIRECT_KEY }]
-  const known = new Set(base.map((l) => l.key))
+  const keys = per !== null && per.length > 0 ? per.map((e) => e.key) : [...answer.aggregators, DIRECT_KEY]
+  const known = new Set(keys)
   for (const e of events) {
     if (!known.has(e.group)) {
       known.add(e.group)
-      base.push({ key: e.group })
+      keys.push(e.group)
     }
   }
-  const labels = aggregatorLabels(
-    base.map((l) => ({ key: l.key, name: l.key, latestW: null, latestMissing: [], discharged: [], charged: [] })),
-    labelOf,
-  )
-  return base.map((l, i) => ({ key: l.key, label: labels[i] }))
+  const labels = aggregatorKeyLabels(keys, labelOf)
+  return keys.map((key, i) => ({ key, label: labels[i] }))
 }
 
 export interface Bar {

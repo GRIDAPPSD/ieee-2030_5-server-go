@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   cachedPower,
   aggregatorBars,
+  aggregatorKeyLabels,
   aggregatorLabels,
   energyBars,
   energyTotals,
@@ -199,5 +200,12 @@ describe('windowRange', () => {
   it('ends at the answer without a look-ahead and that many seconds later with one', () => {
     expect(windowRange(10_000_000, 900)).toEqual([9_100_000, 10_000_000])
     expect(windowRange(10_000_000, 900, 900)).toEqual([9_100_000, 10_900_000])
+  })
+})
+
+describe('aggregatorKeyLabels', () => {
+  it('labels bare keys, Direct by name and a shared label by a short key prefix', () => {
+    expect(aggregatorKeyLabels(['AAAAAAAAAA', 'BBBBBBBBBB', 'direct'], () => 'same')).toEqual(['same (AAAAAAAA)', 'same (BBBBBBBB)', 'Direct'])
+    expect(aggregatorKeyLabels(['A', 'direct'], (k) => `n-${k}`)).toEqual(['n-A', 'Direct'])
   })
 })

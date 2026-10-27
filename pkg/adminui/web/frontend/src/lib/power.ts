@@ -67,7 +67,7 @@ export function powerPath(scope: string, windowSeconds: number): string {
   return `/api/derms/power?${q.toString()}`
 }
 
-const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
+export const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
 
 function isFlags(v: unknown): v is PowerDeviceFlags {
   if (typeof v !== 'object' || v === null) return false
@@ -216,14 +216,23 @@ export const windowRange = (endMs: number, windowSeconds: number, aheadSeconds =
   endMs + aheadSeconds * 1000,
 ]
 
-// The label of each aggregator, in order: its device label, or "Direct". The
-// server sends the LFDI as the name, so the label comes from the device
+// The label of each aggregator key, in order: its device label, or "Direct".
+// The server sends the LFDI as the name, so the label comes from the device
 // profiles. Two aggregators that share a label get a short LFDI prefix, so a
 // legend never merges them.
-export function aggregatorLabels(entries: AggregatorEnergy[], labelOf: (lfdi: string) => string): string[] {
-  const base = entries.map((e) => (e.key === DIRECT_KEY ? 'Direct' : labelOf(e.key)))
-  return base.map((label, i) => (base.filter((l) => l === label).length > 1 ? `${label} (${entries[i].key.slice(0, 8)})` : label))
+export function aggregatorKeyLabels(keys: string[], labelOf: (lfdi: string) => string): string[] {
+  const base = keys.map((key) => (key === DIRECT_KEY ? 'Direct' : labelOf(key)))
+  return base.map((label, i) => (base.filter((l) => l === label).length > 1 ? `${label} (${keys[i].slice(0, 8)})` : label))
 }
+
+export const aggregatorLabels = (entries: AggregatorEnergy[], labelOf: (lfdi: string) => string): string[] =>
+  aggregatorKeyLabels(
+    entries.map((e) => e.key),
+    labelOf,
+  )
+
+// A time of day for a millisecond instant, in the viewer's locale.
+export const formatClock = (ms: number): string => new Date(ms).toLocaleTimeString()
 
 // One bar series per aggregator and direction, in the order the server sent
 // them. Discharge sits above zero, charge below whatever sign the wire used.

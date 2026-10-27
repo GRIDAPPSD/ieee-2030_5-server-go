@@ -66,6 +66,13 @@
   --fs-5: 16px;
   --fs-display: 36px;
   --ev-bar-h: 26px;
+  /* The energy chart's plot-area margins. The chart reads them for its grid
+     and the timeline and the look-ahead overlay position by them, so a time
+     falls at the same x in every chart. */
+  --plot-left: 60px;
+  --plot-right: 30px;
+  --plot-top: 56px;
+  --plot-bottom: 30px;
   --lh-base: 1.45;
 
   --sp-0: 2px;
@@ -422,7 +429,7 @@ td {
 }
 
 /* The track sits inside the same side margins as the energy chart's plot
-   (left 60, right 30), so a time falls at the same x in both. */
+   (--plot-left, --plot-right), so a time falls at the same x in both. */
 .events {
   display: flex;
   flex-direction: column;
@@ -433,14 +440,14 @@ td {
   display: block;
   font-size: var(--fs-2);
   color: var(--text-muted);
-  margin-left: 60px;
+  margin-left: var(--plot-left);
   margin-bottom: var(--sp-0);
 }
 
 .ev-track {
   list-style: none;
   position: relative;
-  margin: 0 30px 0 60px;
+  margin: 0 var(--plot-right) 0 var(--plot-left);
   padding: 0;
   background: var(--surface-raised);
   border-radius: var(--radius-sm);
@@ -451,7 +458,8 @@ td {
   box-sizing: border-box;
   height: calc(var(--ev-bar-h) - 4px);
   margin-top: 2px;
-  min-width: 4px;
+  /* Wide enough for the short direction word, which never drops. */
+  min-width: 44px;
   display: flex;
   align-items: center;
   gap: var(--sp-1);
@@ -466,10 +474,35 @@ td {
   container-type: inline-size;
 }
 
-/* A bar narrower than this drops its target and keeps the direction word. */
+.ev-dirword {
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* A narrow bar drops its target and shrinks the DERMS pill to a corner
+   marker, so the direction word keeps the room. */
 @container (max-width: 140px) {
   .ev-detail {
     display: none;
+  }
+
+  .ev-derms {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    padding: 0;
+    font-size: 0;
+    border-radius: 0 0 0 var(--radius-sm);
+  }
+}
+
+/* A narrower bar shows the first three letters of the word, "dis" or "cha". */
+@container (max-width: 64px) {
+  .ev-dirword {
+    max-width: 3ch;
+    overflow: hidden;
   }
 }
 
@@ -536,7 +569,7 @@ td {
 .ev-axis {
   position: relative;
   height: var(--sp-5);
-  margin: 0 30px 0 60px;
+  margin: 0 var(--plot-right) 0 var(--plot-left);
 }
 
 .ev-now-label {
@@ -551,21 +584,21 @@ td {
 }
 
 .ev-empty {
-  margin: 0 30px 0 60px;
+  margin: 0 var(--plot-right) 0 var(--plot-left);
 }
 
-/* Over the energy chart's plot area (grid left 60, right 30, top 56, bottom
-   30): the look-ahead region shaded, and the now line. */
+/* Over the energy chart's plot area: the look-ahead region shaded, and the
+   now line. */
 .power-chart {
   position: relative;
 }
 
 .chart-ahead {
   position: absolute;
-  left: 60px;
-  right: 30px;
-  top: 56px;
-  bottom: 30px;
+  left: var(--plot-left);
+  right: var(--plot-right);
+  top: var(--plot-top);
+  bottom: var(--plot-bottom);
   pointer-events: none;
 }
 

@@ -28,9 +28,9 @@ function isDirection(d: string): d is GridDirection {
   return d === 'discharge' || d === 'charge'
 }
 
-// directionWord is the upper-case word for a direction as the server names
+// gridDirectionWord is the upper-case word for a direction as the server names
 // it, and any other word as given.
-export function directionWord(direction: string): string {
+export function gridDirectionWord(direction: string): string {
   return isDirection(direction) ? DIRECTION[direction].word : direction
 }
 

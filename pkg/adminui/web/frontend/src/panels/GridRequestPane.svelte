@@ -10,7 +10,7 @@
   import { formatQuantity } from '../lib/flowreservation'
   import {
     buildGridRequest,
-    directionWord,
+    gridDirectionWord,
     newRow,
     refusedRows,
     shareText,
@@ -24,6 +24,9 @@
   import GridBlockRows from './GridBlockRows.svelte'
 
   const WRITE_TIMEOUT_MS = 20_000
+
+  // Called once a batch is stored, so the block views read it at once.
+  let { onCreated = () => {} }: { onCreated?: () => void } = $props()
 
   let rows = $state<GridRowDraft[]>([newRow()])
   let anchorMs = $state(Date.now())
@@ -79,6 +82,7 @@
     pending = null
     if (res.ok) {
       created = res.created
+      onCreated()
       rows = [newRow()]
       anchorMs = Date.now()
       return
@@ -163,7 +167,7 @@
     </div>
     {#each created.rows as r (r.row)}
       <div data-testid="grid-created-row">
-        <strong>{directionWord(r.direction)}</strong>
+        <strong>{gridDirectionWord(r.direction)}</strong>
         block {r.row}: requested {formatQuantity(r.requestedW, 'W')}, encoded {formatQuantity(r.encodedW, 'W')}
         (difference {formatQuantity(r.differenceW, 'W')}).
         <ul>

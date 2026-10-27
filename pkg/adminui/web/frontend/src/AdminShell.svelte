@@ -38,6 +38,7 @@
   import FleetPane from './panels/FleetPane.svelte'
   import RequestQueuePane from './panels/RequestQueuePane.svelte'
 import GridRequestPane from './panels/GridRequestPane.svelte'
+import GridBlocksPane from './panels/GridBlocksPane.svelte'
   import DispatchPane from './panels/DispatchPane.svelte'
   import PanelView from './panels/PanelView.svelte'
   import StreamPanel from './panels/StreamPanel.svelte'
@@ -153,6 +154,8 @@ import GridRequestPane from './panels/GridRequestPane.svelte'
   // the two sit on different tabs and a tab switch unmounts and remounts
   // whichever panel is not active.
   let mintedCert = $state<MintedCert | null>(null)
+  // Bumped when a grid batch is stored, so the block views read it at once.
+  let gridBlocksKey = $state(0)
 
   // Reloads overlap (every entry to Devices or FSAs starts one), so each
   // result is applied only if no newer request for the same data started
@@ -307,7 +310,8 @@ import GridRequestPane from './panels/GridRequestPane.svelte'
     {:else if activeTab === 'derms'}
       <FleetPane />
       <RequestQueuePane />
-      <GridRequestPane />
+      <GridRequestPane onCreated={() => gridBlocksKey++} />
+      <GridBlocksPane refreshKey={gridBlocksKey} />
       <DispatchPane />
     {:else if activePanel}
       {#key activePanel.id}

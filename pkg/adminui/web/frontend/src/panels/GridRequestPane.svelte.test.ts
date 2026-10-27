@@ -119,6 +119,30 @@ describe('GridRequestPane entry', () => {
     expect(sent).not.toHaveProperty('followsPrevious')
   })
 
+  it('tells the page once a batch is stored, and not when it is refused', async () => {
+    const onCreated = vi.fn()
+    const post = mockWrite({ ok: true, data: created(1) })
+    render(GridRequestPane, { onCreated })
+    await fillRow(0, { dir: 'To grid', x: '50', minutes: '60' })
+    await review()
+    expect(onCreated).not.toHaveBeenCalled()
+    await fireEvent.click(confirmButton())
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not tell the page when the server refuses the batch', async () => {
+    const onCreated = vi.fn()
+    const post = mockWrite({ ok: false, status: 409, error: 'rows_conflict', body: { code: 'rows_conflict', error: 'rows_conflict', rows: [] } })
+    render(GridRequestPane, { onCreated })
+    await fillRow(0, { dir: 'To grid', x: '50', minutes: '60' })
+    await review()
+    await fireEvent.click(confirmButton())
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await screen.findByTestId('grid-form-error')
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
   it('an added row cannot be reviewed until a direction is chosen on it', async () => {
     const post = mockWrite({ ok: true, data: created(2) })
     render(GridRequestPane)

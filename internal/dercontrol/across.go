@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
@@ -44,92 +46,321 @@ type AcrossResult struct {
 // record.
 type RecordWriter func(ctx context.Context, id string, ctrl sep2.DERControl) (undo func(context.Context) error, err error)
 
-// IssueAcross validates req, then, holding every target's scope lock, writes
-// record and then one copy of the control to each target: its lifecycle
-// record, the control and its supersede marks, in that order. The
-// creationTime is one more than the largest in any target scope, so the copy
-// is the newest event in each.
-//
-// On a nil error every write took effect. On a *RefusalError, or a check's
-// error, nothing was written. On any other plain error every write was
-// undone. A *UndoError names a copy, or the record, that could not be
-// removed; the copies written before it and the record are kept with it, so
-// the remainder is a prefix of a successful call. A target with no check,
-// fleet key or reach is ErrUncheckedCommitment, and req.ExecutesGrant is
-// ErrAcrossGrant.
+// IssueAcross is IssueAcrossAll for one control, with no check, returning
+// that control's result or its error unwrapped.
 func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []Target, record RecordWriter) (AcrossResult, error) {
-	if req.ExecutesGrant != "" {
-		return AcrossResult{}, ErrAcrossGrant
+	res, err := i.IssueAcrossAll(ctx, []Across{{Req: req, Targets: targets, Record: record}}, nil)
+	if items, ok := err.(AcrossItemErrors); ok && len(items) == 1 {
+		return AcrossResult{}, items[0].Err
 	}
-	origin, err := StoredOrigin(req.Origin)
 	if err != nil {
 		return AcrossResult{}, err
 	}
-	targets, err = sortTargets(targets)
-	if err != nil {
-		return AcrossResult{}, err
+	return res[0], nil
+}
+
+// Across is one control IssueAcrossAll writes: its request, the targets it
+// is written to and the writer of its record. A request with no Start starts
+// StartOffset seconds after the call's first creationTime, so controls of
+// one call can start together or follow each other exactly.
+type Across struct {
+	Req         CreateRequest
+	Targets     []Target
+	Record      RecordWriter
+	StartOffset int64
+}
+
+// AcrossCheck sees every control of an IssueAcrossAll call as it will be
+// written, in item order, after every copy is planned and before the first
+// write, under every scope lock. An error refuses the call with nothing
+// written.
+type AcrossCheck func(controls []sep2.DERControl) error
+
+// AcrossItemError is why one item of an IssueAcrossAll call could not be
+// planned: a refusal, a commitment check's error, or a store read failure.
+type AcrossItemError struct {
+	Item int
+	Err  error
+}
+
+func (e AcrossItemError) Error() string { return fmt.Sprintf("dercontrol: item %d: %v", e.Item, e.Err) }
+
+func (e AcrossItemError) Unwrap() error { return e.Err }
+
+// AcrossItemErrors holds every item of an IssueAcrossAll call that could not
+// be planned, in item order. Nothing was written.
+type AcrossItemErrors []AcrossItemError
+
+func (e AcrossItemErrors) Error() string {
+	parts := make([]string, len(e))
+	for n, it := range e {
+		parts[n] = it.Error()
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (e AcrossItemErrors) Unwrap() []error {
+	out := make([]error, len(e))
+	for n, it := range e {
+		out[n] = it
+	}
+	return out
+}
+
+// with is e and more in item order.
+func (e AcrossItemErrors) with(more AcrossItemErrors) AcrossItemErrors {
+	out := append(slices.Clone(e), more...)
+	slices.SortStableFunc(out, func(a, b AcrossItemError) int { return a.Item - b.Item })
+	return out
+}
+
+// ErrAcrossOverlap refuses two items of one call whose controls share a
+// scope and overlap in time: neither would supersede the other.
+var ErrAcrossOverlap = errors.New("dercontrol: two controls of one call overlap in a scope they share")
+
+// IssueAcrossAll validates every item, then, holding every target's scope
+// lock, resolves each item's interval, runs check, plans every copy of every
+// item, and writes each item in order: its record, then one copy of its control to each target (the
+// lifecycle record, the control and its supersede marks). The items get
+// consecutive creationTimes, the first one more than the largest in any
+// target scope, so each copy is the newest event in its scope when written.
+//
+// On a nil error every write took effect, and the results follow items.
+// AcrossItemErrors names every item that could not be planned; it, and an
+// error from check, wrote nothing. On any other plain error
+// every write was undone. A *UndoError names a copy, or a record, that could
+// not be removed; what was written before it is kept with it, so the
+// remainder is a prefix of a successful call. A target with no check, fleet
+// key or reach is ErrUncheckedCommitment, and an item naming a grant is
+// ErrAcrossGrant.
+func (i *Issuer) IssueAcrossAll(ctx context.Context, items []Across, check AcrossCheck) ([]AcrossResult, error) {
+	if len(items) == 0 {
+		return nil, errors.New("dercontrol: no control to issue")
 	}
 	now := sep2time.Now().Unix()
-	req.DERProgramHref = UnscopedProgramHref
-	base, err := i.validate(req, now)
-	if err != nil {
-		return AcrossResult{}, err
-	}
+	prepared, refused := i.prepareAcross(items, now)
 
-	for _, k := range targetKeys(targets) {
+	var keys []string
+	for _, p := range prepared {
+		keys = append(keys, targetKeys(p.targets)...)
+	}
+	slices.Sort(keys)
+	for _, k := range slices.Compact(keys) {
 		defer i.lockScope(k)()
 	}
 
-	existing := make([][]sep2.DERControl, len(targets))
-	for n, t := range targets {
-		if err := i.checkProgram(ctx, t.Scope); err != nil {
-			return AcrossResult{}, err
+	existing := map[string][]sep2.DERControl{}
+	for _, p := range prepared {
+		for _, t := range p.targets {
+			key := t.Scope.Key()
+			if _, read := existing[key]; read {
+				continue
+			}
+			if err := i.checkProgram(ctx, t.Scope); err != nil {
+				return nil, refused.with(AcrossItemErrors{{Item: p.item, Err: err}})
+			}
+			list, err := i.controls.List(ctx, key, store.ListOptions{Unbounded: true})
+			if err != nil {
+				return nil, fmt.Errorf("dercontrol: list scope: %w", err)
+			}
+			existing[key] = list.Items
 		}
-		list, err := i.controls.List(ctx, t.Scope.Key(), store.ListOptions{Unbounded: true})
-		if err != nil {
-			return AcrossResult{}, fmt.Errorf("dercontrol: list scope: %w", err)
+	}
+	first := nextCreationTime(now, slices.Collect(maps.Values(existing))...)
+
+	planned, resolveRefused := i.resolveAcross(prepared, first, now)
+	if refused = refused.with(resolveRefused); len(refused) > 0 {
+		// The rest are still planned, so the error names every refused item.
+		return nil, refused.with(i.planAcross(ctx, planned, prepared, existing))
+	}
+	if check != nil {
+		controls := make([]sep2.DERControl, len(planned))
+		for n, p := range planned {
+			controls[n] = p.ctrl
 		}
-		existing[n] = list.Items
-	}
-	creationTime := nextCreationTime(now, existing...)
-
-	start := creationTime
-	if req.Start != nil {
-		start = *req.Start
-	}
-	mrid, err := newMRID(*i.cfg.PEN)
-	if err != nil {
-		return AcrossResult{}, fmt.Errorf("dercontrol: generate mRID: %w", err)
-	}
-	id := sortableID(start, creationTime, mrid)
-	recordCtrl := newControl(base, mrid, req.Description, creationTime, start, req.DurationSeconds)
-
-	plans := make([]copyPlan, len(targets))
-	for n, t := range targets {
-		plans[n], err = i.planCopy(ctx, t, copyOf(recordCtrl, t.Scope, id), existing[n], "")
-		if err != nil {
-			return AcrossResult{}, err
+		if err := check(controls); err != nil {
+			return nil, err
 		}
-		plans[n].link.Origin = origin
 	}
-
+	if refused := i.planAcross(ctx, planned, prepared, existing); len(refused) > 0 {
+		return nil, refused
+	}
 	if err := ctx.Err(); err != nil {
-		return AcrossResult{}, err
+		return nil, err
 	}
-	undoRecord, err := record(ctx, id, recordCtrl)
-	if err != nil {
-		return AcrossResult{}, fmt.Errorf("dercontrol: store record: %w", err)
-	}
+	return i.writeAcross(ctx, planned)
+}
 
-	res := AcrossResult{ID: id, Control: recordCtrl}
-	written, err := i.writeCopies(ctx, plans, id)
+// preparedAcross is one item after the checks that read no store.
+type preparedAcross struct {
+	item    int
+	req     CreateRequest
+	origin  string
+	targets []Target
+	base    *sep2.DERControlBase
+	record  RecordWriter
+	offset  int64
+}
+
+// prepareAcross runs every check that reads no store, on every item.
+func (i *Issuer) prepareAcross(items []Across, now int64) ([]preparedAcross, AcrossItemErrors) {
+	var refused AcrossItemErrors
+	out := make([]preparedAcross, 0, len(items))
+	for n, it := range items {
+		p, err := i.prepareItem(it, now)
+		if err != nil {
+			refused = append(refused, AcrossItemError{Item: n, Err: err})
+			continue
+		}
+		p.item = n
+		out = append(out, p)
+	}
+	return out, refused
+}
+
+func (i *Issuer) prepareItem(it Across, now int64) (preparedAcross, error) {
+	if it.Req.ExecutesGrant != "" {
+		return preparedAcross{}, ErrAcrossGrant
+	}
+	origin, err := StoredOrigin(it.Req.Origin)
 	if err != nil {
-		return AcrossResult{}, i.undoAcross(ctx, written, err, &recordUndo{id: id, mrid: mrid, undo: undoRecord})
+		return preparedAcross{}, err
 	}
-	for _, w := range written {
-		res.Copies = append(res.Copies, Result{Scope: w.plan.target.Scope, ID: id, Href: w.plan.ctrl.Href, Control: w.plan.ctrl, Supersedes: w.marked})
+	targets, err := sortTargets(it.Targets)
+	if err != nil {
+		return preparedAcross{}, err
 	}
-	return res, nil
+	if it.StartOffset < 0 || (it.StartOffset > 0 && it.Req.Start != nil) {
+		return preparedAcross{}, errors.New("dercontrol: a start offset must be non-negative and needs no start")
+	}
+	req := it.Req
+	req.DERProgramHref = UnscopedProgramHref
+	base, err := i.validate(req, now)
+	if err != nil {
+		return preparedAcross{}, err
+	}
+	return preparedAcross{req: req, origin: origin, targets: targets, base: base, record: it.Record, offset: it.StartOffset}, nil
+}
+
+// plannedAcross is one item's control and copies, decided before any write.
+type plannedAcross struct {
+	item   int
+	id     string
+	ctrl   sep2.DERControl
+	record RecordWriter
+	copies []copyPlan
+}
+
+// resolveAcross gives each item its creationTime, start, mRID and id.
+func (i *Issuer) resolveAcross(prepared []preparedAcross, first, now int64) ([]plannedAcross, AcrossItemErrors) {
+	var refused AcrossItemErrors
+	out := make([]plannedAcross, 0, len(prepared))
+	for n, p := range prepared {
+		creationTime := first + int64(n)
+		start := first + p.offset
+		if p.req.Start != nil {
+			start = *p.req.Start
+		}
+		if start > now+int64(i.cfg.StartLead/time.Second) {
+			refused = append(refused, AcrossItemError{Item: p.item, Err: refuse(RefusalStartTooFarAhead)})
+			continue
+		}
+		mrid, err := newMRID(*i.cfg.PEN)
+		if err != nil {
+			refused = append(refused, AcrossItemError{Item: p.item, Err: fmt.Errorf("dercontrol: generate mRID: %w", err)})
+			continue
+		}
+		ctrl := newControl(p.base, mrid, p.req.Description, creationTime, start, p.req.DurationSeconds)
+		out = append(out, plannedAcross{item: p.item, id: sortableID(start, creationTime, mrid), ctrl: ctrl, record: p.record})
+	}
+	return out, refused
+}
+
+// planAcross plans each item's copies against its scopes as read, and
+// names every item that could not be planned.
+func (i *Issuer) planAcross(ctx context.Context, planned []plannedAcross, prepared []preparedAcross, existing map[string][]sep2.DERControl) AcrossItemErrors {
+	var refused AcrossItemErrors
+	byItem := make(map[int]preparedAcross, len(prepared))
+	for _, p := range prepared {
+		byItem[p.item] = p
+	}
+	inCall := map[string][]sep2.DERControl{}
+	for n := range planned {
+		if err := i.planItemCopies(ctx, &planned[n], byItem[planned[n].item], existing, inCall); err != nil {
+			refused = append(refused, AcrossItemError{Item: planned[n].item, Err: err})
+		}
+	}
+	return refused
+}
+
+// planItemCopies plans one item's copy in each of its scopes, refusing one
+// that overlaps an earlier item of the call in a scope both reach.
+func (i *Issuer) planItemCopies(ctx context.Context, plan *plannedAcross, p preparedAcross, existing, inCall map[string][]sep2.DERControl) error {
+	start, end := plan.ctrl.Interval.Start, IntervalEnd(plan.ctrl.Interval)
+	for _, t := range p.targets {
+		key := t.Scope.Key()
+		for _, c := range inCall[key] {
+			if overlaps(c.Interval.Start, IntervalEnd(c.Interval), start, end) {
+				return ErrAcrossOverlap
+			}
+		}
+		cp, err := i.planCopy(ctx, t, copyOf(plan.ctrl, t.Scope, plan.id), existing[key], "")
+		if err != nil {
+			return err
+		}
+		cp.link.Origin = p.origin
+		plan.copies = append(plan.copies, cp)
+	}
+	for _, t := range p.targets {
+		inCall[t.Scope.Key()] = append(inCall[t.Scope.Key()], plan.ctrl)
+	}
+	return nil
+}
+
+// writeAcross writes each planned item in order, undoing every item already
+// written when one fails.
+func (i *Issuer) writeAcross(ctx context.Context, planned []plannedAcross) ([]AcrossResult, error) {
+	type done struct {
+		written []writtenCopy
+		record  *recordUndo
+	}
+	var finished []done
+	undoFinished := func(cause error) error {
+		for n := len(finished) - 1; n >= 0; n-- {
+			if err := i.undoAcross(ctx, finished[n].written, cause, finished[n].record); err != cause {
+				return err
+			}
+		}
+		return cause
+	}
+	out := make([]AcrossResult, 0, len(planned))
+	for _, p := range planned {
+		undoRecord, err := p.record(ctx, p.id, p.ctrl)
+		if err != nil {
+			return nil, undoFinished(fmt.Errorf("dercontrol: store record: %w", err))
+		}
+		rec := &recordUndo{id: p.id, mrid: p.ctrl.MRID, undo: undoRecord}
+		written, err := i.writeCopies(ctx, p.copies, p.id)
+		if err != nil {
+			if err := i.undoAcross(ctx, written, err, rec); !isUndone(err) {
+				return nil, err
+			}
+			return nil, undoFinished(err)
+		}
+		finished = append(finished, done{written: written, record: rec})
+		res := AcrossResult{ID: p.id, Control: p.ctrl}
+		for _, w := range written {
+			res.Copies = append(res.Copies, Result{Scope: w.plan.target.Scope, ID: p.id, Href: w.plan.ctrl.Href, Control: w.plan.ctrl, Supersedes: w.marked})
+		}
+		out = append(out, res)
+	}
+	return out, nil
+}
+
+// isUndone reports whether an undo left nothing: any error but a *UndoError.
+func isUndone(err error) bool {
+	var undo *UndoError
+	return !errors.As(err, &undo)
 }
 
 // Replica is a control already recorded on an FSA, to be written to one more

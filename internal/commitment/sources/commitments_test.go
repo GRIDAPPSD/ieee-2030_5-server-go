@@ -3,6 +3,7 @@ package sources_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -67,5 +68,38 @@ func TestLedgerCommitmentsWalksEachStoreOnce(t *testing.T) {
 				t.Errorf("G0 = %s with executions %+v, want MRID-G0 with MRID-X1 from the standalone fleet", g0.MRID, g0.Executions)
 			}
 		})
+	}
+}
+
+// #1156: the copies of one DERMS share are one fleet total, listed once at
+// its value; the copies of an operator's FSA control are one per device.
+func TestLedgerCommitmentsCountsAFleetTotalOnce(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	second := strings.Repeat("D", 40)
+	must(t, f.devices.Create(ctx, "m2", sep2.EndDevice{LFDI: second}))
+	must(t, f.managers.Assign(ctx, aggLFDI, second))
+	derms := &dercontrol.LifecycleRecord{FleetKey: aggLFDI, Reach: 1, Origin: dercontrol.OriginDERMS}
+	admin := &dercontrol.LifecycleRecord{FleetKey: aggLFDI, Reach: 1}
+	for _, dev := range []string{managedID, "m2"} {
+		f.addControl(t, dev+"/fsa2/derp2", "S1", 20000, 600, derms)
+		f.addControl(t, dev+"/fsa3/derp3", "A1", 30000, 600, admin)
+	}
+	l := commitment.NewLedger(f.grants(), f.controlSource())
+	got, err := l.Commitments(ctx, aggLFDI, 10000)
+	must(t, err)
+	counts := map[string]int{}
+	for _, c := range got.Plain {
+		counts[c.MRID]++
+		if c.MRID == "MRID-S1" && (c.TargetW == nil || c.TargetW.Value != -500 || !c.FleetTotal) {
+			t.Errorf("share = %+v, want its own value -500 marked a fleet total", c)
+		}
+	}
+	if counts["MRID-S1"] != 1 {
+		t.Errorf("DERMS share listed %d times, want once across its 2 copies", counts["MRID-S1"])
+	}
+	if counts["MRID-A1"] != 2 {
+		t.Errorf("operator FSA control listed %d times, want once per device copy", counts["MRID-A1"])
 	}
 }

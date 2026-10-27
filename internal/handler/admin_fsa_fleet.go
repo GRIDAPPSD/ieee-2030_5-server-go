@@ -127,7 +127,11 @@ func (h *AdminFSAHandler) FleetFSA(r *http.Request, aggregatorLFDI string) (stri
 	}
 	h.programMu.Lock()
 	defer h.programMu.Unlock()
+	return h.fleetFSALocked(r, aggregatorLFDI)
+}
 
+// fleetFSALocked is FleetFSA for a caller that holds programMu.
+func (h *AdminFSAHandler) fleetFSALocked(r *http.Request, aggregatorLFDI string) (string, error) {
 	fsaID, err := h.ensureFleetFSA(r, aggregatorLFDI)
 	if err != nil {
 		return "", err

@@ -341,6 +341,9 @@ func controlOf(scope, id, fleet string, ctrl sep2.DERControl, lc dercontrol.Life
 		GrantMRID:   lc.GrantMRID,
 		Reach:       lc.Reach,
 		Cancelled:   lc.CancelledAt != nil,
+		// Only a DERMS grid request issues the derms origin, and its value
+		// is the aggregator's fleet total.
+		FleetTotal: lc.Origin == dercontrol.OriginDERMS,
 	}
 	if ctl.Reach == 0 {
 		ctl.Reach = 1

@@ -44,6 +44,7 @@
     POST /api/derms/flow-reservations/{edevId}/{frqId}/answer
     POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel
     POST /api/derms/flow-reservations/{edevId}/{frqId}/revise
+    POST /api/derms/grid-requests
     POST /api/devices
     POST /api/devices/{id}/controls
     POST /api/devices/{id}/fsa-assignment

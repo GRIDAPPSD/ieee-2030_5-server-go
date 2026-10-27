@@ -224,7 +224,8 @@ type CommittedGrant struct {
 
 // Commitments reads fleetKey's commitments under its fleet lock, so no
 // write lands between the grant and control reads, and keeps those whose
-// window covers an instant after now. Only the end decides: a commitment
+// window covers an instant after now. The copies of one fleet total are one
+// plain commitment, listed once. Only the end decides: a commitment
 // that has not started yet is still one. The lock entry outlives the call,
 // so the caller passes only a key it resolved to a fleet (Fleets.Known).
 func (l *Ledger) Commitments(ctx context.Context, fleetKey string, now int64) (Commitments, error) {
@@ -264,10 +265,18 @@ func (l *Ledger) Commitments(ctx context.Context, fleetKey string, now int64) (C
 			}
 			out.Grants = append(out.Grants, cg)
 		}
+		counted := map[string]bool{}
 		for _, c := range plain {
-			if coversAfter(c.Window, now) {
-				out.Plain = append(out.Plain, c)
+			if !coversAfter(c.Window, now) {
+				continue
 			}
+			if c.FleetTotal {
+				if counted[c.MRID] {
+					continue
+				}
+				counted[c.MRID] = true
+			}
+			out.Plain = append(out.Plain, c)
 		}
 		return nil
 	})

@@ -170,8 +170,9 @@ func TestGridRequest_SplitsByNameplateAndIssuesOnFleetFSAs(t *testing.T) {
 	if a.TargetW == nil || a.TargetW.Value != 30 || a.TargetW.Multiplier != 3 || b.TargetW == nil || b.TargetW.Value != 10 || b.TargetW.Multiplier != 3 {
 		t.Fatalf("targets A %+v B %+v, want 30 x 10^3 and 10 x 10^3", a.TargetW, b.TargetW)
 	}
-	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "1 devices used the 5 kW test default") {
-		t.Errorf("warnings = %q, want the test default named once", got.Warnings)
+	// 40 kW against 20 kW of nameplate also warns; the over-nameplate test pins that.
+	if len(got.Warnings) != 2 || !strings.Contains(got.Warnings[0], "1 devices used the 5 kW test default") {
+		t.Errorf("warnings = %q, want the test default named once, then the nameplate total", got.Warnings)
 	}
 
 	wantDevices := map[string]struct {

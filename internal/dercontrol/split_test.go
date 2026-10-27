@@ -132,3 +132,21 @@ func TestSplitTarget_Refusals(t *testing.T) {
 		}
 	}
 }
+
+// A share of exactly 32767 units fits int16 at the operator's multiplier;
+// one more unit takes the next multiplier.
+func TestSplitTarget_Int16Boundary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		x    int64
+		want sep2.ActivePower
+	}{
+		{32767, sep2.ActivePower{Value: 32767, Multiplier: 0}},
+		{32768, sep2.ActivePower{Value: 3277, Multiplier: 1}},
+	} {
+		got, err := dercontrol.SplitTarget(tc.x, 0, 1, weightsW(1))
+		if err != nil || got[0].TargetW == nil || *got[0].TargetW != tc.want {
+			t.Errorf("x %d: %+v, %v; want %+v", tc.x, got, err, tc.want)
+		}
+	}
+}

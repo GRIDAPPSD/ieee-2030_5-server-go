@@ -2,8 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +14,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
@@ -55,6 +54,7 @@ const (
 	maxGridValue         = 999_999_999
 	startGraceSeconds    = 60
 	defaultNameplateW    = 5000
+	batchIDBytes         = 6 // 12 hex digits, so a description naming it fits String32
 	gridRequestOp        = "grid_request"
 	gridRequestRouteHref = "/api/derms/grid-requests"
 )
@@ -110,6 +110,8 @@ type GridRequestRefused struct {
 	Rows  []GridRowRefusal `json:"rows"`
 	// Aggregators lists every aggregator refused, for aggregator_unavailable.
 	Aggregators []GridAggregatorRefusal `json:"aggregators,omitempty"`
+	// Devices lists every device the batch would take past 24 live events.
+	Devices []GridDeviceEvents `json:"devices,omitempty"`
 }
 
 // GridShareView is one aggregator's share of a row. TargetW is nil, and
@@ -227,7 +229,7 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 		fh.programMu.Lock()
 		defer fh.programMu.Unlock()
 		ctx := r.Context()
-		fleets, unavailable, err := h.readFleets(ctx)
+		fleets, unavailable, skipped, err := h.readFleets(ctx)
 		if err != nil {
 			fh.templateFailed(w, r, "grid_fleets", err)
 			return
@@ -236,11 +238,7 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 			h.refuseBatch(w, r, http.StatusConflict, "no_aggregators", "no aggregator with a managed device is available", nil)
 			return
 		}
-		batch, err := newBatchID()
-		if err != nil {
-			fh.templateFailed(w, r, "grid_batch_id", err)
-			return
-		}
+		batch := newHexID(batchIDBytes)
 		shares, refused := splitRows(rows, fleets)
 		if len(refused) > 0 {
 			h.refuseBatch(w, r, http.StatusUnprocessableEntity, "rows_invalid", "one or more rows are invalid", refused)
@@ -253,7 +251,7 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 
 		// Every check runs before the fleet FSAs are reconciled, so a refused
 		// batch assigns and unassigns nothing.
-		check := h.overlapCheck(ctx, shares)
+		check := h.overlapCheck(ctx, fleets, shares)
 		if err := h.Controls.planAcrossAll(ctx, h.gridIssues(batch, rows, fleets, shares, true), check); err != nil {
 			h.issueFailed(w, r, batch, err, fleets, shares, &logged)
 			return
@@ -273,18 +271,18 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 
-		for _, a := range res {
-			for _, c := range a.Copies {
-				ch.notify(ctx, c.Scope)
+		h.Controls.notifyCopies(ctx, res...)
+		recs := make([]memory.FSAControl, len(res))
+		for n, s := range issuedShares(shares) {
+			f := fleets[s.fleet]
+			var ok bool
+			if recs[n], ok = h.Controls.readRecord(w, r, f.fsaID, f.tmplID, res[n].ID); !ok {
+				return
 			}
 		}
-		out, err := h.created(ctx, batch, rows, fleets, shares, res)
-		if err != nil {
-			fh.templateFailed(w, r, "record_read", err)
-			return
-		}
-		ch.log(r, slog.LevelInfo, "admin: DERMS grid request created", "der_grid_request_created", []any{
-			"batch", batch, "rows", len(rows), "controls", len(res), "aggregators", len(fleets)})
+		out := h.created(ctx, batch, rows, fleets, shares, recs)
+		out.Warnings = append(out.Warnings, skipped...)
+		h.logCreated(r, out)
 		writeJSON(w, http.StatusCreated, out)
 	}
 }
@@ -295,7 +293,8 @@ func (h *AdminGridRequestHandler) validateRows(body []gridRowBody, now int64) ([
 	rows := make([]gridRow, len(body))
 	var refused []GridRowRefusal
 	for n, b := range body {
-		row, code := h.validateRow(b, n, rows, now)
+		prevInvalid := len(refused) > 0 && refused[len(refused)-1].Row == n
+		row, code := h.validateRow(b, n, rows, prevInvalid, now)
 		if code != "" {
 			refused = append(refused, GridRowRefusal{Row: n + 1, Code: code})
 		}
@@ -304,7 +303,9 @@ func (h *AdminGridRequestHandler) validateRows(body []gridRowBody, now int64) ([
 	return rows, refused
 }
 
-func (h *AdminGridRequestHandler) validateRow(b gridRowBody, n int, rows []gridRow, now int64) (gridRow, string) {
+// validateRow checks row n. prevInvalid says row n-1 was refused, so a row
+// chained to it has no start to resolve from.
+func (h *AdminGridRequestHandler) validateRow(b gridRowBody, n int, rows []gridRow, prevInvalid bool, now int64) (gridRow, string) {
 	var row gridRow
 	switch {
 	case b.Direction == nil:
@@ -337,6 +338,8 @@ func (h *AdminGridRequestHandler) validateRow(b gridRowBody, n int, rows []gridR
 		return row, "start_and_follows_previous"
 	case follows && n == 0:
 		return row, "follows_previous_first_row"
+	case follows && prevInvalid:
+		return row, "follows_invalid"
 	case follows:
 		prev := rows[n-1]
 		row.relative, row.start, row.offset = prev.relative, prev.start+int64(prev.duration), prev.offset+int64(prev.duration)
@@ -390,38 +393,42 @@ func shareRequest(row gridRow, target sep2.ActivePower, description string) derc
 // readFleets returns every aggregator with an EndDevice record that manages
 // at least one device with one, sorted by LFDI, with each one's weight, and
 // the devices of those fleets that cannot be assigned or hold no copy. It
-// writes nothing. The caller holds programMu.
-func (h *AdminGridRequestHandler) readFleets(ctx context.Context) ([]gridFleet, []GridAggregatorRefusal, error) {
+// writes nothing. skipped says why each other aggregator takes no share.
+// The caller holds programMu.
+func (h *AdminGridRequestHandler) readFleets(ctx context.Context) ([]gridFleet, []GridAggregatorRefusal, []string, error) {
 	fh := h.Controls.FSAs
 	aggregators := slices.Clone(h.Aggregators.Managers(ctx))
 	slices.Sort(aggregators)
 	var out []gridFleet
 	var unavailable []GridAggregatorRefusal
+	var skipped []string
 	for _, lfdi := range aggregators {
 		own, err := fh.fleetDeviceID(ctx, lfdi)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if own == "" {
+			skipped = append(skipped, "aggregator "+lfdi+" skipped: it has no EndDevice record")
 			continue
 		}
 		want, err := fh.fleetWant(ctx, lfdi)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if len(want) == 0 {
+			skipped = append(skipped, "aggregator "+lfdi+" skipped: it manages no device with an EndDevice record")
 			continue
 		}
 		f := gridFleet{lfdi: lfdi, devices: want, weight: new(big.Rat)}
 		refused, err := h.readAssigned(ctx, &f)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		unavailable = append(unavailable, refused...)
 		for _, dev := range want {
 			w, over, err := h.nameplateW(ctx, dev)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			switch {
 			case over:
@@ -435,7 +442,7 @@ func (h *AdminGridRequestHandler) readFleets(ctx context.Context) ([]gridFleet, 
 		}
 		out = append(out, f)
 	}
-	return out, unavailable, nil
+	return out, unavailable, skipped, nil
 }
 
 // readAssigned fills f's fleet FSA, program and assigned devices when the FSA
@@ -641,59 +648,158 @@ func totalWeightW(fleets []gridFleet) float64 {
 	return v
 }
 
+// issued reports whether s is written as a control: a share that encodes
+// to zero is listed and not issued.
+func (s gridShare) issued() bool { return s.split.TargetW != nil }
+
 // issuedShares is the issued shares of shares, in the order gridIssues
 // built their controls.
 func issuedShares(shares []gridShare) []gridShare {
 	var out []gridShare
 	for _, s := range shares {
-		if s.split.TargetW != nil {
+		if s.issued() {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
-// gridRowsConflict is an overlap the check found: every refused row.
-type gridRowsConflict struct{ rows []GridRowRefusal }
+// gridRowsConflict is what the check refused: every row, and every device a
+// batch would take past maxLiveEvents.
+type gridRowsConflict struct {
+	rows    []GridRowRefusal
+	devices []GridDeviceEvents
+}
 
 func (e *gridRowsConflict) Error() string { return "grid request rows overlap" }
 
+// maxLiveEvents is how many scheduled events a device must be able to hold:
+// CSIP v2 has an aggregator store at least 24 per DER, so a batch never takes
+// a device past 24 live controls of any origin.
+const maxLiveEvents = 24
+
+// GridDeviceEvents is a device a batch would take past maxLiveEvents.
+type GridDeviceEvents struct {
+	Device         string `json:"device"`
+	AggregatorLFDI string `json:"aggregatorLFDI"`
+	Live           int    `json:"live"`
+	Added          int    `json:"added"`
+}
+
 // overlapCheck refuses, under the issue's locks, every row whose window
-// overlaps an earlier row of the batch or a live block of an earlier batch.
-// Windows are half open, so back to back passes.
-func (h *AdminGridRequestHandler) overlapCheck(ctx context.Context, shares []gridShare) dercontrol.AcrossCheck {
+// overlaps an earlier row of the batch or a live block of an earlier batch,
+// and every row whose shares would take a device past maxLiveEvents.
+// Windows are half open, so back to back passes. An item the issuer refused
+// before resolving it has no interval and is skipped.
+func (h *AdminGridRequestHandler) overlapCheck(ctx context.Context, fleets []gridFleet, shares []gridShare) dercontrol.AcrossCheck {
 	issued := issuedShares(shares)
 	return func(controls []sep2.DERControl) error {
 		windows := map[int]commitment.Window{}
 		var order []int
 		for n, c := range controls {
 			row := issued[n].row
-			if _, seen := windows[row]; !seen {
-				windows[row] = commitment.Window{Start: c.Interval.Start, Duration: c.Interval.Duration}
-				order = append(order, row)
+			if _, seen := windows[row]; seen || c.Interval == nil {
+				continue
 			}
+			windows[row] = commitment.Window{Start: c.Interval.Start, Duration: c.Interval.Duration}
+			order = append(order, row)
 		}
-		live := h.liveBlocks(ctx, sep2time.Now().Unix())
-		var refused []GridRowRefusal
+		now := sep2time.Now().Unix()
+		live := h.liveBlocks(ctx, now)
+		conflict := &gridRowsConflict{}
 		for n, row := range order {
 			w := windows[row]
 			if prev, ok := firstOverlap(w, order[:n], windows); ok {
-				refused = append(refused, GridRowRefusal{Row: row + 1, Code: "overlapping_request", ConflictsWith: &GridConflict{Row: prev + 1}})
+				conflict.rows = append(conflict.rows, GridRowRefusal{Row: row + 1, Code: "overlapping_request", ConflictsWith: &GridConflict{Row: prev + 1}})
 				continue
 			}
 			for _, b := range live {
 				if b.window.Overlaps(w) {
-					refused = append(refused, GridRowRefusal{Row: row + 1, Code: "overlapping_request",
+					conflict.rows = append(conflict.rows, GridRowRefusal{Row: row + 1, Code: "overlapping_request",
 						ConflictsWith: &GridConflict{Batch: b.batch, Row: b.row, Start: b.window.Start, End: b.window.End()}})
 					break
 				}
 			}
 		}
-		if len(refused) > 0 {
-			return &gridRowsConflict{rows: refused}
+		if err := h.checkEvents(ctx, now, fleets, issued, conflict); err != nil {
+			return err
+		}
+		if len(conflict.rows) > 0 {
+			return conflict
 		}
 		return nil
 	}
+}
+
+// checkEvents adds to conflict every device the issued shares would take
+// past maxLiveEvents, and each row with a share on its fleet.
+func (h *AdminGridRequestHandler) checkEvents(ctx context.Context, now int64, fleets []gridFleet, issued []gridShare, conflict *gridRowsConflict) error {
+	for fn, f := range fleets {
+		var rows []int
+		for _, s := range issued {
+			if s.fleet == fn {
+				rows = append(rows, s.row)
+			}
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		over := false
+		for _, dev := range f.devices {
+			n, err := h.liveEvents(ctx, dev, now)
+			if err != nil {
+				return err
+			}
+			if n+len(rows) > maxLiveEvents {
+				conflict.devices = append(conflict.devices, GridDeviceEvents{Device: dev, AggregatorLFDI: f.lfdi, Live: n, Added: len(rows)})
+				over = true
+			}
+		}
+		if !over {
+			continue
+		}
+		for _, row := range rows {
+			conflict.rows = appendRowRefusal(conflict.rows, GridRowRefusal{Row: row + 1, Code: "too_many_events", AggregatorLFDI: f.lfdi})
+		}
+	}
+	slices.SortStableFunc(conflict.rows, func(a, b GridRowRefusal) int { return a.Row - b.Row })
+	return nil
+}
+
+// liveEvents counts the controls stored under device dev, in any program and
+// of any origin, that are neither ended nor cancelled at now.
+func (h *AdminGridRequestHandler) liveEvents(ctx context.Context, dev string, now int64) (int, error) {
+	ch := h.Controls.Controls
+	parents, err := ch.Controls.Parents(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("control scopes: %w", err)
+	}
+	n := 0
+	for _, scope := range parents {
+		if !strings.HasPrefix(scope, dev+"/") {
+			continue
+		}
+		list, err := ch.Controls.List(ctx, scope, store.ListOptions{Unbounded: true})
+		if err != nil {
+			return 0, fmt.Errorf("controls of %s: %w", scope, err)
+		}
+		for _, c := range list.Items {
+			if c.Interval == nil || dercontrol.IntervalEnded(c.Interval, now) {
+				continue
+			}
+			if id, ok := derhref.ControlID(c.Href); ok {
+				lc, err := ch.Lifecycles.Get(ctx, scope, id)
+				switch {
+				case err == nil && lc.CancelledAt != nil:
+					continue
+				case err != nil && !errors.Is(err, store.ErrNotFound):
+					return 0, fmt.Errorf("lifecycle of %s/%s: %w", scope, id, err)
+				}
+			}
+			n++
+		}
+	}
+	return n, nil
 }
 
 func firstOverlap(w commitment.Window, earlier []int, windows map[int]commitment.Window) (int, bool) {
@@ -764,10 +870,15 @@ func (h *AdminGridRequestHandler) issueFailed(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var refused []GridRowRefusal
+	var devices []GridDeviceEvents
+	status, code := http.StatusConflict, "rows_conflict"
 	if hasOverlap {
 		refused = append(refused, overlap.rows...)
+		devices = overlap.devices
+		if len(devices) > 0 && !slices.ContainsFunc(refused, func(r GridRowRefusal) bool { return r.Code != "too_many_events" }) {
+			code = "too_many_events"
+		}
 	}
-	status, code := http.StatusConflict, "rows_conflict"
 	for _, it := range items {
 		row := issued[it.Item].row + 1
 		var conflict *commitment.ConflictError
@@ -793,7 +904,7 @@ func (h *AdminGridRequestHandler) issueFailed(w http.ResponseWriter, r *http.Req
 		code = "rows_refused"
 	}
 	slices.SortStableFunc(refused, func(a, b GridRowRefusal) int { return a.Row - b.Row })
-	h.refuseBatch(w, r, status, code, "one or more rows were refused", refused)
+	h.writeRefusal(w, r, status, GridRequestRefused{Error: "one or more rows were refused", Code: code, Rows: refused, Devices: devices})
 }
 
 // appendRowRefusal adds ref unless its row is already named: every share of
@@ -888,24 +999,11 @@ func (h *AdminGridRequestHandler) writeRefusal(w http.ResponseWriter, r *http.Re
 }
 
 // created is the 201 body: every row with every share, issued or not.
-func (h *AdminGridRequestHandler) created(ctx context.Context, batch string, rows []gridRow, fleets []gridFleet, shares []gridShare, res []dercontrol.AcrossResult) (GridRequestCreated, error) {
-	fh := h.Controls.FSAs
-	ch := h.Controls.Controls
+// recs are the records of the issued shares, in issued order.
+func (h *AdminGridRequestHandler) created(ctx context.Context, batch string, rows []gridRow, fleets []gridFleet, shares []gridShare, recs []memory.FSAControl) GridRequestCreated {
 	now := sep2time.Now().Unix()
-	out := GridRequestCreated{Batch: batch, Warnings: []string{}, NotificationAttempted: ch.Notifier != nil,
-		Persisted: ch.Persisted && fh.AdminFSAs.Persists()}
-	var defaulted, overCap []string
-	for _, f := range fleets {
-		defaulted = append(defaulted, f.defaulted...)
-		overCap = append(overCap, f.overCap...)
-	}
-	if len(defaulted) > 0 {
-		out.Warnings = append(out.Warnings, fmt.Sprintf("%d devices used the 5 kW test default (no nameplate reported)", len(defaulted)))
-	}
-	if len(overCap) > 0 {
-		out.Warnings = append(out.Warnings, fmt.Sprintf("%d devices used the 5 kW test default (nameplate ignored, over cap of %d W): %s",
-			len(overCap), h.MaxDeviceW, strings.Join(overCap, ", ")))
-	}
+	notified, persisted := h.Controls.createdFlags()
+	out := GridRequestCreated{Batch: batch, Warnings: h.warnings(rows, fleets), NotificationAttempted: notified, Persisted: persisted}
 	views := make([]GridRowView, len(rows))
 	for n, row := range rows {
 		requested := scaledFloat(int64(row.sign)*row.x, row.y)
@@ -919,13 +1017,10 @@ func (h *AdminGridRequestHandler) created(ctx context.Context, batch string, row
 		sv := GridShareView{AggregatorLFDI: f.lfdi, FSA: f.fsaID, Program: f.tmplID, Devices: len(f.devices),
 			WeightW: weight, DefaultedDevices: append([]string{}, f.defaulted...), OverCapDevices: append([]string{}, f.overCap...)}
 		v := &views[s.row]
-		if t := s.split.TargetW; t != nil {
-			a := res[next]
+		if s.issued() {
+			rec := recs[next]
 			next++
-			rec, err := fh.AdminFSAs.FSAControl(ctx, f.fsaID, f.tmplID, a.ID)
-			if err != nil {
-				return GridRequestCreated{}, err
-			}
+			t := s.split.TargetW
 			view := h.Controls.view(ctx, f.fsaID, rec, f.devices, now)
 			sv.TargetW, sv.Issued, sv.Control = &frScaled{Value: int64(t.Value), Multiplier: t.Multiplier}, true, &view
 			v.EncodedW += scaledFloat(int64(t.Value), t.Multiplier)
@@ -937,15 +1032,51 @@ func (h *AdminGridRequestHandler) created(ctx context.Context, batch string, row
 		views[n].DifferenceW = views[n].EncodedW - views[n].RequestedW
 	}
 	out.Rows = views
-	return out, nil
+	return out
 }
 
-// newBatchID mints a batch id: 12 hex digits, short enough that a control
-// description naming it fits String32.
-func newBatchID() (string, error) {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+// warnings are what a reply says about the split's basis: devices at the
+// test default, and rows asking for more than the fleets' nameplate.
+func (h *AdminGridRequestHandler) warnings(rows []gridRow, fleets []gridFleet) []string {
+	out := []string{}
+	var defaulted, overCap []string
+	total := new(big.Rat)
+	for _, f := range fleets {
+		defaulted = append(defaulted, f.defaulted...)
+		overCap = append(overCap, f.overCap...)
+		total.Add(total, f.weight)
 	}
-	return hex.EncodeToString(b), nil
+	if len(defaulted) > 0 {
+		out = append(out, fmt.Sprintf("%d devices used the 5 kW test default (no nameplate reported)", len(defaulted)))
+	}
+	if len(overCap) > 0 {
+		out = append(out, fmt.Sprintf("%d devices used the 5 kW test default (nameplate ignored, over cap of %d W): %s",
+			len(overCap), h.MaxDeviceW, strings.Join(overCap, ", ")))
+	}
+	totalW, _ := total.Float64()
+	for n, row := range rows {
+		if scaledMagnitude(row.x, row.y).Cmp(total) > 0 {
+			out = append(out, fmt.Sprintf("row %d asks for %g W, more than the %g W the fleets' nameplates total", n+1, scaledFloat(row.x, row.y), totalW))
+		}
+	}
+	return out
+}
+
+// logCreated writes the success line: the batch, and per row its requested
+// and encoded watts, with the shares' mRIDs.
+func (h *AdminGridRequestHandler) logCreated(r *http.Request, out GridRequestCreated) {
+	requested := make([]float64, len(out.Rows))
+	encoded := make([]float64, len(out.Rows))
+	var mrids []string
+	for n, row := range out.Rows {
+		requested[n], encoded[n] = row.RequestedW, row.EncodedW
+		for _, s := range row.Shares {
+			if s.Control != nil {
+				mrids = append(mrids, logsafe.Str(s.Control.MRID))
+			}
+		}
+	}
+	h.Controls.Controls.log(r, slog.LevelInfo, "admin: DERMS grid request created", "der_grid_request_created", []any{
+		"batch", logsafe.Str(out.Batch), "rows", len(out.Rows), "controls", len(mrids),
+		"requested_w", requested, "encoded_w", encoded, "mrids", mrids})
 }

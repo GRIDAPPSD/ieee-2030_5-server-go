@@ -134,3 +134,44 @@ func TestIssueAcrossAll_ResolveRefusalStillRunsTheCheck(t *testing.T) {
 		t.Errorf("check saw %+v, want item 0 unresolved and item 1 resolved", seen)
 	}
 }
+
+// Every item whose scope has no program is named, not only the first.
+func TestIssueAcrossAll_EveryMissingProgramNamed(t *testing.T) {
+	controls := memory.NewScopedStore[sep2.DERControl]()
+	issuer, _, _, targets := acrossHarness(t, controls, "d1")
+	gone := func(dev string) Target {
+		return Target{Scope: Scope{EndDeviceID: dev, FSAID: "fsa", DERProgramID: "tmpl"}, Fleet: passFleet()}
+	}
+	recs := &recordLog{ids: map[string]sep2.DERControl{}}
+	_, err := issuer.IssueAcrossAll(context.Background(), []Across{
+		{Req: maxLimReq(4000), Targets: []Target{gone("x1")}, Record: recs.write},
+		{Req: maxLimReq(4000), Targets: targets, Record: recs.write, StartOffset: 600},
+		{Req: maxLimReq(4000), Targets: []Target{gone("x2")}, Record: recs.write, StartOffset: 1200},
+	}, nil)
+	var items AcrossItemErrors
+	if !errors.As(err, &items) || len(items) != 2 || items[0].Item != 0 || items[1].Item != 2 {
+		t.Fatalf("err = %v, want items 0 and 2 named", err)
+	}
+	for _, it := range items {
+		var refusal *RefusalError
+		if !errors.As(it.Err, &refusal) || refusal.Code != RefusalProgramNotFound {
+			t.Errorf("item %d = %v, want program_not_found", it.Item, it.Err)
+		}
+	}
+}
+
+// SoleItemError unwraps a one-item refusal, and leaves any other error.
+func TestSoleItemError(t *testing.T) {
+	one := errors.New("one")
+	if got := SoleItemError(AcrossItemErrors{{Item: 0, Err: one}}); got != one {
+		t.Errorf("one item = %v, want its error", got)
+	}
+	two := AcrossItemErrors{{Item: 0, Err: one}, {Item: 1, Err: one}}
+	if got := SoleItemError(two); !errors.As(got, new(AcrossItemErrors)) {
+		t.Errorf("two items = %v, want them kept", got)
+	}
+	plain := errors.New("plain")
+	if got := SoleItemError(plain); got != plain {
+		t.Errorf("plain = %v, want it back", got)
+	}
+}

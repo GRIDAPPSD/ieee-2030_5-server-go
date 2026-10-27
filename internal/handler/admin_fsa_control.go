@@ -192,24 +192,48 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 
-		for _, c := range res.Copies {
-			ch.notify(ctx, c.Scope)
-		}
-		rec, err := fh.AdminFSAs.FSAControl(ctx, fsaID, t.ID, res.ID)
-		if err != nil {
-			fh.templateFailed(w, r, "record_read", err)
+		h.notifyCopies(ctx, res)
+		rec, ok := h.readRecord(w, r, fsaID, t.ID, res.ID)
+		if !ok {
 			return
 		}
 		var audit derControlLog
 		addBaseToLog(&audit, res.Control)
 		ch.log(r, slog.LevelInfo, "admin: FSA DER control created", "der_fsa_control_created", append(audit.attrs,
 			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", len(res.Copies)))
+		notified, persisted := h.createdFlags()
 		writeJSON(w, http.StatusCreated, FSAControlCreated{
 			FSAControlView:        h.view(ctx, fsaID, rec, devices, sep2time.Now().Unix()),
-			NotificationAttempted: ch.Notifier != nil,
-			Persisted:             ch.Persisted && fh.AdminFSAs.Persists(),
+			NotificationAttempted: notified,
+			Persisted:             persisted,
 		})
 	}
+}
+
+// notifyCopies notifies the program and control lists of every copy written
+// for res, once the last write of a create is done.
+func (h *AdminFSAControlHandler) notifyCopies(ctx context.Context, res ...dercontrol.AcrossResult) {
+	for _, a := range res {
+		for _, c := range a.Copies {
+			h.Controls.notify(ctx, c.Scope)
+		}
+	}
+}
+
+// readRecord reads the FSA control record a create just wrote, answering 500
+// when it cannot.
+func (h *AdminFSAControlHandler) readRecord(w http.ResponseWriter, r *http.Request, fsaID, tmplID, id string) (memory.FSAControl, bool) {
+	rec, err := h.FSAs.AdminFSAs.FSAControl(r.Context(), fsaID, tmplID, id)
+	if err != nil {
+		h.FSAs.templateFailed(w, r, "record_read", err)
+		return memory.FSAControl{}, false
+	}
+	return rec, true
+}
+
+// createdFlags are a create reply's notificationAttempted and persisted.
+func (h *AdminFSAControlHandler) createdFlags() (notified, persisted bool) {
+	return h.Controls.Notifier != nil, h.Controls.Persisted && h.FSAs.AdminFSAs.Persists()
 }
 
 // missingCopy returns the first of devices holding no copy of t, or "" when
@@ -264,15 +288,12 @@ type fsaIssue struct {
 	fleetTotal    bool
 }
 
-// issueAcross is issueAcrossAll for one control, returning its error as
-// IssueAcross does.
+// issueAcross is issueAcrossAll for one control, its error unwrapped by
+// dercontrol.SoleItemError.
 func (h *AdminFSAControlHandler) issueAcross(ctx context.Context, req dercontrol.CreateRequest, devices []string, fsaID, tmplID string, record dercontrol.RecordWriter) (dercontrol.AcrossResult, error) {
 	res, err := h.issueAcrossAll(ctx, []fsaIssue{{req: req, devices: devices, fsaID: fsaID, tmplID: tmplID, record: record}}, nil)
-	if items, ok := err.(dercontrol.AcrossItemErrors); ok && len(items) == 1 {
-		return dercontrol.AcrossResult{}, items[0].Err
-	}
 	if err != nil {
-		return dercontrol.AcrossResult{}, err
+		return dercontrol.AcrossResult{}, dercontrol.SoleItemError(err)
 	}
 	return res[0], nil
 }

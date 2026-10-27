@@ -11,6 +11,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -46,17 +47,25 @@ type AcrossResult struct {
 // record.
 type RecordWriter func(ctx context.Context, id string, ctrl sep2.DERControl) (undo func(context.Context) error, err error)
 
-// IssueAcross is IssueAcrossAll for one control, with no check, returning
-// that control's result or its error unwrapped.
+// IssueAcross is the single-item form of IssueAcrossAll: one control, no
+// check, its error unwrapped by SoleItemError.
 func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []Target, record RecordWriter) (AcrossResult, error) {
 	res, err := i.IssueAcrossAll(ctx, []Across{{Req: req, Targets: targets, Record: record}}, nil)
-	if items, ok := err.(AcrossItemErrors); ok && len(items) == 1 {
-		return AcrossResult{}, items[0].Err
-	}
 	if err != nil {
-		return AcrossResult{}, err
+		return AcrossResult{}, SoleItemError(err)
 	}
 	return res[0], nil
+}
+
+// SoleItemError is the error of a one-item IssueAcrossAll call made with no
+// check as a single-control caller expects it: the item's own error when
+// AcrossItemErrors names exactly one item, and err otherwise.
+func SoleItemError(err error) error {
+	var items AcrossItemErrors
+	if errors.As(err, &items) && len(items) == 1 {
+		return items[0].Err
+	}
+	return err
 }
 
 // Across is one control IssueAcrossAll writes: its request, the targets it
@@ -361,7 +370,7 @@ func (i *Issuer) planItemCopies(ctx context.Context, plan *plannedAcross, p prep
 	for _, t := range p.targets {
 		key := t.Scope.Key()
 		for _, c := range inCall[key] {
-			if overlaps(c.Interval.Start, IntervalEnd(c.Interval), start, end) {
+			if interval.Overlaps(c.Interval.Start, IntervalEnd(c.Interval), start, end) {
 				return ErrAcrossOverlap
 			}
 		}

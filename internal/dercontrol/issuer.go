@@ -331,12 +331,6 @@ func IntervalEnded(iv *sep2.DateTimeInterval, now int64) bool {
 	return now >= IntervalEnd(iv)
 }
 
-// overlaps reports whether [aStart, aEnd) and [bStart, bEnd) share a second;
-// adjacent intervals do not.
-func overlaps(aStart, aEnd, bStart, bEnd int64) bool {
-	return aStart < bEnd && bStart < aEnd
-}
-
 // replacedBy reports whether older, an event with an interval, is replaced by
 // a newer one with function set set over [start, end): only an equal function
 // set supersedes, and a partial overlap is not marked (potentiallySuperseded
@@ -345,7 +339,7 @@ func replacedBy(older sep2.DERControl, set string, start, end int64) bool {
 	if older.Interval == nil || functionSetKey(older.DERControlBase) != set {
 		return false
 	}
-	return overlaps(older.Interval.Start, IntervalEnd(older.Interval), start, end)
+	return interval.Overlaps(older.Interval.Start, IntervalEnd(older.Interval), start, end)
 }
 
 // supersedeCandidate is an existing control eligible to be marked

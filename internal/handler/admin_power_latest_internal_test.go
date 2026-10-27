@@ -161,3 +161,49 @@ func TestLatestGrid(t *testing.T) {
 		t.Fatalf("grid = %d bounds from %d to %d, want 181 from %d to %d", len(b), b[0], b[len(b)-1], powerNow-900, powerNow)
 	}
 }
+
+// The live kW and its missing list do not depend on the chart window: a
+// device last heard 2000 s ago is missing at every window, and the total is
+// null at every window.
+func TestPower_LatestWAndMissingSameAtEveryWindow(t *testing.T) {
+	p := newPowerHarness(t)
+	p.manage(powerD1, powerD2)
+	p.post(powerD1, roleFlagIsDER, 50, sep2.FlowDirectionReverse, [2]int64{powerNow - 100, 3000})
+	p.post(powerD2, roleFlagIsDER, 50, sep2.FlowDirectionReverse, [2]int64{powerNow - 2000, 2000})
+	for _, w := range []string{"900", "3600", "86400"} {
+		a := p.latest("aggregatorLFDI=" + powerAgg + "&window=" + w)
+		if a.LatestW != nil {
+			t.Fatalf("window %s: latestW = %v, want null", w, *a.LatestW)
+		}
+		if len(a.LatestMissing) != 1 || a.LatestMissing[0] != powerD2 {
+			t.Fatalf("window %s: latestMissing = %v, want [%s]", w, a.LatestMissing, powerD2)
+		}
+	}
+}
+
+// A device last heard beyond the reported span is not missing: it reported
+// in none of the spans that matter, so the total is the other device's.
+func TestPower_LatestWIgnoresDeviceSilentBeyondReportedSpan(t *testing.T) {
+	p := newPowerHarness(t)
+	p.manage(powerD1, powerD2)
+	p.post(powerD1, roleFlagIsDER, 50, sep2.FlowDirectionReverse, [2]int64{powerNow - 100, 3000})
+	p.post(powerD2, roleFlagIsDER, 50, sep2.FlowDirectionReverse, [2]int64{powerNow - 5000, 2000})
+	for _, w := range []string{"900", "86400"} {
+		a := p.latest("aggregatorLFDI=" + powerAgg + "&window=" + w)
+		if a.LatestW == nil || *a.LatestW != 3000 || len(a.LatestMissing) != 0 {
+			t.Fatalf("window %s: latestW = %v missing = %v, want 3000 and none", w, a.LatestW, a.LatestMissing)
+		}
+	}
+}
+
+// A newest bucket covered for 3 of its 5 s still reads the device's average
+// over the covered seconds, not the energy spread over the whole bucket.
+func TestPower_LatestWPartlyCoveredBucketIsAveragedOverCoveredSeconds(t *testing.T) {
+	p := newPowerHarness(t)
+	p.manage(powerD1)
+	p.post(powerD1, roleFlagIsDER, 3, sep2.FlowDirectionReverse, [2]int64{powerNow - 100, 3000})
+	a := p.latest("aggregatorLFDI=" + powerAgg + "&window=900")
+	if a.LatestW == nil || *a.LatestW != 3000 {
+		t.Fatalf("latestW = %v, want 3000", a.LatestW)
+	}
+}

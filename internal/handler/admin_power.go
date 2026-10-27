@@ -178,7 +178,8 @@ type PowerResponse struct {
 	// oldest bucket end among them. Both are null while LatestMissing is not
 	// empty, or when no device has a value: a partial sum would read as a
 	// real power change. LatestMissing lists the devices that covered a second
-	// of the chart window but have none in the last latestSpanSeconds.
+	// of the last latestReportedSeconds but have none in the last
+	// latestSpanSeconds, whatever the chart window.
 	LatestW       *float64 `json:"latestW"`
 	LatestAt      *int64   `json:"latestAt"`
 	LatestMissing []string `json:"latestMissing"`
@@ -307,10 +308,7 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	bucket := powerBucketSeconds(window)
 	we := now / bucket * bucket
 	ws := we - window
-	bounds := make([]int64, 0, window/bucket+1)
-	for x := ws; x <= we; x += bucket {
-		bounds = append(bounds, x)
-	}
+	bounds := boundsFor(ws, we, bucket)
 	resp.WindowStart, resp.WindowEnd, resp.BucketSeconds = ws, we, bucket
 	resp.ReadingsExpired = readingsExpired(ws, now, retention)
 
@@ -339,16 +337,19 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	slices.SortFunc(devices, func(a, b devicePower) int { return cmp.Compare(a.lfdi, b.lfdi) })
 
 	latestBounds := latestGrid(now)
+	reportedBounds := []int64{latestBounds[len(latestBounds)-1] - latestReportedSeconds, latestBounds[len(latestBounds)-1]}
 	latest := make([]devicePower, 0, len(devices))
+	reported := make([]devicePower, 0, len(devices))
 	for _, d := range devices {
 		latest = append(latest, devicePowerOf(d.lfdi, byDevice[d.lfdi], h.Edition, latestBounds))
+		reported = append(reported, devicePowerOf(d.lfdi, byDevice[d.lfdi], h.Edition, reportedBounds))
 	}
 
 	if err := fillPower(&resp, devices, bounds); err != nil {
 		log.Printf("admin power: encode chart: %s", logsafe.Err(err))
 		return PowerResponse{}, errPowerChart
 	}
-	latestPower(&resp, devices, latest, latestBounds)
+	latestPower(&resp, reported, latest, latestBounds)
 	return resp, nil
 }
 
@@ -356,13 +357,23 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 // longest hold, so an Average-only device still has a value between posts.
 const latestSpanSeconds = maxHoldSeconds
 
+// latestReportedSeconds is how far back a device must have covered a second
+// to count as reporting for the total, whatever the chart window: a device
+// in that span with no value in the last latestSpanSeconds is missing.
+const latestReportedSeconds = 3600
+
 // latestGrid is the 5 s grid over the latestSpanSeconds before now, ending
 // on the last closed 5 s boundary. It does not depend on the chart window,
 // so the number does not change when the operator changes the window.
 func latestGrid(now int64) []int64 {
 	end := now / 5 * 5
-	bounds := make([]int64, 0, latestSpanSeconds/5+1)
-	for x := end - latestSpanSeconds; x <= end; x += 5 {
+	return boundsFor(end-latestSpanSeconds, end, 5)
+}
+
+// boundsFor is the bucket boundaries from start to end, step seconds apart.
+func boundsFor(start, end, step int64) []int64 {
+	bounds := make([]int64, 0, (end-start)/step+1)
+	for x := start; x <= end; x += step {
 		bounds = append(bounds, x)
 	}
 	return bounds
@@ -373,7 +384,8 @@ func latestGrid(now int64) []int64 {
 // chart's (powerLegs, pickPath) and not a second one. A device's value is
 // the average W of its newest bucket with a covered second. It fills
 // resp.Devices' LatestW and LatestAt and the response's total, which needs a
-// value from every device in reported that covered a chart second.
+// value from every device in reported that covered a second of the last
+// latestReportedSeconds.
 func latestPower(resp *PowerResponse, reported, latest []devicePower, bounds []int64) {
 	type value struct {
 		w  float64

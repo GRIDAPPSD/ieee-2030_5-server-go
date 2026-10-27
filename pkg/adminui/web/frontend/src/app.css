@@ -195,6 +195,18 @@ body {
   border-bottom-color: var(--accent);
 }
 
+/* On a narrow screen the tabs wrap, so none sits unseen off the edge. */
+@media (max-width: 800px) {
+  .tab-bar {
+    flex-wrap: wrap;
+    padding: 0 var(--sp-4);
+  }
+
+  .tab-bar a {
+    padding: 10px 12px;
+  }
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -317,6 +329,126 @@ td {
 
 .full-width {
   grid-column: 1 / -1;
+}
+
+/* The Overview: the power card and the activity chart take the row, and the
+   counts and server info sit side by side. One column on a narrow screen. */
+.overview-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Cards keep their own height, so a short card leaves no empty box. */
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .overview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.power-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-6);
+  margin-bottom: var(--sp-4);
+}
+
+.power-head h2 {
+  margin-bottom: 0;
+}
+
+.power-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-3);
+  color: var(--text-muted);
+}
+
+.power-pickers select {
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-3);
+  width: auto;
+  max-width: 100%;
+}
+
+.power-now {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.power-now .big-number {
+  white-space: nowrap;
+  font-size: var(--fs-display);
+  line-height: 1;
+}
+
+.power-by-aggregator {
+  list-style: none;
+  font-size: var(--fs-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-0);
+}
+
+.power-by-aggregator li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.power-charts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.power-chart .chart-container.chart-tall {
+  height: 300px;
+}
+
+.chart-frame {
+  position: relative;
+}
+
+/* The empty message sits inside the drawn axes and never blocks the chart. */
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: var(--fs-3);
+  color: var(--text-muted);
+}
+
+.power-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-6);
+  margin-top: var(--sp-3);
+}
+
+.power-foot .hint {
+  margin-bottom: 0;
 }
 
 .hint {

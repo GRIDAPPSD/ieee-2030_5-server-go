@@ -4,7 +4,7 @@
 // unmounts the card when the viewer leaves the Overview and the answer must
 // still be here when they come back.
 import { isChartBody } from './chart'
-import type { DescriptorChartBody, DrawnChartBody } from './descriptor'
+import type { DescriptorChartBody, DrawnChartBody, DrawnChartSeries } from './descriptor'
 
 export interface PowerWindow {
   seconds: number
@@ -30,7 +30,24 @@ export interface PowerDeviceFlags {
   nonDERWatts: boolean
 }
 
+// One aggregator's energy in the shared buckets of energyChart, or the DERs
+// with no aggregator under the key "direct". Times are bucket starts in
+// seconds; a null kWh is a bucket with no reading.
+export interface AggregatorEnergy {
+  key: string
+  name: string
+  latestW: number | null
+  latestMissing: string[]
+  discharged: [number, number | null][]
+  charged: [number, number | null][]
+}
+
+export const DIRECT_KEY = 'direct'
+
 export interface PowerAnswer {
+  // Absent on a server that predates per-aggregator energy; the card then
+  // draws the single total series.
+  aggregatorEnergy: AggregatorEnergy[] | null
   aggregators: string[]
   bucketSeconds: number
   energyChart: DescriptorChartBody
@@ -63,6 +80,23 @@ function isFlags(v: unknown): v is PowerDeviceFlags {
   )
 }
 
+const isBuckets = (v: unknown): v is [number, number | null][] =>
+  Array.isArray(v) &&
+  v.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === 'number' && (p[1] === null || typeof p[1] === 'number'))
+
+function isAggregatorEnergy(v: unknown): v is AggregatorEnergy {
+  if (typeof v !== 'object' || v === null) return false
+  const e = v as Record<string, unknown>
+  return (
+    typeof e.key === 'string' &&
+    typeof e.name === 'string' &&
+    (e.latestW === null || typeof e.latestW === 'number') &&
+    isStrings(e.latestMissing) &&
+    isBuckets(e.discharged) &&
+    isBuckets(e.charged)
+  )
+}
+
 // parsePower refuses a reply whole when any field the card reads has the
 // wrong type, so a malformed reply never reaches the chart as a partial one.
 export function parsePower(value: unknown): PowerAnswer | null {
@@ -70,7 +104,9 @@ export function parsePower(value: unknown): PowerAnswer | null {
   const v = value as Record<string, unknown>
   const latestW = v.latestW ?? null
   const latestAt = v.latestAt ?? null
+  const perAggregator = v.aggregatorEnergy ?? null
   if (
+    (perAggregator !== null && !(Array.isArray(perAggregator) && perAggregator.every(isAggregatorEnergy))) ||
     !isStrings(v.aggregators) ||
     typeof v.bucketSeconds !== 'number' ||
     !isChartBody(v.energyChart) ||
@@ -84,6 +120,7 @@ export function parsePower(value: unknown): PowerAnswer | null {
     return null
   }
   return {
+    aggregatorEnergy: perAggregator as AggregatorEnergy[] | null,
     aggregators: v.aggregators,
     bucketSeconds: v.bucketSeconds,
     energyChart: v.energyChart,
@@ -166,4 +203,39 @@ export function energyBars(chart: DescriptorChartBody): DrawnChartBody {
   }
 }
 
-export const formatKwh = (kwh: number): string => `${kwh.toFixed(4)} kWh`
+// Three decimals, so a few watt-hours still read. The sign is the caller's:
+// the totals line names the direction in words, so it prints magnitudes.
+export const formatKwh = (kwh: number): string => `${kwh.toFixed(3)} kWh`
+
+// The time span every chart on the card shows: the chosen window ending when
+// the shown answer arrived. The charts read this one range so they line up.
+export const windowRange = (endMs: number, windowSeconds: number): [number, number] => [endMs - windowSeconds * 1000, endMs]
+
+// The label of each aggregator, in order: its device label, or "Direct". The
+// server sends the LFDI as the name, so the label comes from the device
+// profiles. Two aggregators that share a label get a short LFDI prefix, so a
+// legend never merges them.
+export function aggregatorLabels(entries: AggregatorEnergy[], labelOf: (lfdi: string) => string): string[] {
+  const base = entries.map((e) => (e.key === DIRECT_KEY ? 'Direct' : labelOf(e.key)))
+  return base.map((label, i) => (base.filter((l) => l === label).length > 1 ? `${label} (${entries[i].key.slice(0, 8)})` : label))
+}
+
+// One bar series per aggregator and direction, in the order the server sent
+// them. Discharge sits above zero, charge below whatever sign the wire used.
+// "Direct" takes the neutral last palette slot. Each series is keyed by the
+// aggregator, and its LFDI is the legend hover text.
+export function aggregatorBars(entries: AggregatorEnergy[], unit: string, labelOf: (lfdi: string) => string): DrawnChartBody {
+  const points = (b: [number, number | null][], sign: 1 | -1): [number, number][] =>
+    b.flatMap(([s, kwh]): [number, number][] => (kwh === null ? [] : [[s * 1000, sign * Math.abs(kwh)]]))
+  const labels = aggregatorLabels(entries, labelOf)
+  const series = entries.flatMap((e, i): DrawnChartSeries[] => {
+    const colorIndex = e.key === DIRECT_KEY ? 4 : i % 4
+    const hint = e.key === DIRECT_KEY ? undefined : e.key
+    const common = { type: 'bar' as const, colorIndex, ...(hint === undefined ? {} : { hint }) }
+    return [
+      { id: `${e.key}:discharge`, name: `${labels[i]} discharge`, points: points(e.discharged, 1), direction: 'discharge', ...common },
+      { id: `${e.key}:charge`, name: `${labels[i]} charge`, points: points(e.charged, -1), direction: 'charge', ...common },
+    ]
+  })
+  return { unit, series }
+}

@@ -26,3 +26,6 @@ var ErrAdminFSADeviceOnly = errors.New("admin FSA is bound to one device")
 // ErrInvalidDeviceOnly is returned for a device-only binding the store will
 // not hold, such as one with no device.
 var ErrInvalidDeviceOnly = errors.New("invalid device-only FSA")
+
+// ErrInvalidFleet is returned for a fleet binding the store will not record.
+var ErrInvalidFleet = errors.New("invalid fleet FSA")

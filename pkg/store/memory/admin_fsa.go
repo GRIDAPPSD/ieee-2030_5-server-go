@@ -32,6 +32,7 @@ type AdminFSAStore struct {
 	deviceLinks  map[string][]string          // fsaID -> sorted device ids
 	templates    map[string][]ProgramTemplate // fsaID -> templates sorted by ID
 	deviceOnly   map[string]string            // fsaID -> the one device it is bound to
+	fleet        map[string]string            // fsaID -> the aggregator LFDI whose fleet it is
 	controls     map[string][]FSAControl      // fsaID -> control records sorted by template id, then id
 	heldMu       sync.Mutex
 	held         map[string]bool // fsaControlHeldKey -> record held back from replication, in memory only
@@ -60,6 +61,7 @@ func NewAdminFSAStore() *AdminFSAStore {
 		deviceLinks:  make(map[string][]string),
 		templates:    make(map[string][]ProgramTemplate),
 		deviceOnly:   make(map[string]string),
+		fleet:        make(map[string]string),
 		controls:     make(map[string][]FSAControl),
 		held:         make(map[string]bool),
 	}
@@ -92,7 +94,7 @@ func (s *AdminFSAStore) persistOrRollback(undo func()) error {
 
 // Create persists an admin FSA. Returns ErrAlreadyExists if id is taken.
 func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSetAssignments) error {
-	return s.create(id, fsa, "")
+	return s.create(id, fsa, "", "")
 }
 
 // CreateDeviceOnly persists an admin FSA bound to deviceID alone: no other
@@ -103,12 +105,24 @@ func (s *AdminFSAStore) CreateDeviceOnly(_ context.Context, id string, fsa sep2.
 	if deviceID == "" {
 		return fmt.Errorf("%w: a device-only FSA needs its device", ErrInvalidDeviceOnly)
 	}
-	return s.create(id, fsa, deviceID)
+	return s.create(id, fsa, deviceID, "")
 }
 
-// create inserts an FSA, bound to boundDevice when that is not empty, and
-// persists it, undoing the insert when the write fails.
-func (s *AdminFSAStore) create(id string, fsa sep2.FunctionSetAssignments, boundDevice string) error {
+// CreateFleet persists an admin FSA that the server manages as aggregatorLFDI's
+// fleet; the binding is part of the FSA's snapshot record. ErrAlreadyExists if
+// id is taken, or if the aggregator already has a fleet FSA, so an aggregator
+// has at most one. ErrInvalidFleet for an empty aggregator.
+func (s *AdminFSAStore) CreateFleet(_ context.Context, id string, fsa sep2.FunctionSetAssignments, aggregatorLFDI string) error {
+	if aggregatorLFDI == "" {
+		return fmt.Errorf("%w: a fleet FSA needs its aggregator", ErrInvalidFleet)
+	}
+	return s.create(id, fsa, "", aggregatorLFDI)
+}
+
+// create inserts an FSA, bound to boundDevice or owned as aggregator
+// fleetOf's fleet when those are not empty, and persists it, undoing the
+// insert when the write fails.
+func (s *AdminFSAStore) create(id string, fsa sep2.FunctionSetAssignments, boundDevice, fleetOf string) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 	s.mu.Lock()
@@ -124,9 +138,20 @@ func (s *AdminFSAStore) create(id string, fsa sep2.FunctionSetAssignments, bound
 			}
 		}
 	}
+	if fleetOf != "" {
+		for _, owner := range s.fleet {
+			if owner == fleetOf {
+				s.mu.Unlock()
+				return store.ErrAlreadyExists
+			}
+		}
+	}
 	s.fsas[id] = fsa.Copy()
 	if boundDevice != "" {
 		s.deviceOnly[id] = boundDevice
+	}
+	if fleetOf != "" {
+		s.fleet[id] = fleetOf
 	}
 	idx, _ := slices.BinarySearch(s.keys, id)
 	s.keys = slices.Insert(s.keys, idx, id)
@@ -136,10 +161,32 @@ func (s *AdminFSAStore) create(id string, fsa sep2.FunctionSetAssignments, bound
 	return s.persistOrRollback(func() {
 		delete(s.fsas, id)
 		delete(s.deviceOnly, id)
+		delete(s.fleet, id)
 		if idx, found := slices.BinarySearch(s.keys, id); found {
 			s.keys = slices.Delete(s.keys, idx, idx+1)
 		}
 	})
+}
+
+// FleetAggregator returns the aggregator whose fleet fsaID is, or "" when the
+// server does not manage the FSA as a fleet. It is the one answer to "is this
+// FSA server-managed".
+func (s *AdminFSAStore) FleetAggregator(fsaID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fleet[fsaID]
+}
+
+// FleetFSA returns the id of aggregatorLFDI's fleet FSA.
+func (s *AdminFSAStore) FleetFSA(aggregatorLFDI string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, owner := range s.fleet {
+		if owner == aggregatorLFDI {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // DeviceOnlyDevice returns the device fsaID is bound to, or "" when the FSA
@@ -218,6 +265,8 @@ func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 	delete(s.fsas, id)
 	bound, wasDeviceOnly := s.deviceOnly[id]
 	delete(s.deviceOnly, id)
+	owner, wasFleet := s.fleet[id]
+	delete(s.fleet, id)
 	if idx, found := slices.BinarySearch(s.keys, id); found {
 		s.keys = slices.Delete(s.keys, idx, idx+1)
 	}
@@ -226,6 +275,9 @@ func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 		s.fsas[id] = fsa
 		if wasDeviceOnly {
 			s.deviceOnly[id] = bound
+		}
+		if wasFleet {
+			s.fleet[id] = owner
 		}
 		if idx, found := slices.BinarySearch(s.keys, id); !found {
 			s.keys = slices.Insert(s.keys, idx, id)

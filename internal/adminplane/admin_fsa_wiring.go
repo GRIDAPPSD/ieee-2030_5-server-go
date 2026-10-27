@@ -61,7 +61,7 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 	if stores == nil || stores.AdminFSAs == nil {
 		return nil
 	}
-	return &handler.AdminFSAHandler{
+	h := &handler.AdminFSAHandler{
 		AdminFSAs:   stores.AdminFSAs,
 		DeviceFSAs:  stores.FSAs,
 		EndDevices:  stores.EndDevices,
@@ -72,6 +72,11 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		Retirer:     programRetirer(stores),
 		Curves:      curveReader(stores),
 	}
+	if !store.IsAbsent(stores.EndDeviceManagers) && stores.EndDevices != nil {
+		h.Managers = stores.EndDeviceManagers
+		h.FleetDevices = stores.EndDevices
+	}
+	return h
 }
 
 // programRetirer is the process's DER control issuer, so a program delete

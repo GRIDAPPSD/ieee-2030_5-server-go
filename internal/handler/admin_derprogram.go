@@ -485,19 +485,28 @@ func (h *AdminFSAHandler) copyRefused(w http.ResponseWriter, r *http.Request, er
 	h.templateFailed(w, r, "copy_write", err)
 }
 
+// errStoresUnwired is the cause logged when a route needs program stores the
+// server was built without.
+var errStoresUnwired = errors.New("program stores are not wired")
+
 // storesWired reports whether the program stores a route needs are wired. When
 // they are not it answers a logged 500 and the caller returns.
 func (h *AdminFSAHandler) storesWired(w http.ResponseWriter, r *http.Request, wired bool) bool {
 	if !wired {
-		h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		h.templateFailed(w, r, "no_program_stores", errStoresUnwired)
 	}
 	return wired
 }
 
 func (h *AdminFSAHandler) templateFailed(w http.ResponseWriter, r *http.Request, cause string, err error) {
+	h.logTemplateFailed(r, cause, err)
+	writeError(w, http.StatusInternalServerError, templateInternalError)
+}
+
+// logTemplateFailed writes the log line of every 500 a program write answers.
+func (h *AdminFSAHandler) logTemplateFailed(r *http.Request, cause string, err error) {
 	h.logged(r).ErrorContext(r.Context(), "admin: DER program write failed", "event", "der_program_template_failed",
 		"cause", cause, "path", r.URL.Path, "error", err)
-	writeError(w, http.StatusInternalServerError, templateInternalError)
 }
 
 // rollbackStep undoes one write of a template create, assign or unassign.

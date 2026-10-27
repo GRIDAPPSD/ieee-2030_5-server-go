@@ -158,6 +158,9 @@ export type ChartDirection = 'discharge' | 'charge'
 export interface DrawnChartSeries extends DescriptorChartSeries {
   type?: ChartSeriesType
   direction?: ChartDirection
+  // A bar series drawn in this slot of the chart palette instead of the
+  // direction colors; the direction then shows by side of zero and hatch.
+  colorIndex?: number
 }
 
 export interface DescriptorChartBody {

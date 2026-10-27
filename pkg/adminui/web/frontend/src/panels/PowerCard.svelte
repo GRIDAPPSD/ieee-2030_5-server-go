@@ -8,7 +8,9 @@
   import { deviceLabel } from '../lib/devices'
   import {
     ALL_SCOPE,
+    DIRECT_KEY,
     POWER_WINDOWS,
+    aggregatorBars,
     cachedPower,
     energyBars,
     energyTotals,
@@ -19,14 +21,17 @@
     parsePower,
     powerBucketMs,
     powerPath,
+    windowRange,
     rememberPowerChoice,
     type PowerAnswer,
   } from '../lib/power'
   import { startPoll } from '../lib/poll'
   import DescriptorChart from './DescriptorChart.svelte'
 
+  // Every aggregator and the DERs without one are drawn together, so the
+  // card always asks for the whole fleet.
+  const scope = ALL_SCOPE
   const start = lastPowerChoice()
-  let scope = $state(start.scope)
   let windowSeconds = $state(start.window)
 
   let answer = $state<PowerAnswer | null>(null)
@@ -36,16 +41,11 @@
   // window, so a cached answer is marked until the first fresh one lands.
   let fresh = $state(false)
   let error = $state('')
-  // Kept for the scope dropdown so it does not shrink to nothing while a
-  // different scope is loading.
-  let aggregators = $state<string[]>([])
 
   function describe(status: number, message: string): string {
     switch (status) {
       case 401:
         return SIGN_IN_AGAIN
-      case 404:
-        return 'That aggregator manages no devices.'
       default:
         return `Could not load the power card: ${message}`
     }
@@ -53,12 +53,17 @@
 
   const time = (ms: number) => new Date(ms).toLocaleTimeString()
 
-  // The empty chart frame still shows the window it covers, ending when the
-  // shown answer arrived.
-  const range = $derived.by((): [number, number] => {
-    const end = answerAt ?? Date.now()
-    return [end - windowSeconds * 1000, end]
+  // The one time range and window every chart on the card shares. A second
+  // chart under the energy chart takes this same range, so the two axes match.
+  const range = $derived(windowRange(answerAt ?? Date.now(), windowSeconds))
+
+  // The per-aggregator bars when the server sends them, else the total.
+  const bars = $derived.by(() => {
+    if (answer === null) return null
+    const per = answer.aggregatorEnergy
+    return per !== null && per.length > 0 ? aggregatorBars(per, answer.energyChart.unit) : energyBars(answer.energyChart)
   })
+
 
   $effect(() => {
     const sc = scope
@@ -70,7 +75,6 @@
     answerAt = kept?.at ?? null
     fresh = false
     error = ''
-    if (kept) aggregators = kept.answer.aggregators
 
     return startPoll(async (signal) => {
       const res = await fetchJSON<unknown>(powerPath(sc, win), { signal, timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
@@ -81,7 +85,6 @@
         keepPower(sc, win, { answer: parsed, at })
         answer = parsed
         answerAt = at
-        aggregators = parsed.aggregators
         fresh = true
         error = ''
         return parsed.bucketSeconds * 1000
@@ -94,6 +97,10 @@
   })
 
   const totals = $derived(answer === null ? null : energyTotals(answer.energyChart))
+
+  // The totals line says something only once the window holds energy; before
+  // that it stays for assistive tools and the tests, out of sight.
+  const hasEnergy = $derived(totals !== null && (totals.discharged !== 0 || totals.charged !== 0))
 
   const flagged = $derived(
     (answer?.devices ?? [])
@@ -116,13 +123,6 @@
   <div class="power-head">
     <h2>Power</h2>
     <div class="power-pickers">
-      <label for="powerScope">Devices</label>
-      <select id="powerScope" bind:value={scope}>
-        <option value={ALL_SCOPE}>All devices</option>
-        {#each aggregators as lfdi (lfdi)}
-          <option value={lfdi} title={lfdi}>Aggregator {deviceLabel(lfdi)}</option>
-        {/each}
-      </select>
       <label for="powerWindow">Window</label>
       <select id="powerWindow" bind:value={windowSeconds}>
         {#each POWER_WINDOWS as w (w.seconds)}
@@ -140,6 +140,16 @@
         {:else}
           <span data-testid="power-now-none">No reading yet</span>
         {/if}
+        {#if answer.aggregatorEnergy !== null && answer.aggregatorEnergy.length > 0}
+          <ul class="power-by-aggregator" data-testid="power-by-aggregator">
+            {#each answer.aggregatorEnergy as e (e.key)}
+              <li title={e.key === DIRECT_KEY ? 'DERs with no aggregator' : e.key}>
+                <span class="stat-label">{e.name}</span>
+                {#if e.latestW !== null}{formatKw(e.latestW)}{:else if e.latestMissing.length > 0}unavailable{:else}no reading{/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
   </div>
@@ -152,12 +162,15 @@
     {#if !fresh}
       <p class="hint" data-testid="power-stale">Showing the answer from {time(answerAt)}.</p>
     {/if}
-    <div class="power-chart" title="Energy per bucket in kWh: discharge above zero, charge below.">
-      <DescriptorChart body={energyBars(answer.energyChart)} empty="No energy readings in this window yet." frame {range} />
+    <!-- Charts stack here, each given the same range. -->
+    <div class="power-charts">
+      <div class="power-chart" title="Energy per bucket in kWh: discharge above zero, charge below.">
+        <DescriptorChart body={bars ?? energyBars(answer.energyChart)} empty="No energy readings in this window yet." frame {range} />
+      </div>
     </div>
     <div class="power-foot">
       {#if totals !== null}
-        <span class="hint" data-testid="power-energy-totals">
+        <span class="hint" class:visually-hidden={!hasEnergy} data-testid="power-energy-totals">
           This window: discharged {formatKwh(totals.discharged)}, charged {formatKwh(totals.charged)}
         </span>
       {/if}

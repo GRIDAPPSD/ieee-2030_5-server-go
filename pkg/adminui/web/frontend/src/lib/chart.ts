@@ -114,6 +114,32 @@ function lineType(index: number): 'solid' | 'dashed' | 'dotted' {
   return round === 1 ? 'dashed' : round === 2 ? 'dotted' : 'solid'
 }
 
+// #rrggbb with an alpha; any other color form is returned as given.
+function withAlpha(color: string, alpha: number): string {
+  const m = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)
+  if (m === null) return color
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`
+}
+
+// A bar in one palette slot. Discharge is solid; charge is a lighter fill with
+// the diagonal hatch in the full color, so the two never rest on hue.
+function paletteBar(s: DrawnChartSeries, theme: ChartTheme): Record<string, unknown> {
+  const color = theme.palette[(s.colorIndex ?? 0) % theme.palette.length]
+  const charge = s.direction === 'charge'
+  return {
+    name: s.name,
+    type: 'bar',
+    stack: 'energy',
+    data: s.points,
+    itemStyle: {
+      color: charge ? withAlpha(color, 0.35) : color,
+      borderColor: color,
+      borderWidth: 1,
+      ...(charge ? { decal: { ...chargeDecal(theme), color } } : {}),
+    },
+  }
+}
+
 // The ECharts series for one body series. Bars on one stack share a
 // timestamp, so discharge above zero and charge below never sit side by side.
 export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0): Record<string, unknown> {
@@ -121,6 +147,7 @@ export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0):
     const type = lineType(index)
     return { name: s.name, type: 'line', showSymbol: false, data: s.points, ...(type === 'solid' ? {} : { lineStyle: { type } }) }
   }
+  if (s.colorIndex !== undefined) return paletteBar(s, theme)
   const colors = theme.direction[s.direction ?? 'discharge']
   return {
     name: s.name,

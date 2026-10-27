@@ -261,16 +261,86 @@ describe('PowerCard', () => {
     b.unmount()
   })
 
-  it('asks for one aggregator when it is chosen', async () => {
+  const perAggregator = [
+    { key: 'AGG1', name: 'North', latestW: 2000, latestMissing: [], discharged: [[1000, 0.5]], charged: [[1000, 0.1]] },
+    { key: 'AGG2', name: 'South', latestW: null, latestMissing: ['D9'], discharged: [[1000, 0.25]], charged: [[1000, null]] },
+    { key: 'direct', name: 'Direct', latestW: -500, latestMissing: [], discharged: [[1000, null]], charged: [[1000, 0.3]] },
+  ]
+
+  it('has no device picker and always asks for the whole fleet', async () => {
     const spy = vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer({ aggregators: ['AGG1'] }) })
     const { unmount } = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
-    const select = screen.getByLabelText('Devices') as HTMLSelectElement
-    select.value = 'AGG1'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(screen.queryByLabelText('Devices')).toBeNull()
+    expect(spy.mock.calls.map((c) => c[0])).toEqual(['/api/derms/power?window=900&scope=all'])
+    unmount()
+  })
+
+  it('draws one discharge and one charge bar series per aggregator, Direct last, charge below zero', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer({ aggregatorEnergy: perAggregator }) })
+    const { unmount } = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(spy.mock.calls.at(-1)![0]).toBe('/api/derms/power?window=900&aggregatorLFDI=AGG1')
+    expect(chartSeries()).toEqual([
+      ['North discharge', [0.5]],
+      ['North charge', [-0.1]],
+      ['South discharge', [0.25]],
+      ['South charge', []],
+      ['Direct discharge', []],
+      ['Direct charge', [-0.3]],
+    ])
+    expect(chartOption().series.every((s) => s.type === 'bar')).toBe(true)
+    // Bucket starts arrive in seconds and are drawn in milliseconds.
+    expect(chartOption().series[0].data[0][0]).toBe(1_000_000)
+    unmount()
+  })
+
+  it('lists power now per aggregator beside the total', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer({ aggregatorEnergy: perAggregator }) })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(screen.getByTestId('power-now')).toHaveTextContent('2.0 kW')
+    const list = screen.getByTestId('power-by-aggregator')
+    expect(list).toHaveTextContent('North 2.0 kW')
+    expect(list).toHaveTextContent('South unavailable')
+    expect(list).toHaveTextContent('Direct -0.5 kW')
+    unmount()
+  })
+
+  it('draws the single total series when the server sends no per-aggregator energy', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer() })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(chartSeries().map((s) => s[0])).toEqual(['Discharged', 'Charged'])
+    expect(screen.queryByTestId('power-by-aggregator')).toBeNull()
+    unmount()
+  })
+
+  it('fixes the time axis to the window and gives the empty frame a value axis', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({
+      ok: true,
+      data: wireAnswer({ energyChart: { unit: 'kWh', series: [] } }),
+    })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    const el = screen.getByTestId('descriptor-chart') as HTMLElement
+    const o = echarts.getInstanceByDom(el)!.getOption() as { yAxis: { min: number; max: number }[] }
+    expect([o.yAxis[0].min, o.yAxis[0].max]).toEqual([-1, 1])
+    // No energy: the totals line is kept out of sight, not shown as zeros.
+    expect(screen.getByTestId('power-energy-totals')).toHaveClass('visually-hidden')
+    unmount()
+  })
+
+  it('shows the totals line once the window holds energy', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer() })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(screen.getByTestId('power-energy-totals')).not.toHaveClass('visually-hidden')
     unmount()
   })
 })

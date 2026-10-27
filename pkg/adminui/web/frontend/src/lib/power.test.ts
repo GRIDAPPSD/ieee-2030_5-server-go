@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   cachedPower,
+  aggregatorBars,
   energyBars,
   energyTotals,
   forgetPower,
@@ -136,5 +137,36 @@ describe('energyBars', () => {
     ])
     expect(energyBars(chart).unit).toBe('kWh')
     expect(chart.series[0]).not.toHaveProperty('type')
+  })
+})
+
+describe('aggregatorBars', () => {
+  const entry = (key: string, name: string) => ({
+    key,
+    name,
+    latestW: null,
+    latestMissing: [],
+    discharged: [[10, 0.5], [15, null]] as [number, number | null][],
+    charged: [[10, 0.2]] as [number, number | null][],
+  })
+
+  it('splits each aggregator into discharge above zero and charge below, dropping empty buckets', () => {
+    const body = aggregatorBars([entry('A', 'North'), entry('direct', 'Direct')], 'kWh')
+    expect(body.unit).toBe('kWh')
+    expect(body.series).toEqual([
+      { name: 'North discharge', points: [[10000, 0.5]], type: 'bar', direction: 'discharge', colorIndex: 0 },
+      { name: 'North charge', points: [[10000, -0.2]], type: 'bar', direction: 'charge', colorIndex: 0 },
+      { name: 'Direct discharge', points: [[10000, 0.5]], type: 'bar', direction: 'discharge', colorIndex: 4 },
+      { name: 'Direct charge', points: [[10000, -0.2]], type: 'bar', direction: 'charge', colorIndex: 4 },
+    ])
+  })
+})
+
+describe('parsePower per-aggregator energy', () => {
+  it('reads an absent field as null and refuses a malformed one', () => {
+    expect(parsePower(wireAnswer())?.aggregatorEnergy).toBeNull()
+    expect(parsePower(wireAnswer({ aggregatorEnergy: [{ key: 'A' }] }))).toBeNull()
+    const ok = { key: 'A', name: 'N', latestW: null, latestMissing: [], discharged: [[1, null]], charged: [] }
+    expect(parsePower(wireAnswer({ aggregatorEnergy: [ok] }))?.aggregatorEnergy).toEqual([ok])
   })
 })

@@ -13,7 +13,8 @@
   echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
   // frame draws the axes even with no points, with the empty message inside the
-  // frame; range, in epoch milliseconds, is the time span the empty frame shows.
+  // frame. range, in epoch milliseconds, fixes the time axis, so charts given
+  // the same range line up.
   let {
     body,
     empty,
@@ -62,13 +63,15 @@
         xAxis: {
           type: 'time',
           splitNumber: 4,
-          ...(frame && !hasPoints && range !== null ? { min: range[0], max: range[1] } : {}),
+          ...(range !== null ? { min: range[0], max: range[1] } : {}),
           axisLabel: { color: textColor, formatter: '{HH}:{mm}:{ss}', hideOverlap: true },
         },
         yAxis: {
           type: 'value',
           // Bars start at zero, or a discharge-only window exaggerates them.
           scale: !body.series.some((s) => s.type === 'bar'),
+          // An empty frame has no data to size the axis from.
+          ...(frame && !hasPoints ? { min: -1, max: 1 } : {}),
           boundaryGap: ['5%', '5%'],
           name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },

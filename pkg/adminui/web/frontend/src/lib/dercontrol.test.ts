@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canCancel, expectedDeviceReadTime, fmtTime, keptControl } from './dercontrol'
+import { canCancel, expectedDeviceReadTime, fmtTime, keptControl, localDateTimeSeconds, startPickerValue } from './dercontrol'
 
 describe('keptControl', () => {
   it('reads mRID and href from a controlKept body', () => {
@@ -36,5 +36,24 @@ describe('display helpers', () => {
   it('canCancel: with no server time an active row keeps Cancel, so the server decides', () => {
     expect(canCancel('active', 100, 60, null)).toBe(true)
     expect(canCancel('cancelled', 100, 60, null)).toBe(false)
+  })
+})
+
+describe('start picker helpers', () => {
+  const now = new Date(2030, 0, 2, 3, 4, 5).getTime()
+
+  it('startPickerValue opens at the current moment when empty or already passed', () => {
+    expect(startPickerValue('', now)).toBe('2030-01-02T03:04:05')
+    expect(startPickerValue('2030-01-02T03:04:04', now)).toBe('2030-01-02T03:04:05')
+  })
+
+  it('startPickerValue keeps a start that has not passed', () => {
+    expect(startPickerValue('2030-01-02T04:00:00', now)).toBe('2030-01-02T04:00:00')
+  })
+
+  it('localDateTimeSeconds reads the local time in epoch seconds, and null for a non-date', () => {
+    expect(localDateTimeSeconds('2030-01-02T03:04:05')).toBe(now / 1000)
+    expect(localDateTimeSeconds('')).toBeNull()
+    expect(localDateTimeSeconds('soon')).toBeNull()
   })
 })

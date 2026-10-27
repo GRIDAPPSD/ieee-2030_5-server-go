@@ -8,6 +8,7 @@
 // frontend change.
 
 import { fetchJSON } from './api'
+import { localDateTimeSeconds } from './dercontrol'
 
 export interface CatalogField {
   name: string
@@ -221,9 +222,8 @@ export function buildDeviceControl(input: ControlFormInput): BuildResult {
   let when = 'now'
   if (!input.startNow) {
     if (!input.startAtLocal) return { ok: false, error: 'Pick a start time, or choose Start now.' }
-    const ms = Date.parse(input.startAtLocal)
-    if (Number.isNaN(ms)) return { ok: false, error: 'Start time is not valid.' }
-    const seconds = Math.floor(ms / 1000)
+    const seconds = localDateTimeSeconds(input.startAtLocal)
+    if (seconds === null) return { ok: false, error: 'Start time is not valid.' }
     body.startTime = seconds
     when = fmtIso(seconds)
   }

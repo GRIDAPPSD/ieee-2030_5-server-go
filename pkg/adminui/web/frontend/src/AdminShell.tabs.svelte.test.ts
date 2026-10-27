@@ -67,7 +67,7 @@ const TAB_HEADINGS: Record<string, string[]> = {
   fsas: ['Create FSA Template', 'FSA Templates', 'FSA Tree (SY -> FD -> SP -> DEV)'],
   control: ['Send DER Control'],
   certificates: ['Certificate Management'],
-  derms: ['DERMS Fleets', 'Flow Reservation Requests', 'Dispatch'],
+  derms: ['DERMS Fleets', 'Flow Reservation Requests', 'Grid power requests', 'Dispatch'],
 }
 
 describe('AdminShell tab card partition (criterion 1)', () => {

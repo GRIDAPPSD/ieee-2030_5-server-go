@@ -22,10 +22,11 @@ function sourceFiles(dir: string): string[] {
 // A control function is an element named opMod followed by a capital.
 export const ELEMENT = /\bopMod[A-Z]\w*/
 
-// The file below is bound to one element by design and is not part of the
-// control form: the Dispatch tab sends target power only. Each entry must
-// still name an element, so the list shrinks when the names go.
+// The files below are bound to one element by design and are not part of the
+// control form: the Dispatch tab and the grid blocks send target power only.
+// Each entry must still name an element, so the list shrinks when the names go.
 const ELEMENT_ALLOWED: Record<string, string> = {
+  'src/lib/gridrows.ts': 'grid blocks send target power only, and the confirm step words its wire value',
   'src/panels/DispatchPane.svelte': 'Dispatch tab reads the target power of a control',
 }
 

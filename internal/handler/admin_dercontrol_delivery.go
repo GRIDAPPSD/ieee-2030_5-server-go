@@ -86,15 +86,22 @@ func holdSeconds(postRate *uint32) int64 {
 // and now. It never ends before it starts.
 func effectiveWindow(interval sep2.DateTimeInterval, lc dercontrol.LifecycleRecord, now int64) (start, end int64) {
 	start = interval.Start
-	end = dercontrol.IntervalEnd(&interval)
+	end = min(inForceEnd(interval, lc), now)
+	return start, max(start, end)
+}
+
+// inForceEnd is the earliest of a control's interval end, its supersede time
+// and its cancel time: the second it stops being in force, whatever the clock.
+// It can precede the interval start for a control cancelled before it began.
+func inForceEnd(interval sep2.DateTimeInterval, lc dercontrol.LifecycleRecord) int64 {
+	end := dercontrol.IntervalEnd(&interval)
 	if lc.SupersededAt != nil {
 		end = min(end, *lc.SupersededAt)
 	}
 	if lc.CancelledAt != nil {
 		end = min(end, *lc.CancelledAt)
 	}
-	end = min(end, now)
-	return start, max(start, end)
+	return end
 }
 
 // powerSpan is one real-power reading's export-positive watts over [start, end).

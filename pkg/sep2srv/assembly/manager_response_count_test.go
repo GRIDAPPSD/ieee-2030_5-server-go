@@ -90,6 +90,12 @@ func TestAdminControlList_CountsResponsesAManagerSentForItsDevice(t *testing.T) 
 	if got := post(managerLFDI, managerLFDI, "1"); got != http.StatusCreated {
 		t.Fatalf("manager for itself: %d, want 201", got)
 	}
+	// The POST handler canonicalises the named LFDI before the sender check, so
+	// a lower-case spelling of a managed device is admitted and counted as that
+	// device (the victim's second Response below).
+	if got := post(managerLFDI, strings.ToLower(victimLFDI), "1"); got != http.StatusCreated {
+		t.Fatalf("manager for managed device, lower-case LFDI: %d, want 201", got)
+	}
 	// The caller is managed by someone else: the POST is refused, so nothing
 	// is stored to count.
 	if got := post(managerLFDI, callerLFDI, "3"); got != http.StatusForbidden {
@@ -106,11 +112,11 @@ func TestAdminControlList_CountsResponsesAManagerSentForItsDevice(t *testing.T) 
 		return list.Controls[0].Responses
 	}
 	want := handler.DERControlResponseCounts{
-		Total:    3,
-		ByStatus: map[string]int{"1": 2, "2": 1},
+		Total:    4,
+		ByStatus: map[string]int{"1": 3, "2": 1},
 		// Ordered by LFDI.
 		ByDevice: []handler.DeviceResponseCounts{
-			{EndDeviceLFDI: victimLFDI, Total: 1, ByStatus: map[string]int{"1": 1}},
+			{EndDeviceLFDI: victimLFDI, Total: 2, ByStatus: map[string]int{"1": 2}},
 			{EndDeviceLFDI: managerLFDI, Total: 1, ByStatus: map[string]int{"1": 1}},
 			{EndDeviceLFDI: secondChildLFDI, Total: 1, ByStatus: map[string]int{"2": 1}},
 		},

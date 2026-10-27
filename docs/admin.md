@@ -398,7 +398,9 @@ list, ordered by LFDI, with one entry (`endDeviceLFDI` in upper case,
 `total`, `byStatus`) for each device that has at least one Response for
 the control; the entries sum to the totals. A
 Response naming a device the sender does not manage is not counted, and
-neither is one for a device whose management has ended.
+neither is one for a device whose management has ended, or one whose
+`endDeviceLFDI` is not 40 hex digits. A management store failure answers 500
+rather than a smaller count.
 
 **Cancel** appears on Scheduled rows and on Active rows whose interval has
 not ended on the server's clock, taken from the `Date` header of the

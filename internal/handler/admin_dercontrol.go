@@ -22,6 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	srvmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -1229,9 +1230,11 @@ func (idx responseCountIndex) forMRID(mrid string) DERControlResponseCounts {
 // responseCounts reads every ResponseSet once and counts the Responses whose
 // endDeviceLFDI is lfdi or names a device lfdi currently manages. LFDIs
 // compare case-insensitively: hexBinary allows either case and devices differ
-// in which they send. "Manages" is coreedev.CurrentManagerOwns over h.Managers,
-// the rule POST /rsps admits a manager's Response by, so a Response is counted
-// for exactly the senders the server accepted it from.
+// in which they send. "Manages" is coreedev.CurrentManagerOwnsLFDI over
+// h.Managers, the rule POST /rsps admits a manager's Response by, so a Response
+// is counted for exactly the senders the server accepted it from. A Response
+// whose endDeviceLFDI is not 40 hex digits names no device and is not counted.
+// A management lookup error fails the whole list (500) rather than undercount.
 func (h *AdminDERControlHandler) responseCounts(ctx context.Context, lfdi string) (responseCountIndex, error) {
 	idx := responseCountIndex{}
 	if h.Responses == nil || lfdi == "" {
@@ -1241,16 +1244,20 @@ func (h *AdminDERControlHandler) responseCounts(ctx context.Context, lfdi string
 	if err != nil {
 		return nil, err
 	}
+	self, ok := sep2lfdi.Canonical(lfdi)
+	if !ok {
+		return idx, nil
+	}
 	// One management lookup per distinct named device, not per Response.
 	counted := map[string]bool{}
 	countsDevice := func(named string) (bool, error) {
 		if v, ok := counted[named]; ok {
 			return v, nil
 		}
-		v := strings.EqualFold(named, lfdi)
+		v := named == self
 		if !v && !store.IsAbsent(h.Managers) {
 			var err error
-			v, err = coreedev.CurrentManagerOwns(ctx, h.Managers, named, lfdi)
+			v, err = coreedev.CurrentManagerOwnsLFDI(ctx, h.Managers, named, self)
 			if err != nil {
 				return false, err
 			}
@@ -1267,7 +1274,10 @@ func (h *AdminDERControlHandler) responseCounts(ctx context.Context, lfdi string
 			if rsp.Subject == "" || rsp.EndDeviceLFDI == "" {
 				continue
 			}
-			named := strings.ToUpper(strings.TrimSpace(rsp.EndDeviceLFDI))
+			named, valid := sep2lfdi.Canonical(rsp.EndDeviceLFDI)
+			if !valid {
+				continue
+			}
 			ok, err := countsDevice(named)
 			if err != nil {
 				return nil, err

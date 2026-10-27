@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/paging"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -54,6 +55,25 @@ func CurrentManagerOwns(ctx context.Context, managers store.EndDeviceManagementR
 		return false, err
 	}
 	return OwnedBy(manager, caller), nil
+}
+
+// CurrentManagerOwnsLFDI is CurrentManagerOwns for an LFDI a client named: it
+// canonicalises device and caller (surrounding hexBinary whitespace trimmed,
+// upper case) before the exact comparison, so a lower-case spelling decides
+// the same as the stored upper-case one. A value that is not 40 hex digits is
+// owned by nobody. Every caller that decides on a client-named LFDI uses this,
+// so the POST /rsps gate and the admin Response counts cannot disagree on a
+// spelling.
+func CurrentManagerOwnsLFDI(ctx context.Context, managers store.EndDeviceManagementReader, device, caller string) (bool, error) {
+	dev, ok := sep2lfdi.Canonical(device)
+	if !ok {
+		return false, nil
+	}
+	who, ok := sep2lfdi.Canonical(caller)
+	if !ok {
+		return false, nil
+	}
+	return CurrentManagerOwns(ctx, managers, dev, who)
 }
 
 // ManagerOf returns the manager of the device with the given LFDI and whether

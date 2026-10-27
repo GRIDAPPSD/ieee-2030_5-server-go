@@ -485,6 +485,71 @@ func TestDERControlList_CountsManagedDeviceResponses(t *testing.T) {
 	}
 }
 
+// failingManagerReader answers every ManagerOf with an error that is not
+// ErrNotFound, the shape of a management store outage.
+type failingManagerReader struct {
+	store.EndDeviceManagementReader
+}
+
+func (failingManagerReader) ManagerOf(context.Context, string) (string, error) {
+	return "", errors.New("management store down")
+}
+
+// A management lookup that cannot complete fails the list with 500 and counts
+// nothing: an outage must not read as "the manager has no managed devices".
+func TestDERControlList_ManagementLookupErrorAnswers500(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	ctx := context.Background()
+	w := d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":%d,"durationSeconds":300}`, futureStart(60)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	mrid := decodeCreated(t, w).MRID
+	// Naming another device forces a management lookup.
+	if err := d.responses.Create(ctx, "1", "0", sep2.Response{EndDeviceLFDI: dcOtherLFDI, Subject: mrid}); err != nil {
+		t.Fatal(err)
+	}
+	d.h.Managers = failingManagerReader{d.managers}
+
+	w = d.do(t, http.MethodGet, "/api/der/controls?device=0", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("list with failing management store: %d %s, want 500", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"responses"`) || strings.Contains(w.Body.String(), "management store down") {
+		t.Errorf("500 body carries counts or the store's text: %s", w.Body.String())
+	}
+}
+
+// A Response whose endDeviceLFDI is not 40 hex digits names no device, so it
+// is not counted, and a lower-case spelling of a managed LFDI is counted as
+// that device.
+func TestDERControlList_NonHexLFDIIsNotCounted(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	ctx := context.Background()
+	w := d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":%d,"durationSeconds":300}`, futureStart(60)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	mrid := decodeCreated(t, w).MRID
+	for i, l := range []string{"not-an-lfdi", dcLFDI[:38], " " + strings.ToLower(dcLFDI) + "\n"} {
+		if err := d.responses.Create(ctx, "1", fmt.Sprint(i), sep2.Response{EndDeviceLFDI: l, Subject: mrid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w = d.do(t, http.MethodGet, "/api/der/controls?device=0", "")
+	var got handler.DERControlList
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Controls) != 1 {
+		t.Fatalf("list: %d %s", w.Code, w.Body.String())
+	}
+	want := handler.DERControlResponseCounts{
+		Total: 1, ByStatus: map[string]int{"absent": 1},
+		ByDevice: []handler.DeviceResponseCounts{{EndDeviceLFDI: dcLFDI, Total: 1, ByStatus: map[string]int{"absent": 1}}},
+	}
+	if !reflect.DeepEqual(got.Controls[0].Responses, want) {
+		t.Errorf("counts = %+v, want %+v", got.Controls[0].Responses, want)
+	}
+}
+
 // Criterion 3: the list shows admin-issued controls for the device with
 // derived status and Response counts matched on subject and endDeviceLFDI.
 func TestDERControlList(t *testing.T) {

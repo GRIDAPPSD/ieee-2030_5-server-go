@@ -46,12 +46,14 @@ const (
 // one of the two origins.
 var ErrInvalidOrigin = errors.New("dercontrol: origin must be admin or derms")
 
-// OriginOf is the origin a stored value reads as: OriginAdmin when empty.
+// OriginOf is the origin a stored value reads as: OriginDERMS for derms and
+// OriginAdmin for anything else, so a value this build does not know is never
+// served verbatim.
 func OriginOf(stored string) string {
-	if stored == "" {
-		return OriginAdmin
+	if stored == OriginDERMS {
+		return OriginDERMS
 	}
-	return stored
+	return OriginAdmin
 }
 
 // StoredOrigin is the value a record keeps for origin: empty for

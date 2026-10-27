@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -50,5 +53,17 @@ func TestNewDERControlView_EndedAtTheLastSecond(t *testing.T) {
 		if v.Ended != tc.want {
 			t.Errorf("now %d: ended = %v, want %v", tc.now, v.Ended, tc.want)
 		}
+	}
+}
+
+// #1155: a refused origin is a 400 refusal, not an internal error.
+func TestMapIssuerError_InvalidOrigin(t *testing.T) {
+	wrapped := fmt.Errorf("issue: %w", dercontrol.ErrInvalidOrigin)
+	var l derControlLog
+	if got := mapIssuerError(wrapped, &l); got != refuseOriginInvalid || got.status != http.StatusBadRequest || got.code != "origin_invalid" {
+		t.Errorf("mapIssuerError(ErrInvalidOrigin) = %+v, want origin_invalid 400", got)
+	}
+	if got := mapIssuerError(errors.New("boom"), &l); got != refuseInternal {
+		t.Errorf("control: an unrelated error maps to %+v, want internal", got)
 	}
 }

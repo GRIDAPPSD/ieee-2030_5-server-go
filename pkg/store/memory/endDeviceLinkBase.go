@@ -125,7 +125,7 @@ func (s *linkedEndDevices) deriveByHref(ctx context.Context, device sep2.EndDevi
 	key, ok := keyFromEndDeviceHref(device.Href)
 	if !ok {
 		if s.fields.strip(&device) {
-			log.Printf("memory: EndDevice href %q does not follow the /edev/{key} addressing invariant; serving it without %s", logsafe.Str(device.Href), s.fields.linkNames())
+			log.Printf("memory: EndDevice href %q does not follow the /edev/{key} addressing invariant; serving it without %s", logsafe.Str(device.Href), logsafe.Str(s.fields.linkNames()))
 		}
 		return device
 	}

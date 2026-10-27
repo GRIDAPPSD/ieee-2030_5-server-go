@@ -89,9 +89,13 @@ type ControlEvent struct {
 // ControlEventsResponse is the body of GET /api/derms/control-events. Events
 // is always an array.
 type ControlEventsResponse struct {
-	WindowStart int64          `json:"windowStart"`
-	WindowEnd   int64          `json:"windowEnd"`
-	Events      []ControlEvent `json:"events"`
+	WindowStart int64 `json:"windowStart"`
+	WindowEnd   int64 `json:"windowEnd"`
+	// Ahead is how far past WindowEnd the timeline looks, equal to the window
+	// length, and AheadEnd is WindowEnd plus it.
+	Ahead    int64          `json:"ahead"`
+	AheadEnd int64          `json:"aheadEnd"`
+	Events   []ControlEvent `json:"events"`
 }
 
 // HandleControlEvents returns the handler for GET /api/derms/control-events
@@ -129,14 +133,14 @@ func (h *AdminControlEventsHandler) HandleControlEvents() http.HandlerFunc {
 		now := nowUnix()
 		bucket := powerBucketSeconds(window)
 		we := now / bucket * bucket
-		resp := ControlEventsResponse{WindowStart: we - window, WindowEnd: we, Events: []ControlEvent{}}
+		resp := ControlEventsResponse{WindowStart: we - window, WindowEnd: we, Ahead: window, AheadEnd: we + window, Events: []ControlEvent{}}
 		events, err := h.events(ctx, groups, now)
 		if err != nil {
 			h.fail(w, err)
 			return
 		}
 		for _, e := range events {
-			if (only == "" || e.Group == only) && e.Start < we && e.End > resp.WindowStart {
+			if (only == "" || e.Group == only) && e.Start < resp.AheadEnd && e.End > resp.WindowStart {
 				resp.Events = append(resp.Events, e)
 			}
 		}

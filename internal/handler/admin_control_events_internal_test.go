@@ -278,3 +278,23 @@ func TestControlEvents_LanesEqualPowerGroups(t *testing.T) {
 		t.Errorf("power groups = %v, want [%s %s direct]", want, canonicalLFDI(powerAgg), aggB)
 	}
 }
+
+// The timeline looks ahead past now by the window length.
+func TestControlEvents_LooksAheadByTheWindow(t *testing.T) {
+	h := newCEHarness(t)
+	now := powerNow
+	h.issue(ceScope("d2"), "soon", "MR-SOON", now+300, 600, ceTarget(1000), dercontrol.LifecycleRecord{})
+	h.issue(ceScope("d2"), "far", "MR-FAR", now+901, 600, ceTarget(1000), dercontrol.LifecycleRecord{})
+
+	_, got := h.get("window=900")
+	if got.WindowEnd != now || got.Ahead != 900 || got.AheadEnd != now+900 {
+		t.Errorf("windowEnd/ahead/aheadEnd = %d/%d/%d, want %d/900/%d", got.WindowEnd, got.Ahead, got.AheadEnd, now, now+900)
+	}
+	if len(got.Events) != 1 || got.Events[0].MRID != "MR-SOON" || got.Events[0].Status != "scheduled" || got.Events[0].Start != now+300 {
+		t.Fatalf("events = %+v, want only the scheduled MR-SOON starting at %d", got.Events, now+300)
+	}
+	_, long := h.get("window=3600")
+	if len(long.Events) != 2 || long.AheadEnd != now+3600 {
+		t.Errorf("1 h window events = %d aheadEnd %d, want both controls and %d", len(long.Events), long.AheadEnd, now+3600)
+	}
+}

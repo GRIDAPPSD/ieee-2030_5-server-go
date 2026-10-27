@@ -144,8 +144,12 @@ type PowerHistory struct {
 	lastPrune int64
 
 	// journal, when set, keeps the mirror readings a restart needs; the
-	// recorder syncs it every pass and compacts it with each prune.
-	journal *ReadingJournal
+	// recorder syncs it every pass and compacts it on the first pass of the
+	// process and then once per powerHistoryPruneEvery. lastCompact is zero
+	// until that first compaction, so restarts more often than the prune
+	// still compact. The recorder (writeMu) alone reads and sets it.
+	journal     *ReadingJournal
+	lastCompact int64
 }
 
 // UseJournal hands the recorder the mirror reading journal. Call it before
@@ -531,16 +535,33 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 }
 
 // afterPass runs once every scope has recorded the buckets final at now. It
-// syncs the reading journal, then prunes the history when due, and with it
-// compacts the journal to the readings that can reach the reporting lead of
-// final, the oldest bucket a restart now would leave unrecorded.
+// syncs the reading journal, prunes the history when due, and compacts the
+// journal when due to the readings that can reach the reporting lead of
+// final, the oldest bucket a restart now would leave unrecorded. A failed
+// step does not stop the others; every failure is returned.
 func (p *PowerHistory) afterPass(ctx context.Context, now, final int64) error {
+	var errs []error
 	if p.journal != nil {
 		if err := p.journal.Sync(); err != nil {
-			return fmt.Errorf("power history: %w", err)
+			errs = append(errs, fmt.Errorf("power history: %w", err))
 		}
 	}
-	return p.pruneIfDue(ctx, now, reportedLead(final))
+	errs = append(errs, p.pruneIfDue(now), p.compactIfDue(ctx, now, reportedLead(final)))
+	return errors.Join(errs...)
+}
+
+// compactIfDue compacts the reading journal to keepFrom on the first pass of
+// the process and once per powerHistoryPruneEvery after it. A failed
+// compaction is retried at the next due time, not every pass.
+func (p *PowerHistory) compactIfDue(ctx context.Context, now, keepFrom int64) error {
+	if p.journal == nil || (p.lastCompact != 0 && now-p.lastCompact < int64(powerHistoryPruneEvery/time.Second)) {
+		return nil
+	}
+	p.lastCompact = now
+	if err := p.journal.Compact(ctx, keepFrom); err != nil {
+		return fmt.Errorf("power history: compact the reading journal: %w", err)
+	}
+	return nil
 }
 
 // appendScope records the present parts of scope, the first starting at from,
@@ -598,11 +619,10 @@ func (p *PowerHistory) appendScope(scope string, from, next int64, parts []part)
 }
 
 // pruneIfDue removes records older than the retention, in memory and in the
-// files, once per powerHistoryPruneEvery, and compacts the reading journal to
-// keepFrom. Between prunes a file can hold up to that much beyond the bound;
-// memory is trimmed on every prune only, so a lookup can still serve a record
-// that is due to go until then.
-func (p *PowerHistory) pruneIfDue(ctx context.Context, now, keepFrom int64) error {
+// files, once per powerHistoryPruneEvery. Between prunes a file can hold up to
+// that much beyond the bound; memory is trimmed on every prune only, so a
+// lookup can still serve a record that is due to go until then.
+func (p *PowerHistory) pruneIfDue(now int64) error {
 	p.mu.Lock()
 	if now-p.lastPrune < int64(powerHistoryPruneEvery/time.Second) {
 		p.mu.Unlock()
@@ -624,11 +644,6 @@ func (p *PowerHistory) pruneIfDue(ctx context.Context, now, keepFrom int64) erro
 	for _, name := range changed {
 		if err := p.rewrite(name); err != nil {
 			errs = append(errs, err)
-		}
-	}
-	if p.journal != nil {
-		if err := p.journal.Compact(ctx, keepFrom); err != nil {
-			errs = append(errs, fmt.Errorf("power history: compact the reading journal: %w", err))
 		}
 	}
 	return errors.Join(errs...)

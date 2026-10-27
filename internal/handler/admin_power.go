@@ -343,7 +343,7 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	ws := we - window
 	bounds := boundsFor(ws, we, bucket)
 	resp.WindowStart, resp.WindowEnd, resp.BucketSeconds = ws, we, bucket
-	resp.ReadingsExpired = readingsExpired(ws, now, retention)
+	resp.ReadingsExpired = readingsExpired(ws, now, retention, readingsFloor(h.MirrorMeterReadings))
 	resp.AggregatorEnergy = []AggregatorEnergy{}
 
 	byDevice, err := mirrorsByDevice(ctx, h, "admin GET /api/derms/power", match)

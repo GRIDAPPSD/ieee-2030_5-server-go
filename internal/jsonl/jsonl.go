@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 )
@@ -109,4 +110,65 @@ func Rewrite(path string, payload []byte) error {
 		return nil
 	}
 	return atomicfile.Write(path, payload)
+}
+
+// Staged is a replacement for a file, written and synced beside it so the
+// slow part runs before the caller takes any lock. Commit adds a short tail
+// and renames it over the file.
+type Staged struct {
+	path, tmp string
+	f         *os.File
+}
+
+// Stage writes payload to a file beside path and syncs it.
+func Stage(path string, payload []byte) (*Staged, error) {
+	tmp := path + ".stage"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open %q: %w", tmp, err)
+	}
+	s := &Staged{path: path, tmp: tmp, f: f}
+	if _, err := f.Write(payload); err != nil {
+		s.Abort()
+		return nil, fmt.Errorf("write %q: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		s.Abort()
+		return nil, fmt.Errorf("sync %q: %w", tmp, err)
+	}
+	return s, nil
+}
+
+// Commit appends tail, syncs, and renames the staged file over path. On an
+// error the staged file is removed and path is left as it was.
+func (s *Staged) Commit(tail []byte) error {
+	if len(tail) > 0 {
+		if _, err := s.f.Write(tail); err != nil {
+			s.Abort()
+			return fmt.Errorf("write %q: %w", s.tmp, err)
+		}
+		if err := s.f.Sync(); err != nil {
+			s.Abort()
+			return fmt.Errorf("sync %q: %w", s.tmp, err)
+		}
+	}
+	if err := s.f.Close(); err != nil {
+		_ = os.Remove(s.tmp)
+		return fmt.Errorf("close %q: %w", s.tmp, err)
+	}
+	if err := os.Rename(s.tmp, s.path); err != nil {
+		_ = os.Remove(s.tmp)
+		return fmt.Errorf("rename %q: %w", s.tmp, err)
+	}
+	if d, err := os.Open(filepath.Dir(s.path)); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
+// Abort removes the staged file.
+func (s *Staged) Abort() {
+	_ = s.f.Close()
+	_ = os.Remove(s.tmp)
 }

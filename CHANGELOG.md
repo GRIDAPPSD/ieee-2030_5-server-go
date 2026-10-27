@@ -27,8 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The power chart no longer loses its last 15 minutes across a restart, and
   `latestW` is no longer null after one (#1206). With a data dir the mirror meter
   readings are journaled to `mirrormeterreadings.jsonl` and replayed at boot; the
-  recorder compacts the journal hourly to the readings that can still reach a
-  bucket it has not recorded. The buckets recorded just after a restart are now
+  recorder compacts the journal on its first pass after each start and hourly
+  after that, to the readings that can still reach a bucket it has not
+  recorded. A window that starts before the journal's floor answers
+  `readingsExpired` true, so the device fields of the 6 h and 24 h windows are
+  flagged after a restart rather than quietly short. A multi-reading POST is
+  journaled as one line, so a disk fault stores all of the batch or none. The buckets recorded just after a restart are now
   built from the same readings an uninterrupted server holds, so a device that had
   gone quiet is no longer dropped from a covered Total.
 - Every EndDevice now advertises `DERListLink`, and the server seeds one DER

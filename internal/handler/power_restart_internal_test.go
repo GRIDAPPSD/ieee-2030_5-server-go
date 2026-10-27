@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,9 +231,11 @@ var twinQueries = []string{"scope=all", "aggregatorLFDI=" + powerAgg, "aggregato
 // twinDiffs compares every power answer of a and b at now, and returns one
 // line per differing answer. Windows up to an hour are compared byte for
 // byte. Longer windows draw their device lines from readings older than any
-// restart keeps, so for them the fields the history and power now answer are
-// compared: the Total line, the energy chart, the groups' energy, power now
-// and the gap count.
+// restart keeps. For them the fields the history and power now answer must be
+// equal (the Total line, the energy chart, the groups' energy, power now and
+// the gap count), and every other field must be equal too unless the
+// restarted answer says readingsExpired: a device field may be short only
+// where the answer states that readings are missing.
 func twinDiffs(t *testing.T, a, b *twinSide, now int64) []string {
 	t.Helper()
 	var diffs []string
@@ -248,6 +252,12 @@ func twinDiffs(t *testing.T, a, b *twinSide, now int64) []string {
 			for _, field := range []string{"total", "energyChart", "aggregatorEnergy", "latestW", "latestAt", "latestMissing", "totalGapBuckets"} {
 				if fa, fb := twinField(t, ab, field), twinField(t, bb, field); !bytes.Equal(fa, fb) {
 					diffs = append(diffs, fmt.Sprintf("%s at %d, %s:\n  uninterrupted %s\n  restarted     %s", query, now, field, fa, fb))
+				}
+			}
+			for _, field := range []string{"chart", "devices", "notReporting"} {
+				fa, fb := twinField(t, ab, field), twinField(t, bb, field)
+				if !bytes.Equal(fa, fb) && string(twinField(t, bb, "readingsExpired")) != "true" {
+					diffs = append(diffs, fmt.Sprintf("%s at %d, %s differs and the restarted answer does not say readingsExpired:\n  uninterrupted %s\n  restarted     %s", query, now, field, fa, fb))
 				}
 			}
 		}
@@ -332,9 +342,9 @@ func twinRestartRun(t *testing.T, open twinOpenReadings, quietD4 bool, downtime 
 }
 
 // journalReadings is the reading store a side boots with when it journals.
-func journalReadings(t *testing.T, s *twinSide, _ int64) store.ScopedStore[sep2.MirrorMeterReading] {
+func journalReadings(t *testing.T, s *twinSide, now int64) store.ScopedStore[sep2.MirrorMeterReading] {
 	t.Helper()
-	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](filepath.Join(s.dir, "mirrormeterreadings.jsonl"), "MirrorMeterReading")
+	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](filepath.Join(s.dir, "mirrormeterreadings.jsonl"), "MirrorMeterReading", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,4 +510,75 @@ func ptrVal(p *float64) any {
 		return nil
 	}
 	return *p
+}
+
+// A server restarted every 10 minutes, more often than the hourly prune,
+// still compacts its journal on the first pass after each boot, so the
+// journal holds about the compaction window, not every reading since it
+// began.
+func TestPowerRestart_ShortRestartsKeepTheJournalBounded(t *testing.T) {
+	devices := twinDevices(false)
+	b := newTwinSide(t, devices)
+	from := twinStart - 2*historyHour
+	b.boot(journalReadings, from)
+	r := &twinRun{t: t, devices: devices, posted: map[string]int{}}
+	for at := from; at < twinRestart; at += 600 {
+		if at != from {
+			b.restart(journalReadings, at)
+		}
+		r.run(at, at+600, b)
+	}
+	posted := 0
+	for _, n := range r.posted {
+		posted += n
+	}
+	lines := 0
+	data, err := os.ReadFile(filepath.Join(b.dir, "mirrormeterreadings.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if bytes.Contains(line, []byte(`"op":"c"`)) {
+			lines++
+		}
+	}
+	// The last compaction, at the first pass of the last boot, kept about
+	// 75 minutes of readings; 10 minutes were appended after it.
+	t.Logf("journal holds %d reading lines of %d posted", lines, posted)
+	if lines == 0 || lines > posted/2 {
+		t.Errorf("journal holds %d reading lines of %d posted over 4 h of 10 min boots; want under half", lines, posted)
+	}
+}
+
+// failingSyncJournal is a reading journal whose Sync always fails and which
+// counts compactions.
+type failingSyncJournal struct {
+	ReadingJournalStore
+	compacted int
+}
+
+func (*failingSyncJournal) Sync() error { return errors.New("fsync failed") }
+func (j *failingSyncJournal) Compact(context.Context, int64, func(string, []sep2.MirrorMeterReading) ([]bool, error)) error {
+	j.compacted++
+	return nil
+}
+
+// A failing journal sync is reported, and the pass still prunes the history
+// and compacts the journal.
+func TestPowerHistory_FailingSyncStillPrunesAndCompacts(t *testing.T) {
+	p := newPowerHarness(t)
+	twoDeviceHour(p)
+	hist := openHistory(t, t.TempDir(), 48*time.Hour, powerNow-historyHour)
+	j := &failingSyncJournal{}
+	hist.UseJournal(&ReadingJournal{Readings: j, Mirrors: p.mups})
+	err := hist.Record(context.Background(), p.withHistory(hist), powerNow)
+	if err == nil || !strings.Contains(err.Error(), "fsync failed") {
+		t.Errorf("Record = %v, want the sync failure", err)
+	}
+	if j.compacted != 1 {
+		t.Errorf("compactions = %d, want 1 on the first pass", j.compacted)
+	}
+	if hist.lastPrune != powerNow {
+		t.Errorf("last prune at %d, want %d: the failing sync stopped the prune", hist.lastPrune, powerNow)
+	}
 }

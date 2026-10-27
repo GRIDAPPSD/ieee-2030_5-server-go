@@ -67,7 +67,7 @@ func (failingMirrors) Get(context.Context, string) (sep2.MirrorUsagePoint, error
 func TestReadingJournal_CompactFailsClosedAndOrphansGo(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "readings.jsonl")
-	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading")
+	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestReadingJournal_CompactFailsClosedAndOrphansGo(t *testing.T) {
 	}
 	reopened := func() *memory.JournaledScopedStore[sep2.MirrorMeterReading] {
 		t.Helper()
-		s, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading")
+		s, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading", 1)
 		if err != nil {
 			t.Fatal(err)
 		}

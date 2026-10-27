@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // DERControlDelivery is the metered energy a control's device exported over
@@ -682,11 +683,23 @@ func readingReach(r sep2.MirrorMeterReading) int64 {
 	return reach
 }
 
-// readingsExpired reports whether a window starting at ws needs a reading
-// received before the retention cutoff, that is whether one received there
-// can still reach ws (holdReach). A zero retention is unknown, never expired.
-func readingsExpired(ws, now int64, retention time.Duration) bool {
-	return retention > 0 && ws < holdReach(now-int64(retention/time.Second))
+// readingsExpired reports whether a window starting at ws may need a reading
+// the store no longer holds: one received before the retention cutoff that
+// can still reach ws (holdReach), or one from before floor, where a restart
+// left the store complete only from floor on (readingsFloor). A zero
+// retention is unknown, never expired; a zero floor has no gap.
+func readingsExpired(ws, now int64, retention time.Duration, floor int64) bool {
+	return (retention > 0 && ws < holdReach(now-int64(retention/time.Second))) || ws < floor
+}
+
+// readingsFloor is the time from which the reading store holds every reading
+// that can cover a second, or zero when it has held them all since this
+// process started (a store without a journal).
+func readingsFloor(r store.ScopedReader[sep2.MirrorMeterReading]) int64 {
+	if c, ok := r.(interface{ CompleteFrom() int64 }); ok {
+		return c.CompleteFrom()
+	}
+	return 0
 }
 
 // newDelivery computes one control's delivery from its device's mirrors.

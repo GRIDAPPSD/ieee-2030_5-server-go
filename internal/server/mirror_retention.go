@@ -24,7 +24,7 @@ func newMirrorReadingStore(cfg *config.Config, mirrors store.ResourceReader[sep2
 	if path == "" {
 		return memory.NewScopedStore[sep2.MirrorMeterReading](), nil, nil
 	}
-	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading")
+	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading", time.Now().Unix())
 	if err != nil {
 		return nil, nil, fmt.Errorf("MirrorMeterReading persistence: %w", err)
 	}

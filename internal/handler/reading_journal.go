@@ -15,7 +15,7 @@ import (
 // (memory.JournaledScopedStore over MirrorMeterReading).
 type ReadingJournalStore interface {
 	Sync() error
-	Compact(ctx context.Context, keep func(parent string, items []sep2.MirrorMeterReading) ([]bool, error)) error
+	Compact(ctx context.Context, keepFrom int64, keep func(parent string, items []sep2.MirrorMeterReading) ([]bool, error)) error
 	Parents(ctx context.Context) ([]string, error)
 	DeleteParent(ctx context.Context, parentID string) (uint32, error)
 }
@@ -38,7 +38,7 @@ func (j *ReadingJournal) Sync() error { return j.Readings.Sync() }
 // keepFrom. A mirror that cannot be read fails the compaction, so the journal
 // keeps everything rather than drop a type a reading inherits.
 func (j *ReadingJournal) Compact(ctx context.Context, keepFrom int64) error {
-	return j.Readings.Compact(ctx, func(parent string, items []sep2.MirrorMeterReading) ([]bool, error) {
+	return j.Readings.Compact(ctx, keepFrom, func(parent string, items []sep2.MirrorMeterReading) ([]bool, error) {
 		var inline []sep2.MirrorMeterReading
 		switch mup, err := j.Mirrors.Get(ctx, parent); {
 		case err == nil:

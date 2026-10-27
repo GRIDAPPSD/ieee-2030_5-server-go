@@ -165,6 +165,9 @@ func TestMirrorMeterReadings_FailedJournalWriteIs500(t *testing.T) {
 	s := journalStores(t, dir)
 	journalMirror(t, s)
 	// A directory where the journal file goes makes every append fail.
+	if err := os.Remove(filepath.Join(dir, "mirrormeterreadings.jsonl")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(dir, "mirrormeterreadings.jsonl"), 0o700); err != nil {
 		t.Fatal(err)
 	}

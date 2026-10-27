@@ -31,6 +31,15 @@ func newManagementHandler(t *testing.T) *handler.AdminManagementHandler {
 	return &handler.AdminManagementHandler{Managers: memory.NewEndDeviceManagementStore()}
 }
 
+// newManagementHandlerWithRecords is newManagementHandler with an EndDevice
+// reader wired, which a managed-side rekey requires.
+func newManagementHandlerWithRecords(t *testing.T) *handler.AdminManagementHandler {
+	t.Helper()
+	h := newManagementHandler(t)
+	h.EndDevices = memory.NewEndDeviceStore()
+	return h
+}
+
 func doJSON(t *testing.T, fn http.HandlerFunc, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var req *http.Request
@@ -345,7 +354,7 @@ func TestRekeyManagementPair_RetiredManagerRefused(t *testing.T) {
 
 func TestRekeyManagementPair_ManagedHappy(t *testing.T) {
 	t.Parallel()
-	h := newManagementHandler(t)
+	h := newManagementHandlerWithRecords(t)
 	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
 
 	w := doJSON(t, h.HandleRekeyManagementPair(), http.MethodPost, "/api/management-pairs/rekey",
@@ -360,7 +369,7 @@ func TestRekeyManagementPair_ManagedHappy(t *testing.T) {
 
 func TestRekeyManagementPair_ManagedCollisionConflicts(t *testing.T) {
 	t.Parallel()
-	h := newManagementHandler(t)
+	h := newManagementHandlerWithRecords(t)
 	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
 	mustAssignH(t, h, mgHandlerManagerB, mgHandlerChildB)
 
@@ -444,7 +453,7 @@ func TestCreateManagementPair_WriteFailureBodyHasNoPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
 	}
-	h := &handler.AdminManagementHandler{Managers: store}
+	h := &handler.AdminManagementHandler{Managers: store, EndDevices: memory.NewEndDeviceStore()}
 
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatalf("chmod dir read-only: %v", err)
@@ -480,7 +489,7 @@ func TestRemoveManagementPair_WriteFailureBodyHasNoPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
 	}
-	h := &handler.AdminManagementHandler{Managers: store}
+	h := &handler.AdminManagementHandler{Managers: store, EndDevices: memory.NewEndDeviceStore()}
 	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
 
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -508,7 +517,7 @@ func TestRekeyManagementPair_ManagerWriteFailureBodyHasNoPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
 	}
-	h := &handler.AdminManagementHandler{Managers: store}
+	h := &handler.AdminManagementHandler{Managers: store, EndDevices: memory.NewEndDeviceStore()}
 	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
 
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -537,7 +546,7 @@ func TestRekeyManagementPair_ManagedWriteFailureBodyHasNoPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
 	}
-	h := &handler.AdminManagementHandler{Managers: store}
+	h := &handler.AdminManagementHandler{Managers: store, EndDevices: memory.NewEndDeviceStore()}
 	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
 
 	if err := os.Chmod(dir, 0o500); err != nil {

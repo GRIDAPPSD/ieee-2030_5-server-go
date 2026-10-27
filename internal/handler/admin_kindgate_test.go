@@ -36,7 +36,7 @@ func newKindFixture(t *testing.T) kindFixture {
 	pairs := memory.NewEndDeviceManagementStore()
 	ps := memory.NewDeviceProfileStore()
 	return kindFixture{
-		mgmt:     &handler.AdminManagementHandler{Managers: pairs, Profiles: ps},
+		mgmt:     &handler.AdminManagementHandler{Managers: pairs, Profiles: ps, EndDevices: memory.NewEndDeviceStore()},
 		profiles: &handler.AdminDeviceProfileHandler{Profiles: ps, Managers: pairs},
 		pairs:    pairs,
 		store:    ps,

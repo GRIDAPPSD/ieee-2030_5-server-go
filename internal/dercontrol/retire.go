@@ -2,12 +2,10 @@ package dercontrol
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -64,26 +62,13 @@ func (i *Issuer) liveControls(ctx context.Context, scopeKey string, now int64) (
 	}
 	var live []string
 	for _, c := range list.Items {
-		// An event with no interval never runs; the supersede scan skips
-		// one for the same reason. A boot fixture control has none.
-		if c.Interval == nil || IntervalEnded(c.Interval, now) {
-			continue
+		st, err := stateOf(ctx, i.lifecycles, scopeKey, c, now)
+		if err != nil {
+			return nil, err
 		}
-		lc, err := i.lifecycles.Get(ctx, scopeKey, controlIDOf(c.Href))
-		switch {
-		case err == nil:
-			if lc.cancelled() || lc.supersededAsOf(now) {
-				continue
-			}
-		case errors.Is(err, store.ErrNotFound):
-			// A control this package did not issue carries its own status.
-			if c.EventStatus != nil && c.EventStatus.CurrentStatus >= sep2.EventStatusCancelled {
-				continue
-			}
-		default:
-			return nil, fmt.Errorf("dercontrol: load lifecycle of %s: %w", c.Href, err)
+		if st != Retired {
+			live = append(live, c.Href)
 		}
-		live = append(live, c.Href)
 	}
 	return live, nil
 }

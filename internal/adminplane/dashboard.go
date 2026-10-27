@@ -15,7 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/ssedeadline"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
@@ -78,6 +80,13 @@ type DashboardDevice struct {
 	// DERs then holds only what did read, and an empty list with DERError set
 	// means "unreadable", not "no DERs".
 	DERError string `json:"derError,omitempty"`
+	// UnderControl is true when a server DERControl is in force on this
+	// device now, one sent to its FSA included. It is null, never false,
+	// when the control stores are not wired or could not be read; ControlError
+	// then carries the reason for a failed read.
+	UnderControl *bool `json:"underControl"`
+	// ControlError is set when UnderControl is null because a read failed.
+	ControlError string `json:"controlError,omitempty"`
 	// Cells maps a DashboardColumn ID to the text for this device. It is
 	// never null: with no source wired it is empty.
 	Cells map[string]string `json:"cells"`
@@ -264,6 +273,7 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 	if listErr != nil {
 		note("device list", listErr)
 	}
+	controlFailures, firstControlError := 0, ""
 	for _, dev := range result.Items {
 		var enabled *bool
 		if dev.Enabled != nil {
@@ -278,18 +288,33 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 			log.Printf("dashboard: DER status for %s: %v", dev.LFDI, err)
 			derError = err.Error()
 		}
+		underControl, controlError := d.underControl(ctx, dev.Href, now.Unix())
+		if controlError != "" {
+			controlFailures++
+			if firstControlError == "" {
+				firstControlError = controlError
+			}
+		}
 		devices = append(devices, DashboardDevice{
-			SFDI:        dev.SFDI,
-			LFDI:        dev.LFDI,
-			Href:        dev.Href,
-			Enabled:     enabled,
-			LastRequest: lastRequest,
-			Comms:       string(comms),
-			LastKnown:   comms == activity.Offline || comms == activity.NotSeen,
-			DERs:        ders,
-			DERError:    derError,
-			Cells:       map[string]string{},
+			SFDI:         dev.SFDI,
+			LFDI:         dev.LFDI,
+			Href:         dev.Href,
+			Enabled:      enabled,
+			LastRequest:  lastRequest,
+			Comms:        string(comms),
+			LastKnown:    comms == activity.Offline || comms == activity.NotSeen,
+			DERs:         ders,
+			DERError:     derError,
+			UnderControl: underControl,
+			ControlError: controlError,
+			Cells:        map[string]string{},
 		})
+	}
+
+	if controlFailures > 0 {
+		// One line per pass, not per device: a store that is down fails every
+		// device on every tick.
+		log.Printf("dashboard: control state unavailable for %d device(s), first: %s", controlFailures, logsafe.Str(firstControlError))
 	}
 
 	sortDevicesByHref(devices)
@@ -621,6 +646,26 @@ func (d *DashboardHandler) collectDERs(ctx context.Context, edevHref string, now
 		return out, errors.New(strings.Join(failed, "; "))
 	}
 	return out, nil
+}
+
+// underControl reports whether the EndDevice at edevHref has a server
+// DERControl in force at now (Unix seconds). It returns nil, with no error
+// text, when the control stores are not wired, and nil with the reason when a
+// read fails or the href names no device, so neither reads as "not under a
+// control". The caller logs failures once per pass.
+func (d *DashboardHandler) underControl(ctx context.Context, edevHref string, now int64) (*bool, string) {
+	if d.stores.DERControls == nil || store.IsAbsent(d.stores.DERControlLifecycles) {
+		return nil, ""
+	}
+	edevID := edevHref[strings.LastIndex(edevHref, "/")+1:]
+	if edevID == "" {
+		return nil, "device href " + strconv.Quote(edevHref) + " has no id"
+	}
+	in, err := dercontrol.InForceScopes(ctx, d.stores.DERControls, d.stores.DERControlLifecycles, edevID, now)
+	if err != nil {
+		return nil, err.Error()
+	}
+	return &in, ""
 }
 
 // derStatusKey is the singleton key DERStatus is stored under.

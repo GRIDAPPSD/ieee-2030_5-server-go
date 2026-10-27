@@ -10,7 +10,9 @@ export type ControlEventDirection = 'discharge' | 'charge'
 
 export interface ControlEvent {
   group: string
-  groupKind: 'aggregator' | 'direct'
+  // 'unassigned' is a control whose devices were all unassigned; its group is
+  // UNASSIGNED_KEY and its deviceIDs are empty.
+  groupKind: 'aggregator' | 'direct' | 'unassigned'
   scope: 'device' | 'fsa'
   fsaID?: string
   deviceIDs: string[]
@@ -49,6 +51,8 @@ export function rememberLookAhead(supported: boolean): void {
 // forgetLookAhead resets the memory; the tests call it.
 export const forgetLookAhead = (): void => rememberLookAhead(false)
 
+export const UNASSIGNED_KEY = 'unassigned'
+
 export const controlEventsPath = (windowSeconds: number): string =>
   `/api/derms/control-events?window=${windowSeconds}&scope=all`
 
@@ -59,7 +63,7 @@ function isEvent(v: unknown): v is ControlEvent {
   const e = v as Record<string, unknown>
   return (
     typeof e.group === 'string' &&
-    (e.groupKind === 'aggregator' || e.groupKind === 'direct') &&
+    (e.groupKind === 'aggregator' || e.groupKind === 'direct' || e.groupKind === 'unassigned') &&
     (e.scope === 'device' || e.scope === 'fsa') &&
     (e.fsaID === undefined || typeof e.fsaID === 'string') &&
     isStrings(e.deviceIDs) &&
@@ -122,18 +126,20 @@ export interface Lane {
 
 // One lane per aggregator in the order the power chart draws them, then
 // Direct, labelled as the legend labels them. A group the power answer does
-// not list still gets a lane after those, so no event goes undrawn.
+// not list still gets a lane after those, so no event goes undrawn, and
+// "Unassigned" comes last, only when an event sits in it.
 export function lanesFor(answer: PowerAnswer, events: ControlEvent[], labelOf: (lfdi: string) => string): Lane[] {
   const per = answer.aggregatorEnergy
   const keys = per !== null && per.length > 0 ? per.map((e) => e.key) : [...answer.aggregators, DIRECT_KEY]
   const known = new Set(keys)
   for (const e of events) {
-    if (!known.has(e.group)) {
+    if (e.group !== UNASSIGNED_KEY && !known.has(e.group)) {
       known.add(e.group)
       keys.push(e.group)
     }
   }
-  const labels = aggregatorKeyLabels(keys, labelOf)
+  if (events.some((e) => e.group === UNASSIGNED_KEY)) keys.push(UNASSIGNED_KEY)
+  const labels = aggregatorKeyLabels(keys, (key) => (key === UNASSIGNED_KEY ? 'Unassigned' : labelOf(key)))
   return keys.map((key, i) => ({ key, label: labels[i] }))
 }
 

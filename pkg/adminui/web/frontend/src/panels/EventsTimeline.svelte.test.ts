@@ -69,6 +69,16 @@ describe('EventsTimeline', () => {
     unmount()
   })
 
+  it('draws an unassigned control as a bar in a last lane labelled Unassigned', async () => {
+    reply(wireEvents([wireEvent({ group: 'unassigned', groupKind: 'unassigned', deviceIDs: [], mrid: 'u' })]))
+    const { unmount } = mount(0)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(screen.getAllByTestId('events-lane-label').map((e) => e.textContent)).toEqual(['AGG1...', 'AGG2...', 'Direct', 'Unassigned'])
+    const lane = screen.getAllByTestId('events-lane')[3]
+    expect(within(lane).getByTestId('events-bar')).toHaveTextContent('discharge 5.0 kW')
+    unmount()
+  })
+
   it('marks a DERMS event and no admin one', async () => {
     reply(wireEvents([wireEvent({ mrid: 'a', origin: 'derms' }), wireEvent({ mrid: 'b', origin: 'admin', group: 'AGG2' })]))
     const { unmount } = mount()

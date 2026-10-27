@@ -23,6 +23,14 @@ describe('parseControlEvents', () => {
     expect(parseControlEvents({ ...wireEvents([]), aheadEnd: 'x' })).toBeNull()
   })
 
+  it('accepts an unassigned event with no device ids instead of refusing the reply', () => {
+    const got = parseControlEvents(wireEvents([wireEvent({ group: 'unassigned', groupKind: 'unassigned', deviceIDs: [] }), wireEvent({ mrid: 'b' })]))
+    expect(got?.events.map((e) => [e.group, e.groupKind, e.deviceIDs])).toEqual([
+      ['unassigned', 'unassigned', []],
+      ['AGG1', 'aggregator', ['D1']],
+    ])
+  })
+
   it('reads status unknown and a null modes as none instead of refusing the reply', () => {
     const wire = wireEvents([{ ...wireEvent({ mrid: 'a', status: 'unknown' }), modes: null } as never, wireEvent({ mrid: 'b' })])
     const got = parseControlEvents(wire)
@@ -80,6 +88,18 @@ describe('lanesFor', () => {
       { key: 'A', label: 'name-A' },
       { key: 'direct', label: 'Direct' },
     ])
+  })
+
+  it('puts Unassigned last, after Direct and an unlisted group, only when an event is in it', () => {
+    const a = answer({ aggregatorEnergy: [energy('A'), energy('direct')] })
+    const un = wireEvent({ group: 'unassigned', groupKind: 'unassigned', deviceIDs: [] })
+    expect(lanesFor(a, [un, wireEvent({ group: 'Z' })], labelOf)).toEqual([
+      { key: 'A', label: 'name-A' },
+      { key: 'direct', label: 'Direct' },
+      { key: 'Z', label: 'name-Z' },
+      { key: 'unassigned', label: 'Unassigned' },
+    ])
+    expect(lanesFor(a, [], labelOf).map((l) => l.key)).toEqual(['A', 'direct'])
   })
 
   it('falls back to the aggregators then Direct, and adds a lane for an unlisted group', () => {

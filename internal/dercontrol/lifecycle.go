@@ -33,6 +33,10 @@ type LifecycleRecord struct {
 	// DERMS request, and empty for an operator-issued one (#1155). omitempty
 	// keeps a plain record byte-identical to one written before the field.
 	Origin string `json:",omitempty"`
+
+	// FleetTotal is true on a copy of a DERMS grid share (#1156): its copies
+	// carry one fleet-wide target, and the ledger counts them once.
+	FleetTotal bool `json:",omitempty"`
 }
 
 // Where a control came from. A record stores OriginDERMS or nothing, and

@@ -78,7 +78,7 @@ func TestGridRequestReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
 		Fleets: commitment.Resolver{Devices: stores.EndDevices, Managers: managers}}
 	fsaCtlH := &handler.AdminFSAControlHandler{FSAs: fsaH, Controls: ctlH, Issuer: issuer}
 	fsaH.Replicas = fsaCtlH
-	gridH := &handler.AdminGridRequestHandler{Controls: fsaCtlH, Aggregators: managers, DERs: stores.DERs, Capabilities: stores.DERCapabilities}
+	gridH := &handler.AdminGridRequestHandler{Controls: fsaCtlH, Aggregators: managers, DERs: stores.DERs, Capabilities: stores.DERCapabilities, MaxDeviceW: dercontrol.DefaultMaxNameplateW}
 
 	rec := httptest.NewRecorder()
 	body := `{"rows":[{"direction":"discharge","x":20,"y":3,"durationSeconds":900}]}`

@@ -351,6 +351,9 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if stores.MirrorReadingMaxPerSeries, err = cfg.EffectiveMirrorReadingMaxPerSeries(); err != nil {
 		return nil, nil, err
 	}
+	if stores.DERMSMaxDeviceW, err = cfg.EffectiveDERMSMaxDeviceW(); err != nil {
+		return nil, nil, err
+	}
 	if dir := cfg.EffectivePowerHistoryDir(); dir != "" {
 		retention, err := cfg.EffectivePowerHistoryRetention()
 		if err != nil {

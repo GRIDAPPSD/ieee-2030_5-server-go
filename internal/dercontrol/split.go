@@ -20,6 +20,11 @@ type SplitShare struct {
 	TargetW *sep2.ActivePower
 }
 
+// DefaultMaxNameplateW is the default ceiling on one device's rtgMaxW as a
+// split weight (#1156): a device reporting more is weighted as one with no
+// nameplate, so no device can steer a split by overstating its rating.
+const DefaultMaxNameplateW = 1_000_000
+
 // Errors SplitTarget refuses a request with.
 var (
 	ErrSplitRequest     = errors.New("dercontrol: split needs x of at least 1, an allowed multiplier y, a sign of 1 or -1 and positive weights")

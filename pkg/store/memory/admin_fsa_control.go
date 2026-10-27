@@ -64,8 +64,11 @@ type GridShare struct {
 	Devices           int     `json:"devices"`
 	WeightW           float64 `json:"weightW"`
 	TotalWeightW      float64 `json:"totalWeightW"`
-	// DefaultedDevices are the device ids weighted at the test default.
+	// DefaultedDevices are the device ids weighted at the test default for
+	// reporting no nameplate, and OverCapDevices those whose nameplate was
+	// over the per-device cap.
 	DefaultedDevices []string `json:"defaultedDevices,omitempty"`
+	OverCapDevices   []string `json:"overCapDevices,omitempty"`
 	// Units is the share in units of 10^RequestMultiplier W before encoding.
 	Units int64 `json:"units"`
 }
@@ -81,6 +84,7 @@ func (c FSAControl) Copy() FSAControl {
 	if c.GridShare != nil {
 		g := *c.GridShare
 		g.DefaultedDevices = slices.Clone(c.GridShare.DefaultedDevices)
+		g.OverCapDevices = slices.Clone(c.GridShare.OverCapDevices)
 		out.GridShare = &g
 	}
 	return out

@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -40,6 +43,9 @@ type AdminGridRequestHandler struct {
 	}
 	DERs         store.ScopedReader[sep2.DER]
 	Capabilities store.ScopedReader[sep2.DERCapability]
+	// MaxDeviceW caps one device's nameplate as a split weight; a device
+	// reporting more is weighted at the test default. It must be positive.
+	MaxDeviceW int64
 }
 
 // Bounds of a batch. defaultNameplateW is the weight of a device that
@@ -74,6 +80,17 @@ type GridRowRefusal struct {
 	Row           int           `json:"row"`
 	Code          string        `json:"code"`
 	ConflictsWith *GridConflict `json:"conflictsWith,omitempty"`
+	// AggregatorLFDI names the aggregator whose share of the row is refused,
+	// when the refusal is that aggregator's.
+	AggregatorLFDI string `json:"aggregatorLFDI,omitempty"`
+}
+
+// GridAggregatorRefusal is an aggregator a batch cannot reach: a device of
+// its fleet that cannot be assigned to its fleet FSA, or holds no copy.
+type GridAggregatorRefusal struct {
+	AggregatorLFDI string `json:"aggregatorLFDI"`
+	Device         string `json:"device"`
+	Code           string `json:"code"`
 }
 
 // GridConflict is what a row overlaps: another row of the batch, or a live
@@ -91,20 +108,25 @@ type GridRequestRefused struct {
 	Error string           `json:"error"`
 	Code  string           `json:"code"`
 	Rows  []GridRowRefusal `json:"rows"`
+	// Aggregators lists every aggregator refused, for aggregator_unavailable.
+	Aggregators []GridAggregatorRefusal `json:"aggregators,omitempty"`
 }
 
 // GridShareView is one aggregator's share of a row. TargetW is nil, and
 // Control absent, for a share that encodes to zero, which is not issued.
 type GridShareView struct {
-	AggregatorLFDI   string          `json:"aggregatorLFDI"`
-	FSA              string          `json:"fsa"`
-	Program          string          `json:"program"`
-	Devices          int             `json:"devices"`
-	WeightW          float64         `json:"weightW"`
-	DefaultedDevices []string        `json:"defaultedDevices"`
-	TargetW          *frScaled       `json:"targetW"`
-	Issued           bool            `json:"issued"`
-	Control          *FSAControlView `json:"control,omitempty"`
+	AggregatorLFDI   string   `json:"aggregatorLFDI"`
+	FSA              string   `json:"fsa"`
+	Program          string   `json:"program"`
+	Devices          int      `json:"devices"`
+	WeightW          float64  `json:"weightW"`
+	DefaultedDevices []string `json:"defaultedDevices"`
+	// OverCapDevices are weighted at the default because their rtgMaxW is
+	// over the per-device cap; DefaultedDevices reported none.
+	OverCapDevices []string        `json:"overCapDevices"`
+	TargetW        *frScaled       `json:"targetW"`
+	Issued         bool            `json:"issued"`
+	Control        *FSAControlView `json:"control,omitempty"`
 }
 
 // GridRowView is one row as split and issued. RequestedW is signed like
@@ -142,13 +164,18 @@ type gridRow struct {
 }
 
 // gridFleet is one available aggregator and the basis of its weight.
+// devices are the managed devices its shares reach; assigned are those
+// already on its fleet FSA with a copy of its program, which a check before
+// any write can target. fsaID and tmplID are empty until the FSA exists.
 type gridFleet struct {
 	lfdi      string
 	fsaID     string
 	tmplID    string
 	devices   []string
+	assigned  []string
 	weight    *big.Rat
 	defaulted []string
+	overCap   []string
 }
 
 // gridShare ties one issued control to its row and fleet.
@@ -158,7 +185,7 @@ type gridShare struct {
 }
 
 func (h *AdminGridRequestHandler) wired(w http.ResponseWriter, r *http.Request) bool {
-	if h.Controls == nil || h.Aggregators == nil || h.DERs == nil || h.Capabilities == nil {
+	if h.Controls == nil || h.Aggregators == nil || h.DERs == nil || h.Capabilities == nil || h.MaxDeviceW <= 0 {
 		writeError(w, http.StatusInternalServerError, templateInternalError)
 		return false
 	}
@@ -200,7 +227,7 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 		fh.programMu.Lock()
 		defer fh.programMu.Unlock()
 		ctx := r.Context()
-		fleets, err := h.availableFleets(r)
+		fleets, unavailable, err := h.readFleets(ctx)
 		if err != nil {
 			fh.templateFailed(w, r, "grid_fleets", err)
 			return
@@ -219,10 +246,30 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 			h.refuseBatch(w, r, http.StatusUnprocessableEntity, "rows_invalid", "one or more rows are invalid", refused)
 			return
 		}
-		issues := h.gridIssues(batch, rows, fleets, shares)
-		res, err := h.Controls.issueAcrossAll(ctx, issues, h.overlapCheck(ctx, shares))
+		if len(unavailable) > 0 {
+			h.refuseUnavailable(w, r, unavailable, fleets, shares)
+			return
+		}
+
+		// Every check runs before the fleet FSAs are reconciled, so a refused
+		// batch assigns and unassigns nothing.
+		check := h.overlapCheck(ctx, shares)
+		if err := h.Controls.planAcrossAll(ctx, h.gridIssues(batch, rows, fleets, shares, true), check); err != nil {
+			h.issueFailed(w, r, batch, err, fleets, shares, &logged)
+			return
+		}
+		unavailable, err = h.reconcileFleets(r, fleets)
 		if err != nil {
-			h.issueFailed(w, r, err, shares, &logged)
+			fh.templateFailed(w, r, "grid_reconcile", err)
+			return
+		}
+		if len(unavailable) > 0 {
+			h.refuseUnavailable(w, r, unavailable, fleets, shares)
+			return
+		}
+		res, err := h.Controls.issueAcrossAll(ctx, h.gridIssues(batch, rows, fleets, shares, false), check)
+		if err != nil {
+			h.issueFailed(w, r, batch, err, fleets, shares, &logged)
 			return
 		}
 
@@ -340,74 +387,185 @@ func shareRequest(row gridRow, target sep2.ActivePower, description string) derc
 	return req
 }
 
-// availableFleets returns every aggregator with an EndDevice record whose
-// fleet FSA, once reconciled, reaches at least one device, sorted by LFDI,
-// with each one's weight. The caller holds programMu.
-func (h *AdminGridRequestHandler) availableFleets(r *http.Request) ([]gridFleet, error) {
-	ctx := r.Context()
+// readFleets returns every aggregator with an EndDevice record that manages
+// at least one device with one, sorted by LFDI, with each one's weight, and
+// the devices of those fleets that cannot be assigned or hold no copy. It
+// writes nothing. The caller holds programMu.
+func (h *AdminGridRequestHandler) readFleets(ctx context.Context) ([]gridFleet, []GridAggregatorRefusal, error) {
 	fh := h.Controls.FSAs
 	aggregators := slices.Clone(h.Aggregators.Managers(ctx))
 	slices.Sort(aggregators)
 	var out []gridFleet
+	var unavailable []GridAggregatorRefusal
 	for _, lfdi := range aggregators {
 		own, err := fh.fleetDeviceID(ctx, lfdi)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if own == "" {
 			continue
 		}
-		fsaID, err := fh.fleetFSALocked(r, lfdi)
+		want, err := fh.fleetWant(ctx, lfdi)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		devices := fh.AdminFSAs.Devices(ctx, fsaID)
-		if len(devices) == 0 {
+		if len(want) == 0 {
 			continue
 		}
-		templates := fh.AdminFSAs.Templates(ctx, fsaID)
-		if len(templates) != 1 {
-			return nil, fmt.Errorf("fleet FSA %s has %d programs, want 1", fsaID, len(templates))
-		}
-		missing, err := h.Controls.missingCopy(ctx, fsaID, templates[0], devices)
+		f := gridFleet{lfdi: lfdi, devices: want, weight: new(big.Rat)}
+		refused, err := h.readAssigned(ctx, &f)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if missing != "" {
-			return nil, fmt.Errorf("fleet FSA %s: device %s holds no copy of its program", fsaID, missing)
-		}
-		f := gridFleet{lfdi: lfdi, fsaID: fsaID, tmplID: templates[0].ID, devices: devices, weight: new(big.Rat)}
-		for _, dev := range devices {
-			w, err := h.nameplateW(ctx, dev)
+		unavailable = append(unavailable, refused...)
+		for _, dev := range want {
+			w, over, err := h.nameplateW(ctx, dev)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			if w == nil {
+			switch {
+			case over:
+				f.overCap = append(f.overCap, dev)
 				w = big.NewRat(defaultNameplateW, 1)
+			case w == nil:
 				f.defaulted = append(f.defaulted, dev)
+				w = big.NewRat(defaultNameplateW, 1)
 			}
 			f.weight.Add(f.weight, w)
 		}
 		out = append(out, f)
 	}
-	return out, nil
+	return out, unavailable, nil
+}
+
+// readAssigned fills f's fleet FSA, program and assigned devices when the FSA
+// exists, and returns each of f's devices that holds no copy of the program
+// though assigned, or holds a program the copy would clash with.
+func (h *AdminGridRequestHandler) readAssigned(ctx context.Context, f *gridFleet) ([]GridAggregatorRefusal, error) {
+	admin := h.Controls.FSAs.AdminFSAs
+	fsaID, ok := admin.FleetFSA(f.lfdi)
+	if !ok {
+		return nil, nil
+	}
+	templates := admin.Templates(ctx, fsaID)
+	switch len(templates) {
+	case 0:
+		// The FSA's program is written when it is reconciled.
+		return nil, nil
+	case 1:
+	default:
+		return nil, fmt.Errorf("fleet FSA %s has %d programs, want 1", fsaID, len(templates))
+	}
+	f.fsaID, f.tmplID = fsaID, templates[0].ID
+	assigned := admin.Devices(ctx, fsaID)
+	var refused []GridAggregatorRefusal
+	for _, dev := range f.devices {
+		present, err := h.Controls.FSAs.Copies.Check(ctx, dev, fsaID, templates[0])
+		isAssigned := slices.Contains(assigned, dev)
+		switch {
+		case errors.Is(err, fsaprogram.ErrCopyConflict):
+			refused = append(refused, GridAggregatorRefusal{AggregatorLFDI: f.lfdi, Device: dev, Code: "device_not_assignable"})
+		case err != nil:
+			return nil, err
+		case isAssigned && present:
+			f.assigned = append(f.assigned, dev)
+		case isAssigned:
+			refused = append(refused, GridAggregatorRefusal{AggregatorLFDI: f.lfdi, Device: dev, Code: "device_without_copy"})
+		}
+	}
+	return refused, nil
+}
+
+// reconcileFleets makes each fleet FSA, and its assignment, match the
+// fleets as read, returning every device that could not be assigned or
+// unassigned. The caller holds programMu.
+func (h *AdminGridRequestHandler) reconcileFleets(r *http.Request, fleets []gridFleet) ([]GridAggregatorRefusal, error) {
+	fh := h.Controls.FSAs
+	var refused []GridAggregatorRefusal
+	for n := range fleets {
+		f := &fleets[n]
+		fsaID, err := fh.ensureFleetFSA(r, f.lfdi)
+		if err != nil {
+			return nil, err
+		}
+		err = fh.reconcileFleet(r, fsaID, f.lfdi)
+		devErrs, other := splitFleetDeviceErrors(err)
+		if other != nil {
+			return nil, other
+		}
+		for _, d := range devErrs {
+			refused = append(refused, GridAggregatorRefusal{AggregatorLFDI: f.lfdi, Device: d.Device, Code: "device_not_" + d.Op + "able"})
+		}
+		templates := fh.AdminFSAs.Templates(r.Context(), fsaID)
+		if len(templates) != 1 {
+			return nil, fmt.Errorf("fleet FSA %s has %d programs, want 1", fsaID, len(templates))
+		}
+		f.fsaID, f.tmplID = fsaID, templates[0].ID
+		if len(devErrs) > 0 {
+			continue
+		}
+		missing, err := h.Controls.missingCopy(r.Context(), fsaID, templates[0], f.devices)
+		if err != nil {
+			return nil, err
+		}
+		if missing != "" {
+			refused = append(refused, GridAggregatorRefusal{AggregatorLFDI: f.lfdi, Device: missing, Code: "device_without_copy"})
+		}
+	}
+	return refused, nil
+}
+
+// splitFleetDeviceErrors separates the device failures of a reconcile from
+// any other error it joined.
+func splitFleetDeviceErrors(err error) ([]*FleetDeviceError, error) {
+	if err == nil {
+		return nil, nil
+	}
+	errs := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	}
+	var devs []*FleetDeviceError
+	var other []error
+	for _, e := range errs {
+		var d *FleetDeviceError
+		if errors.As(e, &d) {
+			devs = append(devs, d)
+			continue
+		}
+		other = append(other, e)
+	}
+	return devs, errors.Join(other...)
+}
+
+// refuseUnavailable answers 409 for a batch an aggregator cannot take,
+// naming each such device and each row with a share on its aggregator.
+func (h *AdminGridRequestHandler) refuseUnavailable(w http.ResponseWriter, r *http.Request, unavailable []GridAggregatorRefusal, fleets []gridFleet, shares []gridShare) {
+	var rows []GridRowRefusal
+	for _, s := range issuedShares(shares) {
+		lfdi := fleets[s.fleet].lfdi
+		if slices.ContainsFunc(unavailable, func(u GridAggregatorRefusal) bool { return u.AggregatorLFDI == lfdi }) {
+			rows = append(rows, GridRowRefusal{Row: s.row + 1, Code: "aggregator_unavailable", AggregatorLFDI: lfdi})
+		}
+	}
+	h.writeRefusal(w, r, http.StatusConflict, GridRequestRefused{Error: "an aggregator's fleet cannot take this batch", Code: "aggregator_unavailable", Rows: rows, Aggregators: unavailable})
 }
 
 // nameplateW is the sum of the positive rtgMaxW of the device's DERs, or nil
-// when none reports one. A read that fails is an error, never a default.
-func (h *AdminGridRequestHandler) nameplateW(ctx context.Context, edevID string) (*big.Rat, error) {
+// when none reports one; over reports a sum above MaxDeviceW. A read that
+// fails is an error, never a default.
+func (h *AdminGridRequestHandler) nameplateW(ctx context.Context, edevID string) (sum *big.Rat, over bool, err error) {
 	ders, err := h.DERs.List(ctx, edevID, store.ListOptions{Unbounded: true})
 	if err != nil {
-		return nil, fmt.Errorf("DERs of %s: %w", edevID, err)
+		return nil, false, fmt.Errorf("DERs of %s: %w", edevID, err)
 	}
-	var sum *big.Rat
 	for _, der := range ders.Items {
 		c, err := h.Capabilities.Get(ctx, edevID+"/"+pathTail(der.Href), singletonKey)
 		if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("DERCapability of %s: %w", edevID, err)
+			return nil, false, fmt.Errorf("DERCapability of %s: %w", edevID, err)
 		}
 		if c.RTGMaxW == nil || c.RTGMaxW.Value <= 0 {
 			continue
@@ -417,7 +575,7 @@ func (h *AdminGridRequestHandler) nameplateW(ctx context.Context, edevID string)
 		}
 		sum.Add(sum, scaledMagnitude(int64(c.RTGMaxW.Value), c.RTGMaxW.Multiplier))
 	}
-	return sum, nil
+	return sum, sum != nil && sum.Cmp(big.NewRat(h.MaxDeviceW, 1)) > 0, nil
 }
 
 // splitRows splits every row over fleets, returning one share per row and
@@ -446,23 +604,26 @@ func splitRows(rows []gridRow, fleets []gridFleet) ([]gridShare, []GridRowRefusa
 	return shares, refused
 }
 
-// gridIssues is one FSA control per issued share, in share order.
-func (h *AdminGridRequestHandler) gridIssues(batch string, rows []gridRow, fleets []gridFleet, shares []gridShare) []fsaIssue {
+// gridIssues is one FSA control per issued share, in share order. A check
+// run targets only the devices already assigned, since nothing is assigned
+// before every check passes.
+func (h *AdminGridRequestHandler) gridIssues(batch string, rows []gridRow, fleets []gridFleet, shares []gridShare, check bool) []fsaIssue {
 	var out []fsaIssue
-	for _, s := range shares {
-		if s.split.TargetW == nil {
-			continue
-		}
+	for _, s := range issuedShares(shares) {
 		row, f := rows[s.row], fleets[s.fleet]
 		weight, _ := f.weight.Float64()
 		basis := &memory.GridShare{
 			Batch: batch, Row: s.row + 1, AggregatorLFDI: f.lfdi, Direction: *directionWord(row.sign),
 			RequestValue: row.x, RequestMultiplier: row.y, Devices: len(f.devices), WeightW: weight,
-			TotalWeightW: totalWeightW(fleets), DefaultedDevices: slices.Clone(f.defaulted), Units: s.split.Units,
+			TotalWeightW: totalWeightW(fleets), DefaultedDevices: slices.Clone(f.defaulted),
+			OverCapDevices: slices.Clone(f.overCap), Units: s.split.Units,
 		}
 		req := shareRequest(row, *s.split.TargetW, "DERMS "+batch+" row "+strconv.Itoa(s.row+1))
-		is := fsaIssue{req: req, devices: f.devices, fsaID: f.fsaID, tmplID: f.tmplID,
+		is := fsaIssue{req: req, devices: f.devices, fsaID: f.fsaID, tmplID: f.tmplID, fleetTotal: true,
 			record: h.Controls.recorder(f.fsaID, f.tmplID, dercontrol.OriginDERMS, basis)}
+		if check {
+			is.devices = f.assigned
+		}
 		if row.relative {
 			is.startOffset = row.offset
 		}
@@ -579,28 +740,43 @@ func (h *AdminGridRequestHandler) liveBlocks(ctx context.Context, now int64) []l
 	return out
 }
 
-// issueFailed answers a batch the issuer did not write, naming every row it
-// refused. A failure that is not a refusal goes to the control handler's
-// answer for a failed create.
-func (h *AdminGridRequestHandler) issueFailed(w http.ResponseWriter, r *http.Request, err error, shares []gridShare, logged *derControlLog) {
-	var overlap *gridRowsConflict
-	if errors.As(err, &overlap) {
-		h.refuseBatch(w, r, http.StatusConflict, "rows_conflict", "one or more rows overlap a scheduled block", overlap.rows)
+// issueFailed answers a batch the issuer did not write: every row refused,
+// by the overlap check and by the issuer together, or the controls an undo
+// could not remove. Any other failure goes to the control handler's answer
+// for a failed create.
+func (h *AdminGridRequestHandler) issueFailed(w http.ResponseWriter, r *http.Request, batch string, err error, fleets []gridFleet, shares []gridShare, logged *derControlLog) {
+	issued := issuedShares(shares)
+	var undoAll *dercontrol.AcrossUndoError
+	var undo *dercontrol.UndoError
+	switch {
+	case errors.As(err, &undoAll):
+		h.incomplete(w, r, batch, undoAll.Kept, fleets, issued)
+		return
+	case errors.As(err, &undo) && len(issued) == 1:
+		h.incomplete(w, r, batch, dercontrol.AcrossItemErrors{{Item: 0, Err: undo}}, fleets, issued)
 		return
 	}
-	items, ok := err.(dercontrol.AcrossItemErrors)
-	if !ok {
+	var overlap *gridRowsConflict
+	var items dercontrol.AcrossItemErrors
+	hasOverlap, hasItems := errors.As(err, &overlap), errors.As(err, &items)
+	if !hasOverlap && !hasItems {
 		h.failed(w, r, err, logged)
 		return
 	}
-	issued := issuedShares(shares)
-	status := http.StatusConflict
 	var refused []GridRowRefusal
+	if hasOverlap {
+		refused = append(refused, overlap.rows...)
+	}
+	status, code := http.StatusConflict, "rows_conflict"
 	for _, it := range items {
 		row := issued[it.Item].row + 1
 		var conflict *commitment.ConflictError
 		var refusal *dercontrol.RefusalError
 		switch {
+		case errors.Is(it.Err, dercontrol.ErrAcrossOverlap):
+			// Two rows of the batch overlap; the check names them.
+			refused = appendRowRefusal(refused, GridRowRefusal{Row: row, Code: "overlapping_request"})
+			continue
 		case errors.As(it.Err, &conflict):
 			if _, known := conflictMessages[conflict.Code]; !known {
 				h.failed(w, r, it.Err, logged)
@@ -614,8 +790,10 @@ func (h *AdminGridRequestHandler) issueFailed(w http.ResponseWriter, r *http.Req
 			h.failed(w, r, it.Err, logged)
 			return
 		}
+		code = "rows_refused"
 	}
-	h.refuseBatch(w, r, status, "rows_refused", "one or more rows were refused", refused)
+	slices.SortStableFunc(refused, func(a, b GridRowRefusal) int { return a.Row - b.Row })
+	h.refuseBatch(w, r, status, code, "one or more rows were refused", refused)
 }
 
 // appendRowRefusal adds ref unless its row is already named: every share of
@@ -627,27 +805,86 @@ func appendRowRefusal(refused []GridRowRefusal, ref GridRowRefusal) []GridRowRef
 	return append(refused, ref)
 }
 
-// failed answers a batch that stopped for a reason other than a refusal.
+// failed answers a batch that stopped for a reason other than a refusal or
+// a failed undo, which wrote nothing that remains.
 func (h *AdminGridRequestHandler) failed(w http.ResponseWriter, r *http.Request, err error, logged *derControlLog) {
-	var undo *dercontrol.UndoError
-	if errors.As(err, &undo) && undo.Step == dercontrol.UndoStepStoreRecord {
-		if fsaID, rec, ok := h.Controls.FSAs.AdminFSAs.FSAControlByMRID(undo.MRID); ok {
-			h.Controls.recordKept(w, r, "/api/fsas/"+fsaID+"/der-programs/"+rec.TemplateID+"/controls", undo)
-			return
-		}
-	}
 	h.Controls.Controls.issueFailed(w, r, gridRequestOp, err, "", gridRequestRouteHref, logged)
+}
+
+// GridKeptControl is a share an undo could not remove. OnDevices is true when
+// a device may hold a copy; the record is kept either way, held from
+// replication, and the cancel href ends it.
+type GridKeptControl struct {
+	Row            int    `json:"row"`
+	AggregatorLFDI string `json:"aggregatorLFDI"`
+	FSA            string `json:"fsa"`
+	Program        string `json:"program"`
+	ID             string `json:"id"`
+	MRID           string `json:"mRID"`
+	OnDevices      bool   `json:"onDevices"`
+	CancelHref     string `json:"cancelHref"`
+}
+
+// GridRequestIncomplete is the 500 body of a batch that failed and could not
+// undo every share.
+type GridRequestIncomplete struct {
+	Error string            `json:"error"`
+	Batch string            `json:"batch"`
+	Kept  []GridKeptControl `json:"kept"`
+}
+
+// incomplete answers a batch whose undo left the kept shares: each is named,
+// held from replication, and its devices notified when a copy may remain.
+func (h *AdminGridRequestHandler) incomplete(w http.ResponseWriter, r *http.Request, batch string, kept dercontrol.AcrossItemErrors, fleets []gridFleet, issued []gridShare) {
+	ctx := r.Context()
+	ch, admin := h.Controls.Controls, h.Controls.FSAs.AdminFSAs
+	out := GridRequestIncomplete{
+		Error: "the batch failed and not every share could be undone; each listed share is kept and not sent to devices assigned later. " +
+			"Devices may hold those with onDevices true. Cancel each with its cancelHref.",
+		Batch: batch,
+		Kept:  []GridKeptControl{},
+	}
+	var mrids []string
+	onDevices := 0
+	for _, it := range kept {
+		var undo *dercontrol.UndoError
+		if !errors.As(it.Err, &undo) {
+			continue
+		}
+		s := issued[it.Item]
+		f := fleets[s.fleet]
+		admin.HoldFSAControl(f.fsaID, f.tmplID, undo.ID)
+		if undo.ControlKept {
+			onDevices++
+			for _, dev := range f.devices {
+				ch.notify(ctx, dercontrol.Scope{EndDeviceID: dev, FSAID: f.fsaID, DERProgramID: f.tmplID})
+			}
+		}
+		route := "/api/fsas/" + f.fsaID + "/der-programs/" + f.tmplID + "/controls/" + undo.ID + "/cancel"
+		out.Kept = append(out.Kept, GridKeptControl{Row: s.row + 1, AggregatorLFDI: f.lfdi, FSA: f.fsaID, Program: f.tmplID,
+			ID: undo.ID, MRID: undo.MRID, OnDevices: undo.ControlKept, CancelHref: route})
+		mrids = append(mrids, logsafe.Str(undo.MRID))
+	}
+	ch.log(r, slog.LevelError, "admin: DERMS grid request left shares after a failed undo", "der_grid_request_incomplete", []any{
+		"code", refuseInternal.code, "batch", logsafe.Str(batch), "kept_mrids", mrids, "on_devices", onDevices})
+	writeJSON(w, http.StatusInternalServerError, out)
 }
 
 // refuseBatch answers a refusal of the batch and writes its one log line.
 func (h *AdminGridRequestHandler) refuseBatch(w http.ResponseWriter, r *http.Request, status int, code, message string, rows []GridRowRefusal) {
-	if rows == nil {
-		rows = []GridRowRefusal{}
+	h.writeRefusal(w, r, status, GridRequestRefused{Error: message, Code: code, Rows: rows})
+}
+
+// writeRefusal writes body with status and its one log line.
+func (h *AdminGridRequestHandler) writeRefusal(w http.ResponseWriter, r *http.Request, status int, body GridRequestRefused) {
+	if body.Rows == nil {
+		body.Rows = []GridRowRefusal{}
 	}
 	var l derControlLog
-	l.add("rows_refused", len(rows))
-	logRefusal(h.Controls.Controls.logger(), r, refusedEvent(gridRequestOp), derControlRefusal{status: status, code: code, message: message}, &l)
-	writeJSON(w, status, GridRequestRefused{Error: message, Code: code, Rows: rows})
+	l.add("rows_refused", len(body.Rows))
+	l.add("aggregators_refused", len(body.Aggregators))
+	logRefusal(h.Controls.Controls.logger(), r, refusedEvent(gridRequestOp), derControlRefusal{status: status, code: body.Code, message: body.Error}, &l)
+	writeJSON(w, status, body)
 }
 
 // created is the 201 body: every row with every share, issued or not.
@@ -657,12 +894,17 @@ func (h *AdminGridRequestHandler) created(ctx context.Context, batch string, row
 	now := sep2time.Now().Unix()
 	out := GridRequestCreated{Batch: batch, Warnings: []string{}, NotificationAttempted: ch.Notifier != nil,
 		Persisted: ch.Persisted && fh.AdminFSAs.Persists()}
-	defaulted := 0
+	var defaulted, overCap []string
 	for _, f := range fleets {
-		defaulted += len(f.defaulted)
+		defaulted = append(defaulted, f.defaulted...)
+		overCap = append(overCap, f.overCap...)
 	}
-	if defaulted > 0 {
-		out.Warnings = append(out.Warnings, fmt.Sprintf("%d devices used the 5 kW test default (no nameplate reported)", defaulted))
+	if len(defaulted) > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("%d devices used the 5 kW test default (no nameplate reported)", len(defaulted)))
+	}
+	if len(overCap) > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("%d devices used the 5 kW test default (nameplate ignored, over cap of %d W): %s",
+			len(overCap), h.MaxDeviceW, strings.Join(overCap, ", ")))
 	}
 	views := make([]GridRowView, len(rows))
 	for n, row := range rows {
@@ -675,7 +917,7 @@ func (h *AdminGridRequestHandler) created(ctx context.Context, batch string, row
 		f := fleets[s.fleet]
 		weight, _ := f.weight.Float64()
 		sv := GridShareView{AggregatorLFDI: f.lfdi, FSA: f.fsaID, Program: f.tmplID, Devices: len(f.devices),
-			WeightW: weight, DefaultedDevices: append([]string{}, f.defaulted...)}
+			WeightW: weight, DefaultedDevices: append([]string{}, f.defaulted...), OverCapDevices: append([]string{}, f.overCap...)}
 		v := &views[s.row]
 		if t := s.split.TargetW; t != nil {
 			a := res[next]

@@ -372,6 +372,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	dermsMaxDeviceW, err := config.ParseDERMSMaxDeviceW(os.Getenv("SEP2_DERMS_MAX_DEVICE_W"))
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -475,6 +479,9 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// Unset by default (zero), which resolves to 48 hours; kept only
 		// with SEP2_DATA_DIR set.
 		PowerHistoryHours: powerHistoryHours,
+
+		// #1156: unset by default (zero), which resolves to 1000000 W.
+		DERMSMaxDeviceW: dermsMaxDeviceW,
 	}, nil
 }
 

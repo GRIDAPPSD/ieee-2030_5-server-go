@@ -148,6 +148,10 @@ type Stores struct {
 	MirrorReadingRetention    time.Duration
 	MirrorReadingMaxPerSeries int
 
+	// DERMSMaxDeviceW caps one device's nameplate as a DERMS split weight
+	// (#1156). Zero takes dercontrol.DefaultMaxNameplateW.
+	DERMSMaxDeviceW int64
+
 	// PowerHistory keeps the power route's final buckets across a restart.
 	// Nil without a data directory: the route then reads only its readings.
 	PowerHistory *handler.PowerHistory

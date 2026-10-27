@@ -71,8 +71,9 @@ func TestLedgerCommitmentsWalksEachStoreOnce(t *testing.T) {
 	}
 }
 
-// #1156: the copies of one DERMS share are one fleet total, listed once at
-// its value; the copies of an operator's FSA control are one per device.
+// #1156: the copies of one DERMS grid share are one fleet total, listed once
+// at its value. The copies of an operator's FSA control, and of a derms
+// control not marked a fleet total, are one per device.
 func TestLedgerCommitmentsCountsAFleetTotalOnce(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -80,11 +81,13 @@ func TestLedgerCommitmentsCountsAFleetTotalOnce(t *testing.T) {
 	second := strings.Repeat("D", 40)
 	must(t, f.devices.Create(ctx, "m2", sep2.EndDevice{LFDI: second}))
 	must(t, f.managers.Assign(ctx, aggLFDI, second))
-	derms := &dercontrol.LifecycleRecord{FleetKey: aggLFDI, Reach: 1, Origin: dercontrol.OriginDERMS}
+	share := &dercontrol.LifecycleRecord{FleetKey: aggLFDI, Reach: 1, Origin: dercontrol.OriginDERMS, FleetTotal: true}
+	perDevice := &dercontrol.LifecycleRecord{FleetKey: aggLFDI, Reach: 1, Origin: dercontrol.OriginDERMS}
 	admin := &dercontrol.LifecycleRecord{FleetKey: aggLFDI, Reach: 1}
 	for _, dev := range []string{managedID, "m2"} {
-		f.addControl(t, dev+"/fsa2/derp2", "S1", 20000, 600, derms)
+		f.addControl(t, dev+"/fsa2/derp2", "S1", 20000, 600, share)
 		f.addControl(t, dev+"/fsa3/derp3", "A1", 30000, 600, admin)
+		f.addControl(t, dev+"/fsa4/derp4", "P1", 40000, 600, perDevice)
 	}
 	l := commitment.NewLedger(f.grants(), f.controlSource())
 	got, err := l.Commitments(ctx, aggLFDI, 10000)
@@ -101,5 +104,8 @@ func TestLedgerCommitmentsCountsAFleetTotalOnce(t *testing.T) {
 	}
 	if counts["MRID-A1"] != 2 {
 		t.Errorf("operator FSA control listed %d times, want once per device copy", counts["MRID-A1"])
+	}
+	if counts["MRID-P1"] != 2 {
+		t.Errorf("derms control without the fleet total mark listed %d times, want once per device copy", counts["MRID-P1"])
 	}
 }

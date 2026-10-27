@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -62,7 +63,7 @@ func newGridFixture(t *testing.T) *gridFixture {
 	g := &gridFixture{dc: x.dc, f: x.f, fsa: x.h, ders: memory.NewScopedStore[sep2.DER](), caps: memory.NewScopedStore[sep2.DERCapability]()}
 	g.nameplate(t, "a1", &sep2.ActivePower{Value: 10, Multiplier: 3})
 	g.nameplate(t, "b1", &sep2.ActivePower{Value: 5000})
-	gh := &handler.AdminGridRequestHandler{Controls: x.h, Aggregators: x.dc.managers, DERs: g.ders, Capabilities: g.caps}
+	gh := &handler.AdminGridRequestHandler{Controls: x.h, Aggregators: x.dc.managers, DERs: g.ders, Capabilities: g.caps, MaxDeviceW: dercontrol.DefaultMaxNameplateW}
 	g.mux = http.NewServeMux()
 	g.mux.HandleFunc("POST /api/derms/grid-requests", gh.HandleCreate())
 	return g

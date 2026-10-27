@@ -7,6 +7,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -165,7 +166,11 @@ func newAdminGridRequestHandler(stores *Stores, fsaCtlH *handler.AdminFSAControl
 		slog.Error("admin: grid request route not mounted: the management pair store cannot list aggregators", "event", "grid_request_unmounted")
 		return nil
 	}
-	return &handler.AdminGridRequestHandler{Controls: fsaCtlH, Aggregators: managers, DERs: stores.DERs, Capabilities: stores.DERCapabilities}
+	maxW := stores.DERMSMaxDeviceW
+	if maxW == 0 {
+		maxW = dercontrol.DefaultMaxNameplateW
+	}
+	return &handler.AdminGridRequestHandler{Controls: fsaCtlH, Aggregators: managers, DERs: stores.DERs, Capabilities: stores.DERCapabilities, MaxDeviceW: maxW}
 }
 
 // CompleteFSAControlReplicas writes every live FSA control to each assigned

@@ -113,7 +113,7 @@ func TestIssueAcrossAll_LaterItemFailureUndoesEarlierItems(t *testing.T) {
 }
 
 // A record that cannot be removed in the undo of an earlier item is named,
-// and the item it belongs to is kept, so what remains is a prefix.
+// and its copies are still removed.
 func TestIssueAcrossAll_UndoFailureKeepsAPrefix(t *testing.T) {
 	inner := memory.NewScopedStore[sep2.DERControl]()
 	issuer, _, _, targets := acrossHarness(t, &failOnParent{ScopedStore: inner, parent: "d2/fsa/tmpl"}, "d1", "d2")
@@ -125,9 +125,13 @@ func TestIssueAcrossAll_UndoFailureKeepsAPrefix(t *testing.T) {
 		{Req: maxLimReq(4000), Targets: targets[:1], Record: stuck},
 		{Req: maxLimReq(4000), Targets: targets[1:], Record: recs.write},
 	}, nil)
+	var kept *AcrossUndoError
+	if !errors.As(err, &kept) || len(kept.Kept) != 1 || kept.Kept[0].Item != 0 {
+		t.Fatalf("err = %v, want an *AcrossUndoError naming item 0", err)
+	}
 	var undo *UndoError
-	if !errors.As(err, &undo) || undo.Step != UndoStepStoreRecord {
-		t.Fatalf("err = %v, want a *UndoError at the record step", err)
+	if !errors.As(kept.Kept[0].Err, &undo) || undo.Step != UndoStepStoreRecord || undo.ControlKept {
+		t.Fatalf("item 0 = %v, want a *UndoError at the record step with no copy kept", kept.Kept[0].Err)
 	}
 	if len(recs.ids) != 0 {
 		t.Errorf("the failed item's record is kept: %d", len(recs.ids))

@@ -43,6 +43,7 @@ type AdminFSAControlHandler struct {
 // *dercontrol.Issuer.
 type FSAControlIssuer interface {
 	IssueAcrossAll(ctx context.Context, items []dercontrol.Across, check dercontrol.AcrossCheck) ([]dercontrol.AcrossResult, error)
+	PlanAcrossAll(ctx context.Context, items []dercontrol.Across, check dercontrol.AcrossCheck) error
 	Replicate(ctx context.Context, replicas []dercontrol.Replica) ([]dercontrol.Result, error)
 }
 
@@ -260,6 +261,7 @@ type fsaIssue struct {
 	fsaID, tmplID string
 	record        dercontrol.RecordWriter
 	startOffset   int64
+	fleetTotal    bool
 }
 
 // issueAcross is issueAcrossAll for one control, returning its error as
@@ -280,6 +282,26 @@ func (h *AdminFSAControlHandler) issueAcross(ctx context.Context, req dercontrol
 // are written whole or not at all. With no device in any of them there is no
 // fleet to check, and only the records are written.
 func (h *AdminFSAControlHandler) issueAcrossAll(ctx context.Context, issues []fsaIssue, check dercontrol.AcrossCheck) ([]dercontrol.AcrossResult, error) {
+	var res []dercontrol.AcrossResult
+	err := h.withinIssueFleets(ctx, issues, func(items []dercontrol.Across) error {
+		var err error
+		res, err = h.Issuer.IssueAcrossAll(ctx, items, check)
+		return err
+	})
+	return res, err
+}
+
+// planAcrossAll is issueAcrossAll with every check and no write.
+func (h *AdminFSAControlHandler) planAcrossAll(ctx context.Context, issues []fsaIssue, check dercontrol.AcrossCheck) error {
+	return h.withinIssueFleets(ctx, issues, func(items []dercontrol.Across) error {
+		return h.Issuer.PlanAcrossAll(ctx, items, check)
+	})
+}
+
+// withinIssueFleets builds the issuer's items from issues and calls run with
+// them inside the commitment lock of every device's fleet, or without a lock
+// when no issue names a device.
+func (h *AdminFSAControlHandler) withinIssueFleets(ctx context.Context, issues []fsaIssue, run func([]dercontrol.Across) error) error {
 	var devices []string
 	for _, is := range issues {
 		devices = append(devices, is.devices...)
@@ -294,24 +316,20 @@ func (h *AdminFSAControlHandler) issueAcrossAll(ctx context.Context, issues []fs
 					Fleet: dercontrol.Fleet{Key: fleets[dev], Reach: controlReach, Check: checkIn(v)},
 				})
 			}
-			out = append(out, dercontrol.Across{Req: is.req, Targets: targets, Record: is.record, StartOffset: is.startOffset})
+			out = append(out, dercontrol.Across{Req: is.req, Targets: targets, Record: is.record, StartOffset: is.startOffset, FleetTotal: is.fleetTotal})
 		}
 		return out
 	}
 	if len(devices) == 0 {
-		return h.Issuer.IssueAcrossAll(ctx, items(nil, nil), check)
+		return run(items(nil, nil))
 	}
 	fleets, keys, err := h.fleetsOf(ctx, devices)
 	if err != nil {
-		return nil, err
-	}
-	var res []dercontrol.AcrossResult
-	err = h.Controls.withinFleets(ctx, keys, func(v commitment.View) error {
-		var err error
-		res, err = h.Issuer.IssueAcrossAll(ctx, items(v, fleets), check)
 		return err
+	}
+	return h.Controls.withinFleets(ctx, keys, func(v commitment.View) error {
+		return run(items(v, fleets))
 	})
-	return res, err
 }
 
 // fleetsOf resolves each device's fleet, returning the map and the distinct
@@ -623,10 +641,11 @@ func liveReplicas(ctx context.Context, admin *memory.AdminFSAStore, deviceID, fs
 				continue
 			}
 			out = append(out, dercontrol.Replica{
-				Target:  dercontrol.Target{Scope: dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID}},
-				ID:      rec.ID,
-				Control: controlOf(rec),
-				Origin:  rec.Origin,
+				Target:     dercontrol.Target{Scope: dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID}},
+				ID:         rec.ID,
+				Control:    controlOf(rec),
+				Origin:     rec.Origin,
+				FleetTotal: rec.GridShare != nil,
 			})
 		}
 	}

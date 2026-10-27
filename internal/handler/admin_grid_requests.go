@@ -584,13 +584,19 @@ func (h *AdminGridRequestHandler) nameplateW(ctx context.Context, edevID string)
 	return sum, sum != nil && sum.Cmp(big.NewRat(h.MaxDeviceW, 1)) > 0, nil
 }
 
-// splitRows splits every row over fleets, returning one share per row and
-// fleet in that order.
-func splitRows(rows []gridRow, fleets []gridFleet) ([]gridShare, []GridRowRefusal) {
+// fleetWeights is each fleet's weight, in fleet order, the input of a split.
+func fleetWeights(fleets []gridFleet) []*big.Rat {
 	weights := make([]*big.Rat, len(fleets))
 	for n, f := range fleets {
 		weights[n] = f.weight
 	}
+	return weights
+}
+
+// splitRows splits every row over fleets, returning one share per row and
+// fleet in that order.
+func splitRows(rows []gridRow, fleets []gridFleet) ([]gridShare, []GridRowRefusal) {
+	weights := fleetWeights(fleets)
 	var shares []gridShare
 	var refused []GridRowRefusal
 	for n, row := range rows {
@@ -789,30 +795,49 @@ type liveBlock struct {
 	window commitment.Window
 }
 
-// liveBlocks lists the rows of earlier batches with a share still live at
-// now, on any fleet FSA, once per row.
-func (h *AdminGridRequestHandler) liveBlocks(ctx context.Context, now int64) []liveBlock {
+// gridControl is one stored share and the fleet FSA holding it.
+type gridControl struct {
+	fsaID string
+	rec   memory.FSAControl
+}
+
+// gridControls lists every grid request share on the fleet FSAs, in FSA and
+// template order. It is the one scan of the shares: the overlap check, the
+// block view and the cancel routes all read through it.
+func (h *AdminGridRequestHandler) gridControls(ctx context.Context) []gridControl {
 	admin := h.Controls.FSAs.AdminFSAs
-	seen := map[[2]string]bool{}
-	var out []liveBlock
+	var out []gridControl
 	for _, fsaID := range admin.IDs(ctx) {
 		if admin.FleetAggregator(fsaID) == "" {
 			continue
 		}
 		for _, t := range admin.Templates(ctx, fsaID) {
 			for _, rec := range admin.FSAControls(ctx, fsaID, t.ID) {
-				g := rec.GridShare
-				if g == nil || !rec.Live(now) {
-					continue
+				if rec.GridShare != nil {
+					out = append(out, gridControl{fsaID: fsaID, rec: rec})
 				}
-				key := [2]string{g.Batch, strconv.Itoa(g.Row)}
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				out = append(out, liveBlock{batch: g.Batch, row: g.Row, window: commitment.Window{Start: rec.Start, Duration: rec.Duration}})
 			}
 		}
+	}
+	return out
+}
+
+// liveBlocks lists the rows of earlier batches with a share still live at
+// now, on any fleet FSA, once per row.
+func (h *AdminGridRequestHandler) liveBlocks(ctx context.Context, now int64) []liveBlock {
+	seen := map[[2]string]bool{}
+	var out []liveBlock
+	for _, gc := range h.gridControls(ctx) {
+		g, rec := gc.rec.GridShare, gc.rec
+		if !rec.Live(now) {
+			continue
+		}
+		key := [2]string{g.Batch, strconv.Itoa(g.Row)}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, liveBlock{batch: g.Batch, row: g.Row, window: commitment.Window{Start: rec.Start, Duration: rec.Duration}})
 	}
 	return out
 }

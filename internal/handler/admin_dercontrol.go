@@ -897,8 +897,7 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 		now := sep2time.Now().Unix()
 		items := []DERControlListItem{}
 		// Mirrors are read once, and only when a listed control needs them.
-		var mirrors []deviceMirror
-		mirrorsRead := false
+		var mirrors lazyMirrors
 		for _, key := range parents {
 			scope, ok := dercontrol.ScopeFromKey(key)
 			if !ok || scope.EndDeviceID != deviceID || (wantDerp != "" && scope.DERProgramID != wantDerp) {
@@ -927,29 +926,46 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 					Responses:      counts.forMRID(ctrl.MRID),
 				}
 				if ctrl.Interval != nil {
-					ws, we := effectiveWindow(*ctrl.Interval, lc, now)
-					if readingsExpired(ws, now, h.MirrorReadingRetention) {
-						item.Delivery = &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: edev.LFDI, ReadingsExpired: true}
-						items = append(items, item)
-						continue
+					item.Delivery, err = h.deliveryFor(ctx, "admin GET /api/der/controls", edev.LFDI, *ctrl.Interval, lc, now, &mirrors)
+					if err != nil {
+						h.internal(w, r, "list mirror readings")
+						return
 					}
-					if !mirrorsRead {
-						mirrors, err = mirrorReadingsFor(ctx, "admin GET /api/der/controls", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
-							return strings.EqualFold(device, edev.LFDI)
-						})
-						if err != nil {
-							h.internal(w, r, "list mirror readings")
-							return
-						}
-						mirrorsRead = true
-					}
-					item.Delivery = newDelivery(edev.LFDI, mirrors, h.Edition, ws, we)
 				}
 				items = append(items, item)
 			}
 		}
 		writeJSON(w, http.StatusOK, DERControlList{Device: deviceID, Controls: items})
 	}
+}
+
+// lazyMirrors holds one device's mirror readings, read the first time a
+// control needs them.
+type lazyMirrors struct {
+	read    bool
+	mirrors []deviceMirror
+}
+
+// deliveryFor is the delivery of one control of the device with LFDI edevLFDI:
+// its interval iv read through its lifecycle lc at now. The readings come from
+// lm, which is read on first use, so a caller listing several controls of one
+// device reads them once. A window whose readings retention may have removed
+// gets no figure.
+func (h *AdminDERControlHandler) deliveryFor(ctx context.Context, route, edevLFDI string, iv sep2.DateTimeInterval, lc dercontrol.LifecycleRecord, now int64, lm *lazyMirrors) (*DERControlDelivery, error) {
+	ws, we := effectiveWindow(iv, lc, now)
+	if readingsExpired(ws, now, h.MirrorReadingRetention) {
+		return &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: edevLFDI, ReadingsExpired: true}, nil
+	}
+	if !lm.read {
+		mirrors, err := mirrorReadingsFor(ctx, route, h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
+			return strings.EqualFold(device, edevLFDI)
+		})
+		if err != nil {
+			return nil, err
+		}
+		lm.mirrors, lm.read = mirrors, true
+	}
+	return newDelivery(edevLFDI, lm.mirrors, h.Edition, ws, we), nil
 }
 
 // HandleListPrograms returns the handler for GET /api/devices/{id}/der-programs.

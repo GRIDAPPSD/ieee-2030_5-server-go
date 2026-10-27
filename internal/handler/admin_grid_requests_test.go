@@ -30,6 +30,7 @@ const (
 )
 
 type gridFixture struct {
+	t    *testing.T
 	dc   *dcHarness
 	f    *templateFixture
 	fsa  *handler.AdminFSAControlHandler
@@ -62,13 +63,16 @@ func newGridFixture(t *testing.T) *gridFixture {
 	}
 	x.f.h.Managers = x.dc.managers
 	x.f.h.FleetDevices = x.dc.devices
-	g := &gridFixture{dc: x.dc, f: x.f, fsa: x.h, ders: memory.NewScopedStore[sep2.DER](), caps: memory.NewScopedStore[sep2.DERCapability]()}
+	g := &gridFixture{t: t, dc: x.dc, f: x.f, fsa: x.h, ders: memory.NewScopedStore[sep2.DER](), caps: memory.NewScopedStore[sep2.DERCapability]()}
 	g.nameplate(t, "a1", &sep2.ActivePower{Value: 10, Multiplier: 3})
 	g.nameplate(t, "b1", &sep2.ActivePower{Value: 5000})
 	gh := &handler.AdminGridRequestHandler{Controls: x.h, Aggregators: x.dc.managers, DERs: g.ders, Capabilities: g.caps, MaxDeviceW: dercontrol.DefaultMaxNameplateW}
 	g.handler = gh
 	g.mux = http.NewServeMux()
 	g.mux.HandleFunc("POST /api/derms/grid-requests", gh.HandleCreate())
+	g.mux.HandleFunc("GET /api/derms/grid-requests", gh.HandleList())
+	g.mux.HandleFunc("POST /api/derms/grid-requests/{batch}/cancel", gh.HandleCancelBatch())
+	g.mux.HandleFunc("POST /api/derms/grid-requests/{batch}/rows/{row}/cancel", gh.HandleCancelRow())
 	return g
 }
 

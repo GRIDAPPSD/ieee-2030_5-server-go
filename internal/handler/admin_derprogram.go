@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -250,11 +249,7 @@ func buildProgramEdit(ctx context.Context, curves dercontrol.CurveReader, body p
 // mintTemplateIDs fills the server-chosen id, the program mRID when the
 // operator supplied none, and the default control's mRID.
 func (h *AdminFSAHandler) mintTemplateIDs(t *memory.ProgramTemplate) error {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return err
-	}
-	t.ID = "derp-" + hex.EncodeToString(b[:])
+	t.ID = "derp-" + newHexID(8)
 	if t.MRID == "" {
 		m, err := mrid.New(rand.Read, h.PEN)
 		if err != nil {

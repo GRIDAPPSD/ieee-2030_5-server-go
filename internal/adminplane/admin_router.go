@@ -264,6 +264,13 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		authed.HandleFunc("GET /api/derms/power", handler.HandlePower(fleetH, stores.MirrorReadingRetention))
 	}
 
+	// #1209 DERMS read API: one device's DER status, capability, settings and
+	// availability, decoded. Read-only; /api/derms/ is a credential-required
+	// read prefix.
+	if derReadH := newAdminDERReadHandler(stores); derReadH != nil {
+		authed.HandleFunc("GET /api/derms/devices/{edevId}/ders", derReadH.HandleList())
+	}
+
 	// #1190 DERMS read API: the controls in force in a window, by lane, for the
 	// Overview timeline under the power chart.
 	if ceH := newAdminControlEventsHandler(stores); ceH != nil {

@@ -38,18 +38,18 @@ export interface TopologyNode {
   children?: TopologyNode[]
 }
 
-// nodeColor is the per-kind colour the tree has always used for the four
-// topology levels.
+// nodeColor is the per-kind token for the four topology levels, used as an
+// inline style value.
 export function nodeColor(kind: string): string {
   switch (kind) {
     case 'SY':
-      return '#93c5fd'
+      return 'var(--chart-1)'
     case 'FD':
-      return '#a78bfa'
+      return 'var(--chart-2)'
     case 'SP':
-      return '#f472b6'
+      return 'var(--chart-3)'
     case 'DEV':
-      return '#e2e8f0'
+      return 'var(--text)'
     default:
       return 'var(--text)'
   }

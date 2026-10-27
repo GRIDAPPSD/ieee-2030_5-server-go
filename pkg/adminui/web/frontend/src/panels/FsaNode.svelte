@@ -105,12 +105,12 @@
 
 <style>
   .fsa {
-    color: #fbbf24;
+    color: var(--chart-4);
   }
 
   .program {
     margin-left: 16px;
-    color: #a3e635;
+    color: var(--chart-5);
     display: flex;
     align-items: center;
     gap: 8px;

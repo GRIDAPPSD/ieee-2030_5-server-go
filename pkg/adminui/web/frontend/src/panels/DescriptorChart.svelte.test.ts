@@ -2,12 +2,13 @@
 // fixture, so the encoder and the renderer are tested with the same string.
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import DescriptorChart from './DescriptorChart.svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
 import { installCanvasStub } from '../test-canvas-stub'
+import { css, darkToken } from '../test-tokens'
 import type { Descriptor, DescriptorChartBody, DrawnChartBody } from '../lib/descriptor'
 
 installCanvasStub()
@@ -25,7 +26,15 @@ const chartSection = fixture.sections.find((s) => s.kind === 'chart')!
 const body = chartSection.body as DescriptorChartBody
 const hostile = '<img src=x onerror=alert(1)>'
 
+let tokens: HTMLStyleElement
+beforeEach(() => {
+  tokens = document.createElement('style')
+  tokens.textContent = css
+  document.head.appendChild(tokens)
+})
+
 afterEach(() => {
+  tokens.remove()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -70,12 +79,29 @@ describe('DescriptorChart', () => {
     const [dis, chg, dflt] = option.series
     expect([dis.type, chg.type, dflt.type]).toEqual(['bar', 'bar', 'bar'])
     expect([dis.stack, chg.stack, dflt.stack]).toEqual(['energy', 'energy', 'energy'])
-    expect(dis.itemStyle).toMatchObject({ color: 'rgba(251,146,60,0.45)', borderColor: '#fb923c', borderWidth: 1 })
+    const dFill = darkToken('--power-discharge-fill')
+    const dEdge = darkToken('--power-discharge')
+    const cFill = darkToken('--power-charge-fill')
+    const cEdge = darkToken('--power-charge')
+    expect(dis.itemStyle).toMatchObject({ color: dFill, borderColor: dEdge, borderWidth: 1 })
     expect(dis.itemStyle.decal).toBeUndefined()
-    expect(chg.itemStyle).toMatchObject({ color: 'rgba(196,181,253,0.40)', borderColor: '#c4b5fd', borderWidth: 1 })
-    expect(chg.itemStyle.decal).toMatchObject({ symbol: 'rect', rotation: Math.PI / 4, color: '#c4b5fd', dashArrayX: [1, 0], dashArrayY: [2, 3] })
-    expect(dflt.itemStyle).toMatchObject({ color: 'rgba(251,146,60,0.45)', borderColor: '#fb923c' })
+    expect(chg.itemStyle).toMatchObject({ color: cFill, borderColor: cEdge, borderWidth: 1 })
+    expect(chg.itemStyle.decal).toMatchObject({ symbol: 'rect', rotation: Math.PI / 4, color: cEdge, dashArrayX: [1, 0], dashArrayY: [2, 3] })
+    expect(dflt.itemStyle).toMatchObject({ color: dFill, borderColor: dEdge })
     expect(dflt.itemStyle.decal).toBeUndefined()
+  })
+
+  it('colors the palette, axes, grid, legend and tooltip from the tokens', async () => {
+    const { instance } = await mounted()
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(body.series.length))
+    const option = instance.getOption() as Record<string, any>
+    expect(option.color).toEqual([1, 2, 3, 4, 5].map((n) => darkToken(`--chart-${n}`)))
+    expect(option.xAxis[0].axisLabel.color).toBe(darkToken('--chart-axis'))
+    expect(option.yAxis[0].axisLabel.color).toBe(darkToken('--chart-axis'))
+    expect(option.yAxis[0].splitLine.lineStyle.color).toBe(darkToken('--chart-grid'))
+    expect(option.legend[0].textStyle.color).toBe(darkToken('--chart-axis'))
+    expect(option.tooltip[0].backgroundColor).toBe(darkToken('--chart-tooltip-bg'))
+    expect(option.tooltip[0].textStyle.color).toBe(darkToken('--text'))
   })
 
   it('draws an untyped series as a line with the full line option', async () => {

@@ -174,7 +174,7 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>Device</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: #f59e0b; cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Programs</th><th>Assign FSA</th></tr>
+      <tr><th>Device</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: var(--status-warn); cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Programs</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}

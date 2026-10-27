@@ -188,6 +188,9 @@ const (
 	reasonNotOwner        = "not-owner"
 	reasonNotManager      = "not-owner-or-manager"
 	reasonManagedDirect   = "managed-direct"
+	// reasonManagedSubscriber is logged when a paired DER's subscription is
+	// withheld at delivery.
+	reasonManagedSubscriber = "managed-subscriber"
 	// reasonManagementFailed is logged for a 500, not a refusal: the
 	// exclusivity check could not read the management store.
 	reasonManagementFailed = "management-store-error"

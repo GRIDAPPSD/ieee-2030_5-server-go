@@ -41,6 +41,14 @@ that stalls rather than fails holds every identified request for as long as
 the stall lasts; that cost is accepted. Removing the pair gives
 the device direct access again on its next request.
 
+Notifications follow the same rule. A subscription the DER made, before or
+after it was paired, is not delivered to while the pair stands. It is withheld,
+not deleted, and delivery resumes when the pair is removed. The aggregator's
+own subscriptions are unchanged. A withheld delivery logs `reason=managed-subscriber`
+in the denial log, within its budget, with method `NOTIFY` and the
+subscription href as the path. If the management store fails, the delivery is
+withheld (`reason=management-store-error`) rather than sent.
+
 ## What a manager can and cannot do
 
 Reads and writes are two separate rules.

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -143,10 +144,45 @@ func (g *ownershipGate) checkSubscribe(r *http.Request, resource string) error {
 // checkSubscriber is the delivery-time coresub.SubscriberCheck: the
 // subscriber is the device owning the EndDevice the subscription was created
 // under, read from the store at delivery so a changed owner or manager counts.
+// A paired DER's own subscriptions are withheld while the pair stands, so the
+// notification channel closes with the direct access (CSIP IG 3.2); the
+// stored subscription is kept and resumes when the pair is removed.
 func (g *ownershipGate) checkSubscriber(ctx context.Context, sub sep2.Subscription) error {
-	return g.canRead(ctx, sub.SubscribedResource, func() (string, error) {
-		return g.subscriberLFDI(ctx, sub.Href)
-	})
+	lfdi, lerr := g.subscriberLFDI(ctx, sub.Href)
+	if lerr == nil {
+		if err := g.withholdPaired(ctx, sub, lfdi); err != nil {
+			return err
+		}
+	}
+	return g.canRead(ctx, sub.SubscribedResource, func() (string, error) { return lfdi, lerr })
+}
+
+// withholdPaired refuses delivery to a subscriber whose LFDI is the managed
+// side of a pair, and fails closed when the management store cannot answer.
+// Each refusal takes one budgeted line in the denial log.
+func (g *ownershipGate) withholdPaired(ctx context.Context, sub sep2.Subscription, lfdi string) error {
+	if g.managersAbsent {
+		return nil
+	}
+	_, managed, err := coreedev.ManagerOf(ctx, g.managers, lfdi)
+	v := ownershipVerdict{caller: lfdi, path: sub.Href}
+	switch {
+	case err != nil:
+		v.reason = reasonManagementFailed
+		g.denials.record(deliveryRequest(sub.Href), v)
+		return fmt.Errorf("subscriber check could not read the management pair: %w", err)
+	case managed:
+		v.reason = reasonManagedSubscriber
+		g.denials.record(deliveryRequest(sub.Href), v)
+		return refused("%s", reasonManagedSubscriber)
+	}
+	return nil
+}
+
+// deliveryRequest stands in for the request the denial log describes, since
+// a delivery has none; its method names the event in the log line.
+func deliveryRequest(subHref string) *http.Request {
+	return &http.Request{Method: "NOTIFY", URL: &url.URL{Path: subHref}, Header: http.Header{}}
 }
 
 func (g *ownershipGate) subscriberLFDI(ctx context.Context, subHref string) (string, error) {

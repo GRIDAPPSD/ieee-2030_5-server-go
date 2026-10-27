@@ -192,7 +192,7 @@ func (p *PowerHistory) path(scope string) string {
 }
 
 // scopeOfFile is the scope a history file name belongs to: "all" or a
-// canonical aggregator LFDI. Any other name is not ours.
+// canonical aggregator LFDI or the Direct group. Any other name is not ours.
 func scopeOfFile(name string) (string, bool) {
 	scope, ok := strings.CutPrefix(name, powerHistoryFilePrefix)
 	if !ok {
@@ -201,7 +201,7 @@ func scopeOfFile(name string) (string, bool) {
 	if scope, ok = strings.CutSuffix(scope, powerHistoryFileSuffix); !ok {
 		return "", false
 	}
-	if scope == powerHistoryAllScope {
+	if scope == powerHistoryAllScope || scope == powerDirectKey {
 		return scope, true
 	}
 	if c, ok := sep2lfdi.Canonical(scope); ok && c == scope {
@@ -412,6 +412,17 @@ func (p *PowerHistory) lookup(scope string, start, end int64) (bucketTotal, hist
 	return foldParts(parts)
 }
 
+// holds reports whether any record is held for scope. False on a nil history.
+func (p *PowerHistory) holds(scope string) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sc := p.scopes[scope]
+	return sc != nil && len(sc.recs) > 0
+}
+
 // finalEnd is the end of the newest bucket that is final at now.
 func finalEnd(now int64) int64 { return (now - maxHoldSeconds) / PowerHistoryStep * PowerHistoryStep }
 
@@ -435,7 +446,8 @@ func (p *PowerHistory) view(scope string, now int64) func(start, end int64) (buc
 const powerHistoryChunk = 2 * 3600
 
 // Record writes every bucket that became final since each scope's last
-// record, for scope all and for each aggregator's fleet. Who is reporting in a
+// record, for scope all, for each aggregator's fleet and for the devices no
+// aggregator manages. Who is reporting in a
 // bucket is decided by fineTotals, the rule the route uses. A bucket with no
 // reporting device is not recorded; one with reporting devices that none
 // covered is recorded as a gap. A failed write leaves
@@ -446,17 +458,17 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 
 	final := finalEnd(now)
 	type scopeJob struct {
-		name    string
-		members []string // nil for scope all
-		from    int64
+		name string
+		has  func(canonical string) bool
+		from int64
 	}
-	jobs := []scopeJob{{name: powerHistoryAllScope}}
-	for _, agg := range sortedAggregators(ctx, h) {
-		members, err := canonicalMembers(ctx, h, agg)
-		if err != nil {
-			return fmt.Errorf("power history: %w", err)
-		}
-		jobs = append(jobs, scopeJob{name: agg, members: members})
+	jobs := []scopeJob{{name: powerHistoryAllScope, has: func(string) bool { return true }}}
+	groups, err := energyGroupsOf(ctx, h, sortedAggregators(ctx, h))
+	if err != nil {
+		return fmt.Errorf("power history: %w", err)
+	}
+	for _, g := range groups {
+		jobs = append(jobs, scopeJob{name: g.key, has: g.has})
 	}
 
 	p.mu.Lock()
@@ -494,7 +506,7 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 			}
 			var scoped []devicePower
 			for lfdi, d := range devices {
-				if job.members == nil || slices.Contains(job.members, canonicalLFDI(lfdi)) {
+				if job.has(canonicalLFDI(lfdi)) {
 					scoped = append(scoped, d)
 				}
 			}

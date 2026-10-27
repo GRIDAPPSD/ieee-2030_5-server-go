@@ -184,6 +184,39 @@ type PowerResponse struct {
 	LatestW       *float64 `json:"latestW"`
 	LatestAt      *int64   `json:"latestAt"`
 	LatestMissing []string `json:"latestMissing"`
+	// AggregatorEnergy splits EnergyChart by aggregator for scope=all, and is
+	// empty for an aggregator's own scope.
+	AggregatorEnergy []AggregatorEnergy `json:"aggregatorEnergy"`
+}
+
+// powerDirectKey and powerDirectName identify the group of devices no
+// aggregator manages. The key is not a canonical LFDI, so it cannot clash with
+// an aggregator, and it is also the history scope name of that group.
+const (
+	powerDirectKey  = "direct"
+	powerDirectName = "Direct"
+)
+
+// energyPoint is one bucket of an AggregatorEnergy series: [start, kWh], with
+// a null kWh where the group has no covered value for the bucket.
+type energyPoint struct {
+	at  int64
+	kWh *float64
+}
+
+func (p energyPoint) MarshalJSON() ([]byte, error) { return json.Marshal([2]any{p.at, p.kWh}) }
+
+// AggregatorEnergy is one aggregator's (or the Direct group's) share of
+// EnergyChart. Discharged and Charged hold one point per route bucket of the
+// window, each folded by the rule the total uses. Name is the LFDI: no display
+// name is stored for an aggregator.
+type AggregatorEnergy struct {
+	Key           string        `json:"key"`
+	Name          string        `json:"name"`
+	LatestW       *float64      `json:"latestW"`
+	LatestMissing []string      `json:"latestMissing"`
+	Discharged    []energyPoint `json:"discharged"`
+	Charged       []energyPoint `json:"charged"`
 }
 
 // powerBucketSeconds is the smallest bucket that keeps window within
@@ -310,6 +343,7 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	bounds := boundsFor(ws, we, bucket)
 	resp.WindowStart, resp.WindowEnd, resp.BucketSeconds = ws, we, bucket
 	resp.ReadingsExpired = readingsExpired(ws, now, retention)
+	resp.AggregatorEnergy = []AggregatorEnergy{}
 
 	byDevice, err := mirrorsByDevice(ctx, h, "admin GET /api/derms/power", match)
 	if err != nil {
@@ -349,7 +383,101 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 		return PowerResponse{}, errPowerChart
 	}
 	latestPower(&resp, reported, latest, latestBounds)
+	if !fleetScope {
+		groups, err := energyGroupsOf(ctx, h, resp.Aggregators)
+		if err != nil {
+			return PowerResponse{}, errPowerRead
+		}
+		resp.AggregatorEnergy = aggregatorEnergyOf(h, groups, powerSlices{fine: fine, latest: latest, reported: reported}, grid, bounds, latestBounds, now)
+	}
 	return resp, nil
+}
+
+// energyGroup is one aggregator's fleet or the Direct group, by canonical
+// LFDI. members is nil for the Direct group, which is every device not in any
+// aggregator's fleet.
+type energyGroup struct {
+	key     string
+	members map[string]bool
+	managed map[string]bool // every aggregator's fleet, shared by the groups
+}
+
+func (g energyGroup) has(canonical string) bool {
+	if g.members == nil {
+		return !g.managed[canonical]
+	}
+	return g.members[canonical]
+}
+
+// energyGroupsOf is one group per aggregator, sorted as aggregators is, then
+// the Direct group.
+func energyGroupsOf(ctx context.Context, h *AdminFleetHandler, aggregators []string) ([]energyGroup, error) {
+	managed := map[string]bool{}
+	groups := make([]energyGroup, 0, len(aggregators)+1)
+	for _, agg := range aggregators {
+		members, err := canonicalMembers(ctx, h, agg)
+		if err != nil {
+			return nil, err
+		}
+		set := map[string]bool{}
+		for _, m := range members {
+			set[m], managed[m] = true, true
+		}
+		groups = append(groups, energyGroup{key: agg, members: set})
+	}
+	for i := range groups {
+		groups[i].managed = managed
+	}
+	return append(groups, energyGroup{key: powerDirectKey, managed: managed}), nil
+}
+
+// powerSlices are every device integrated for the three reads of one answer.
+type powerSlices struct{ fine, latest, reported []devicePower }
+
+func (g energyGroup) pick(in []devicePower) []devicePower {
+	var out []devicePower
+	for _, d := range in {
+		if g.has(canonicalLFDI(d.lfdi)) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// aggregatorEnergyOf is the energy chart per group. Each group's buckets go
+// through the total's own fold (fineTotals, fineSource, the recorded history of
+// the group's scope, answerBucket), and its power now through latestPower, so
+// no group has a rule of its own. The Direct group is listed only while it has
+// a device or recorded buckets. Cost per group beyond the total is one fineTotals pass over its
+// devices, which over all groups is one more pass over the fleet.
+func aggregatorEnergyOf(h *AdminFleetHandler, groups []energyGroup, all powerSlices, grid, bounds, latestBounds []int64, now int64) []AggregatorEnergy {
+	out := make([]AggregatorEnergy, 0, len(groups))
+	for _, g := range groups {
+		fine := g.pick(all.fine)
+		if g.members == nil && len(fine) == 0 && !h.PowerHistory.holds(g.key) {
+			continue
+		}
+		live := fineSource(fineTotals(fine, len(grid)-1), bounds[0])
+		history := h.PowerHistory.view(g.key, now)
+		e := AggregatorEnergy{Key: g.key, Name: g.key, Discharged: []energyPoint{}, Charged: []energyPoint{}}
+		if g.members == nil {
+			e.Name = powerDirectName
+		}
+		for k := 0; k+1 < len(bounds); k++ {
+			t, state := answerBucket(live, history, bounds[k], bounds[k+1])
+			dis, chg := energyPoint{at: bounds[k]}, energyPoint{at: bounds[k]}
+			if state == historyCovered {
+				d, c := t.exportWs/wattSecondsPerKWh, t.importWs/wattSecondsPerKWh
+				dis.kWh, chg.kWh = &d, &c
+			}
+			e.Discharged, e.Charged = append(e.Discharged, dis), append(e.Charged, chg)
+		}
+		var latest PowerResponse
+		latestPower(&latest, g.pick(all.reported), g.pick(all.latest), latestBounds)
+		e.LatestW, e.LatestMissing = latest.LatestW, latest.LatestMissing
+		out = append(out, e)
+	}
+	return out
 }
 
 // latestSpanSeconds is how far back a device's power now may be read: the
@@ -456,6 +584,19 @@ func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error
 	return fillPowerFrom(resp, devices, bounds, live, nil)
 }
 
+// answerBucket is the route's answer for the bucket [start, end): the live
+// one, replaced by what history (when not nil) has recorded for it. It is the
+// one place a bucket is answered, for the total and for every group.
+func answerBucket(live, history func(start, end int64) (bucketTotal, historyState), start, end int64) (bucketTotal, historyState) {
+	t, state := live(start, end)
+	if history != nil {
+		if ht, hs := history(start, end); hs != historyNone {
+			return ht, hs
+		}
+	}
+	return t, state
+}
+
 // fillPowerFrom builds the chart, device list and gap counts of resp. The
 // Total and energy points come from live, which totals the route bucket
 // [start, end) by the 5 s rule the recorder also uses (fineSource), so a
@@ -478,12 +619,7 @@ func fillPowerFrom(resp *PowerResponse, devices []devicePower, bounds []int64, l
 	charged := sep2admin.ChartSeries{Name: powerEnergyCharged}
 	answered := false
 	for k := 0; k+1 < len(bounds); k++ {
-		t, state := live(bounds[k], bounds[k+1])
-		if history != nil {
-			if ht, hs := history(bounds[k], bounds[k+1]); hs != historyNone {
-				t, state = ht, hs
-			}
-		}
+		t, state := answerBucket(live, history, bounds[k], bounds[k+1])
 		switch state {
 		case historyCovered:
 			answered = true

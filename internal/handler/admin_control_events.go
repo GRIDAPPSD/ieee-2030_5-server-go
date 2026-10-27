@@ -32,7 +32,14 @@ import (
 const (
 	controlEventAggregator = "aggregator"
 	controlEventDirect     = "direct"
+	controlEventUnassigned = "unassigned"
 )
+
+// controlEventUnassignedKey is the lane of a control whose devices cannot be
+// placed in a group: an FSA with no devices and no fleet, or a device with no
+// EndDevice record, so there is no LFDI to find a lane by. It sorts after
+// the power route's groups.
+const controlEventUnassignedKey = "unassigned"
 
 // Scope of a control event: sent to one device, or to an FSA's devices.
 const (
@@ -145,7 +152,10 @@ func (h *AdminControlEventsHandler) HandleControlEvents() http.HandlerFunc {
 			}
 		}
 		lane := func(key string) int {
-			return slices.IndexFunc(groups, func(g energyGroup) bool { return g.key == key })
+			if i := slices.IndexFunc(groups, func(g energyGroup) bool { return g.key == key }); i >= 0 {
+				return i
+			}
+			return len(groups)
 		}
 		slices.SortStableFunc(resp.Events, func(a, b ControlEvent) int {
 			return cmp.Or(cmp.Compare(a.Start, b.Start), cmp.Compare(lane(a.Group), lane(b.Group)), cmp.Compare(a.MRID, b.MRID), cmp.Compare(a.FSAID, b.FSAID))
@@ -184,7 +194,7 @@ func (b *controlEventBuilder) lfdi(ctx context.Context, deviceID string) (string
 }
 
 // byGroup splits deviceIDs by group. A device with no EndDevice record has no
-// LFDI to group by and is left out.
+// LFDI to group by and goes in the unassigned lane.
 func (b *controlEventBuilder) byGroup(ctx context.Context, deviceIDs []string) (map[string][]string, error) {
 	out := map[string][]string{}
 	for _, id := range deviceIDs {
@@ -193,6 +203,7 @@ func (b *controlEventBuilder) byGroup(ctx context.Context, deviceIDs []string) (
 			return nil, err
 		}
 		if lfdi == "" {
+			out[controlEventUnassignedKey] = append(out[controlEventUnassignedKey], id)
 			continue
 		}
 		c := canonicalLFDI(lfdi)
@@ -203,6 +214,13 @@ func (b *controlEventBuilder) byGroup(ctx context.Context, deviceIDs []string) (
 		}
 	}
 	return out, nil
+}
+
+// reach is the devices a control reached in one group and the lifecycle those
+// devices' copies give it.
+type reach struct {
+	devices []string
+	lc      dercontrol.LifecycleRecord
 }
 
 // events is every control with in-force time, device scope then FSA scope,
@@ -259,7 +277,11 @@ func (b *controlEventBuilder) deviceEvents(ctx context.Context) ([]ControlEvent,
 					return nil, err
 				}
 			}
-			out = append(out, b.eventsOf(ctrl, lc, dercontrol.OriginOf(lc.Origin), controlEventDevice, "", groups)...)
+			reaches := map[string]reach{}
+			for g, devs := range groups {
+				reaches[g] = reach{devices: devs, lc: lc}
+			}
+			out = append(out, b.eventsOf(ctrl, dercontrol.OriginOf(lc.Origin), controlEventDevice, "", reaches)...)
 		}
 	}
 	return out, nil
@@ -267,26 +289,27 @@ func (b *controlEventBuilder) deviceEvents(ctx context.Context) ([]ControlEvent,
 
 // fsaEvents is the controls issued on FSA program templates, from the FSA's
 // record, once per group its devices fall in. A fleet FSA is one group, its
-// aggregator.
+// aggregator, even with no device assigned; any other FSA with none is in the
+// unassigned lane.
 func (b *controlEventBuilder) fsaEvents(ctx context.Context) ([]ControlEvent, error) {
 	h := b.h
 	var out []ControlEvent
 	for _, fsaID := range h.FSAs.IDs(ctx) {
-		devices := h.FSAs.Devices(ctx, fsaID)
-		if len(devices) == 0 {
-			continue
-		}
-		groups, err := b.fsaGroups(ctx, fsaID, devices)
+		groups, err := b.fsaGroups(ctx, fsaID, h.FSAs.Devices(ctx, fsaID))
 		if err != nil {
 			return nil, err
 		}
 		for _, tmpl := range h.FSAs.Templates(ctx, fsaID) {
 			for _, rec := range h.FSAs.FSAControls(ctx, fsaID, tmpl.ID) {
-				lc, err := b.copyLifecycle(ctx, fsaID, rec, devices)
-				if err != nil {
-					return nil, err
+				reaches := map[string]reach{}
+				for g, devs := range groups {
+					lc, err := b.copyLifecycle(ctx, fsaID, rec, devs)
+					if err != nil {
+						return nil, err
+					}
+					reaches[g] = reach{devices: devs, lc: lc}
 				}
-				out = append(out, b.eventsOf(controlOf(rec), lc, dercontrol.OriginOf(rec.Origin), controlEventFSA, fsaID, groups)...)
+				out = append(out, b.eventsOf(controlOf(rec), dercontrol.OriginOf(rec.Origin), controlEventFSA, fsaID, reaches)...)
 			}
 		}
 	}
@@ -297,66 +320,79 @@ func (b *controlEventBuilder) fsaGroups(ctx context.Context, fsaID string, devic
 	if agg := b.h.FSAs.FleetAggregator(fsaID); agg != "" {
 		return map[string][]string{canonicalLFDI(agg): devices}, nil
 	}
-	return b.byGroup(ctx, devices)
+	groups, err := b.byGroup(ctx, devices)
+	if err == nil && len(groups) == 0 {
+		groups[controlEventUnassignedKey] = nil
+	}
+	return groups, err
 }
 
-// copyLifecycle is the lifecycle of one device's copy of rec, which carries
-// any supersede, with the record's own cancel folded in. A record no device
-// holds a copy of reads by its own cancel alone.
+// copyLifecycle is the lifecycle one group's copies of rec give it: the
+// earliest supersede or cancel among its devices' copies, with the record's
+// own cancel folded in. A group no copy exists for reads by the record's
+// cancel alone, so a copy another group holds never decides this group.
 func (b *controlEventBuilder) copyLifecycle(ctx context.Context, fsaID string, rec memory.FSAControl, devices []string) (dercontrol.LifecycleRecord, error) {
 	var lc dercontrol.LifecycleRecord
+	earliest := func(cur **int64, at *int64) {
+		if at != nil && (*cur == nil || *at < **cur) {
+			v := *at
+			*cur = &v
+		}
+	}
+	earliest(&lc.CancelledAt, rec.CancelledAt)
 	for _, dev := range devices {
 		scope := dercontrol.Scope{EndDeviceID: dev, FSAID: fsaID, DERProgramID: rec.TemplateID}
 		got, err := b.h.Lifecycles.Get(ctx, scope.Key(), rec.ID)
-		if err == nil {
-			lc = got
-			break
-		}
-		if !errors.Is(err, store.ErrNotFound) {
+		switch {
+		case err == nil:
+			earliest(&lc.CancelledAt, got.CancelledAt)
+			earliest(&lc.SupersededAt, got.SupersededAt)
+		case !errors.Is(err, store.ErrNotFound):
 			return lc, fmt.Errorf("%w: %w", errControlEventsRead, err)
 		}
-	}
-	if lc.CancelledAt == nil {
-		lc.CancelledAt = rec.CancelledAt
 	}
 	return lc, nil
 }
 
-// eventsOf is one event per group in groups, or none when the control was
-// never in force for a second. groups holds the devices reached by group key.
-func (b *controlEventBuilder) eventsOf(ctrl sep2.DERControl, lc dercontrol.LifecycleRecord, origin, scope, fsaID string, groups map[string][]string) []ControlEvent {
-	start, end := ctrl.Interval.Start, inForceEnd(*ctrl.Interval, lc)
-	if end <= start {
-		return nil
-	}
-	st := dercontrol.DeriveStatus(b.now, ctrl.CreationTime, start, lc)
-	status := eventStatusName(st.CurrentStatus)
-	if st.CurrentStatus == sep2.EventStatusActive && dercontrol.ControlState(ctrl, lc, true, b.now) == dercontrol.Retired {
-		status = "completed"
-	}
+// eventsOf is one event per group in reaches, each read by its own lifecycle,
+// or none for a group the control was never in force in for a second.
+func (b *controlEventBuilder) eventsOf(ctrl sep2.DERControl, origin, scope, fsaID string, reaches map[string]reach) []ControlEvent {
 	target := dercontrol.TargetOf(ctrl.DERControlBase)
-	ev := ControlEvent{
+	base := ControlEvent{
 		Scope:     scope,
 		FSAID:     fsaID,
 		MRID:      ctrl.MRID,
 		Origin:    origin,
 		Direction: targetDirectionOf(target),
 		Modes:     slices.Sorted(maps.Keys(dercontrol.FunctionValues(ctrl.DERControlBase))),
-		Status:    status,
-		Start:     start,
-		End:       end,
 	}
 	if target != nil {
 		w := float64(target.Value) * math.Pow10(int(target.Multiplier))
-		ev.TargetW = &w
+		base.TargetW = &w
 	}
 	var out []ControlEvent
-	for _, g := range slices.Sorted(maps.Keys(groups)) {
-		e := ev
-		e.Group, e.DeviceIDs = g, slices.Sorted(slices.Values(groups[g]))
-		e.GroupKind = controlEventAggregator
-		if g == powerDirectKey {
+	for _, g := range slices.Sorted(maps.Keys(reaches)) {
+		r := reaches[g]
+		start, end := ctrl.Interval.Start, inForceEnd(*ctrl.Interval, r.lc)
+		if end <= start {
+			continue
+		}
+		st := dercontrol.DeriveStatus(b.now, ctrl.CreationTime, start, r.lc)
+		e := base
+		e.Status = eventStatusName(st.CurrentStatus)
+		if st.CurrentStatus == sep2.EventStatusActive && dercontrol.ControlState(ctrl, r.lc, true, b.now) == dercontrol.Retired {
+			e.Status = "completed"
+		}
+		e.Start, e.End = start, end
+		e.Group, e.DeviceIDs = g, append([]string{}, r.devices...)
+		slices.Sort(e.DeviceIDs)
+		switch g {
+		case powerDirectKey:
 			e.GroupKind = controlEventDirect
+		case controlEventUnassignedKey:
+			e.GroupKind = controlEventUnassigned
+		default:
+			e.GroupKind = controlEventAggregator
 		}
 		out = append(out, e)
 	}

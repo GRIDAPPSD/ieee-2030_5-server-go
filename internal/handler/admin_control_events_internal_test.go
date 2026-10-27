@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -23,6 +24,7 @@ type ceHarness struct {
 	fsas  *memory.AdminFSAStore
 	mgr   *memory.EndDeviceManagementStore
 	devs  *memory.EndDeviceStore
+	body  string // the last reply
 }
 
 func newCEHarness(t *testing.T) *ceHarness {
@@ -72,6 +74,7 @@ func (h *ceHarness) get(query string) (int, ControlEventsResponse) {
 	hd := &AdminControlEventsHandler{Controls: h.ctrls, Lifecycles: h.lcs, EndDevices: h.devs, FSAs: h.fsas, Fleet: &AdminFleetHandler{Managers: h.mgr}}
 	w := httptest.NewRecorder()
 	hd.HandleControlEvents()(w, httptest.NewRequest(http.MethodGet, "/api/derms/control-events?"+query, nil))
+	h.body = w.Body.String()
 	var out ControlEventsResponse
 	if w.Code == http.StatusOK {
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
@@ -298,3 +301,132 @@ func TestControlEvents_LooksAheadByTheWindow(t *testing.T) {
 		t.Errorf("1 h window events = %d aheadEnd %d, want both controls and %d", len(long.Events), long.AheadEnd, now+3600)
 	}
 }
+
+// fsaWith creates fsaID (bound to aggregator when not empty) with one template
+// t1 and one control record starting 600 s ago for 1200 s, and assigns devices.
+func (h *ceHarness) fsaWith(fsaID, aggregator string, devices ...string) memory.FSAControl {
+	h.t.Helper()
+	ctx := context.Background()
+	var err error
+	if aggregator != "" {
+		err = h.fsas.CreateFleet(ctx, fsaID, sep2.FunctionSetAssignments{}, aggregator)
+	} else {
+		err = h.fsas.Create(ctx, fsaID, sep2.FunctionSetAssignments{})
+	}
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	for _, d := range devices {
+		if err := h.fsas.AssignDevice(ctx, fsaID, d); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	if err := h.fsas.CreateTemplate(ctx, fsaID, memory.ProgramTemplate{ID: "t1", MRID: "TMPL-" + fsaID}); err != nil {
+		h.t.Fatal(err)
+	}
+	rec := memory.FSAControl{
+		TemplateID: "t1", ID: "c1", MRID: "MR-" + fsaID, CreationTime: powerNow - 700, Start: powerNow - 600, Duration: 1200,
+		Base: *ceTarget(1000),
+	}
+	if err := h.fsas.CreateFSAControl(ctx, fsaID, rec); err != nil {
+		h.t.Fatal(err)
+	}
+	return rec
+}
+
+// Each group reads the copies of its own devices: a supersede on one device's
+// copy does not end the control in another group.
+func TestControlEvents_FSAGroupsReadTheirOwnCopies(t *testing.T) {
+	h := newCEHarness(t)
+	now := powerNow
+	h.fsaWith("fsaX", "", "d1", "d2")
+	superseded := now - 300
+	h.issue(dercontrol.Scope{EndDeviceID: "d1", FSAID: "fsaX", DERProgramID: "t1"}, "c1", "MR-fsaX", now-600, 1200, ceTarget(1000), dercontrol.LifecycleRecord{})
+	h.issue(dercontrol.Scope{EndDeviceID: "d2", FSAID: "fsaX", DERProgramID: "t1"}, "c1", "MR-fsaX", now-600, 1200, ceTarget(1000), dercontrol.LifecycleRecord{SupersededAt: &superseded})
+
+	_, got := h.get("window=900")
+	if len(got.Events) != 2 {
+		t.Fatalf("events = %+v, want one per group", got.Events)
+	}
+	agg, direct := got.Events[0], got.Events[1]
+	if agg.Group != canonicalLFDI(powerAgg) || agg.Status != "active" || agg.End != now+600 {
+		t.Errorf("aggregator lane = %s %s end %d, want active to %d", agg.Group, agg.Status, agg.End, now+600)
+	}
+	if direct.Group != "direct" || direct.Status != "superseded" || direct.End != superseded {
+		t.Errorf("direct lane = %s %s end %d, want superseded at %d", direct.Group, direct.Status, direct.End, superseded)
+	}
+}
+
+// Window and look-ahead edges are half open, and a control with no in-force
+// time or no lifecycle record is not drawn.
+func TestControlEvents_BoundariesAndSkips(t *testing.T) {
+	h := newCEHarness(t)
+	now := powerNow
+	ws, ae := now-900, now+900
+	none := dercontrol.LifecycleRecord{}
+	h.issue(ceScope("d2"), "a", "MR-START-AT-AHEAD", ae, 600, ceTarget(1), none)
+	h.issue(ceScope("d2"), "b", "MR-START-INSIDE", ae-1, 600, ceTarget(1), none)
+	h.issue(ceScope("d2"), "c", "MR-END-AT-WINDOW-START", ws-600, 600, ceTarget(1), none)
+	h.issue(ceScope("d2"), "d", "MR-END-INSIDE", ws-600, 601, ceTarget(1), none)
+	atStart := now - 100
+	h.issue(ceScope("d2"), "e", "MR-CANCEL-AT-START", now-100, 600, ceTarget(1), dercontrol.LifecycleRecord{CancelledAt: &atStart})
+	beforeStart := now - 200
+	h.issue(ceScope("d2"), "f", "MR-CANCEL-BEFORE-START", now-100, 600, ceTarget(1), dercontrol.LifecycleRecord{CancelledAt: &beforeStart})
+	// Stored with no lifecycle record: not issued through the admin API.
+	c := sep2.DERControl{DERControlBase: ceTarget(1)}
+	c.Interval = &sep2.DateTimeInterval{Start: now - 100, Duration: 300}
+	c.MRID, c.Href = "MR-NO-LIFECYCLE", ceScope("d2").ControlHref("g")
+	if err := h.ctrls.Create(context.Background(), ceScope("d2").Key(), "g", c); err != nil {
+		t.Fatal(err)
+	}
+
+	_, got := h.get("window=900")
+	var mrids []string
+	for _, e := range got.Events {
+		mrids = append(mrids, e.MRID)
+	}
+	if len(mrids) != 2 || mrids[0] != "MR-END-INSIDE" || mrids[1] != "MR-START-INSIDE" {
+		t.Errorf("events = %v, want only MR-END-INSIDE and MR-START-INSIDE", mrids)
+	}
+}
+
+// A control whose devices cannot be placed stays on the timeline: a fleet FSA
+// with no device stays in its aggregator's lane, any other FSA with none, and
+// a device with no EndDevice record, are in the unassigned lane.
+func TestControlEvents_UnplacedControlsStayOnTheTimeline(t *testing.T) {
+	h := newCEHarness(t)
+	now := powerNow
+	h.fsaWith("fleetEmpty", powerAgg)
+	h.fsaWith("fsaEmpty", "")
+	h.issue(dercontrol.Scope{EndDeviceID: "gone", FSAID: "0", DERProgramID: "0"}, "x", "MR-GONE", now-600, 1200, ceTarget(1), dercontrol.LifecycleRecord{})
+
+	_, got := h.get("window=900")
+	by := map[string]ControlEvent{}
+	for _, e := range got.Events {
+		by[e.MRID] = e
+	}
+	if len(by) != 3 {
+		t.Fatalf("events = %+v, want 3", got.Events)
+	}
+	if e := by["MR-fleetEmpty"]; e.Group != canonicalLFDI(powerAgg) || e.GroupKind != "aggregator" || len(e.DeviceIDs) != 0 {
+		t.Errorf("empty fleet FSA = %s/%s %v, want its aggregator lane with no devices", e.Group, e.GroupKind, e.DeviceIDs)
+	}
+	if e := by["MR-fsaEmpty"]; e.Group != "unassigned" || e.GroupKind != "unassigned" || e.FSAID != "fsaEmpty" || len(e.DeviceIDs) != 0 {
+		t.Errorf("empty FSA = %s/%s %v, want unassigned with no devices", e.Group, e.GroupKind, e.DeviceIDs)
+	}
+	if e := by["MR-GONE"]; e.Group != "unassigned" || len(e.DeviceIDs) != 1 || e.DeviceIDs[0] != "gone" {
+		t.Errorf("device with no record = %s %v, want unassigned [gone]", e.Group, e.DeviceIDs)
+	}
+	if last := got.Events[len(got.Events)-1]; last.Group != "unassigned" {
+		t.Errorf("last event group = %s, want an unassigned one after every power group", last.Group)
+	}
+	if !contains(h.body, `"deviceIDs":[]`) || contains(h.body, `"deviceIDs":null`) {
+		t.Errorf("deviceIDs of a control with no device must be [], body %s", h.body)
+	}
+	_, one := h.get("window=900&scope=" + powerAgg)
+	if len(one.Events) != 1 || one.Events[0].MRID != "MR-fleetEmpty" {
+		t.Errorf("aggregator scope = %+v, want only the empty fleet FSA control", one.Events)
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }

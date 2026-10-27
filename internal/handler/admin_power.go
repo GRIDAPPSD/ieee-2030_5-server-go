@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"slices"
@@ -330,22 +331,23 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 		}
 	}
 
-	devices := make([]devicePower, 0, len(byDevice))
-	for lfdi, ms := range byDevice {
-		devices = append(devices, devicePowerOf(lfdi, ms, h.Edition, bounds))
-	}
-	slices.SortFunc(devices, func(a, b devicePower) int { return cmp.Compare(a.lfdi, b.lfdi) })
-
 	latestBounds := latestGrid(now)
 	reportedBounds := []int64{latestBounds[len(latestBounds)-1] - latestReportedSeconds, latestBounds[len(latestBounds)-1]}
-	latest := make([]devicePower, 0, len(devices))
-	reported := make([]devicePower, 0, len(devices))
-	for _, d := range devices {
-		latest = append(latest, devicePowerOf(d.lfdi, byDevice[d.lfdi], h.Edition, latestBounds))
-		reported = append(reported, devicePowerOf(d.lfdi, byDevice[d.lfdi], h.Edition, reportedBounds))
+	devices := make([]devicePower, 0, len(byDevice))
+	latest := make([]devicePower, 0, len(byDevice))
+	reported := make([]devicePower, 0, len(byDevice))
+	for _, lfdi := range slices.Sorted(maps.Keys(byDevice)) {
+		ms := byDevice[lfdi]
+		devices = append(devices, devicePowerOf(lfdi, ms, h.Edition, bounds))
+		latest = append(latest, devicePowerOf(lfdi, ms, h.Edition, latestBounds))
+		reported = append(reported, devicePowerOf(lfdi, ms, h.Edition, reportedBounds))
 	}
 
-	if err := fillPower(&resp, devices, bounds); err != nil {
+	historyScope := powerHistoryAllScope
+	if fleetScope {
+		historyScope = resp.AggregatorLFDI
+	}
+	if err := fillPowerFrom(&resp, devices, bounds, h.PowerHistory.view(historyScope, now)); err != nil {
 		log.Printf("admin power: encode chart: %s", logsafe.Err(err))
 		return PowerResponse{}, errPowerChart
 	}
@@ -425,12 +427,22 @@ func latestPower(resp *PowerResponse, reported, latest []devicePower, bounds []i
 	resp.LatestW, resp.LatestAt = &sum, &oldest
 }
 
-// fillPower builds the chart, device list and gap counts of resp from the
-// devices' buckets. A Total point needs every reporting device to cover the
-// bucket: a total that quietly dropped a device would read as a real power
-// change. Of the reporting devices the powerSeriesCap with the largest
-// absolute energy are drawn, ties by LFDI; all stay in the Total.
+// fillPower is fillPowerFrom with no history, the route as it stood before
+// buckets were recorded.
 func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error {
+	return fillPowerFrom(resp, devices, bounds, nil)
+}
+
+// fillPowerFrom builds the chart, device list and gap counts of resp from the
+// devices' buckets. A Total point needs every reporting device to cover the
+// bucket (totalBucket): a total that quietly dropped a device would read as a
+// real power change. Of the reporting devices the powerSeriesCap with the
+// largest absolute energy are drawn, ties by LFDI; all stay in the Total.
+// history, when not nil, is asked about each bucket; a recorded, fully covered
+// bucket replaces the one computed from readings, and a recorded gap counts
+// as one where the readings show nothing, so the Total and energy series
+// survive the readings that made them.
+func fillPowerFrom(resp *PowerResponse, devices []devicePower, bounds []int64, history func(start, end int64) (bucketTotal, historyState)) error {
 	resp.Devices = []PowerDevice{}
 	resp.NotReporting = []string{}
 	var reporting []devicePower
@@ -444,35 +456,34 @@ func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error
 
 	chart := sep2admin.ChartBody{Unit: "W"}
 	energy := sep2admin.ChartBody{Unit: "kWh"}
-	if len(reporting) > 0 {
-		total := sep2admin.ChartSeries{Name: powerTotalName}
-		discharged := sep2admin.ChartSeries{Name: powerEnergyDischarged}
-		charged := sep2admin.ChartSeries{Name: powerEnergyCharged}
-		for k := 0; k+1 < len(bounds); k++ {
-			covering, sum, exportWs, importWs := 0, 0.0, 0.0, 0.0
-			bucketLen := float64(bounds[k+1] - bounds[k])
-			for _, d := range reporting {
-				if s := d.sums[k]; s.covered > 0 {
-					covering++
-					sum += s.wattSeconds / float64(s.covered)
-					// Scaled to the full bucket as the W line averages over
-					// covered seconds, so Discharged plus Charged equals
-					// Total times the bucket length.
-					scale := bucketLen / float64(s.covered)
-					exportWs += d.signed[k].exportWs * scale
-					importWs += d.signed[k].importWs * scale
-				}
-			}
-			switch {
-			case covering == len(reporting):
-				at := time.Unix(bounds[k], 0)
-				total.Points = append(total.Points, sep2admin.ChartPoint{At: at, Value: sum})
-				discharged.Points = append(discharged.Points, sep2admin.ChartPoint{At: at, Value: exportWs / wattSecondsPerKWh})
-				charged.Points = append(charged.Points, sep2admin.ChartPoint{At: at, Value: importWs / wattSecondsPerKWh})
-			case covering > 0:
+	total := sep2admin.ChartSeries{Name: powerTotalName}
+	discharged := sep2admin.ChartSeries{Name: powerEnergyDischarged}
+	charged := sep2admin.ChartSeries{Name: powerEnergyCharged}
+	recorded := false
+	for k := 0; k+1 < len(bounds); k++ {
+		var t bucketTotal
+		if len(reporting) > 0 {
+			t = totalBucket(reporting, k, float64(bounds[k+1]-bounds[k]))
+		}
+		if history != nil {
+			switch h, state := history(bounds[k], bounds[k+1]); {
+			case state == historyCovered:
+				t, recorded = h, true
+			case state == historyGap && t.covering == 0:
 				resp.TotalGapBuckets++
 			}
 		}
+		switch {
+		case t.full():
+			at := time.Unix(bounds[k], 0)
+			total.Points = append(total.Points, sep2admin.ChartPoint{At: at, Value: t.w})
+			discharged.Points = append(discharged.Points, sep2admin.ChartPoint{At: at, Value: t.exportWs / wattSecondsPerKWh})
+			charged.Points = append(charged.Points, sep2admin.ChartPoint{At: at, Value: t.importWs / wattSecondsPerKWh})
+		case t.covering > 0:
+			resp.TotalGapBuckets++
+		}
+	}
+	if len(reporting) > 0 || recorded {
 		chart.Series = append(chart.Series, total)
 		energy.Series = append(energy.Series, discharged, charged)
 	}

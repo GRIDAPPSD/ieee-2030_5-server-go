@@ -131,7 +131,7 @@ func TestCreateManagementPair_NormalizesLowerCase(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
 	}
-	var got map[string]string
+	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}

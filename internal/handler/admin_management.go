@@ -99,10 +99,20 @@ type managementPairResponse struct {
 	ManagedLFDI string `json:"managedLFDI"`
 }
 
+// managementPairCreated is the 201 body of a create: the pair plus the
+// managed LFDI's health, and a warning when that LFDI has already made
+// requests on its own.
+type managementPairCreated struct {
+	managementPairResponse
+	Managed pairMemberHealth `json:"managed"`
+	Warning string           `json:"warning,omitempty"`
+}
+
 // HandleCreateManagementPair returns a handler for POST /api/management-pairs.
 // Idempotent: assigning the same pair again still answers 201. A device
 // already managed by someone else answers 409; an empty LFDI or a device
-// named as its own manager answers 400.
+// named as its own manager answers 400. A managed LFDI that has already made
+// requests as a direct device is allowed, with a warning in the 201 body.
 func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req managementPairRequest
@@ -133,11 +143,26 @@ func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 			!h.kindAllowedManaged(r.Context(), w, "create", managedLFDI) {
 			return
 		}
+		// Read before the write so a failed lookup cannot follow a
+		// committed pair.
+		health, err := h.memberHealth(r.Context(), managedLFDI)
+		if err != nil {
+			writeManagementInternalError(w, "create", err)
+			return
+		}
 		if err := h.Managers.Assign(r.Context(), managerLFDI, managedLFDI); err != nil {
 			writeManagementPairError(w, "create", err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, managementPairResponse{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI})
+		out := managementPairCreated{
+			managementPairResponse: managementPairResponse{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI},
+			Managed:                health,
+		}
+		if health.LastSeen != nil {
+			out.Warning = "managed device has connected directly (last seen " + *health.LastSeen +
+				"); it is paired anyway, and its manager now acts for it"
+		}
+		writeJSON(w, http.StatusCreated, out)
 	}
 }
 
@@ -292,6 +317,20 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 			}
 		} else if !h.kindAllowedManaged(r.Context(), w, "rekey", to) {
 			return
+		}
+
+		// A managed-side rekey while the old LFDI still has a record would
+		// leave that record orphaned; the admin deletes it first.
+		if req.Role == "managed" {
+			old, err := h.memberHealth(r.Context(), from)
+			if err != nil {
+				writeManagementInternalError(w, "rekey", err)
+				return
+			}
+			if old.HasRecord != nil && *old.HasRecord {
+				writeError(w, http.StatusConflict, "old LFDI "+from+" still has an EndDevice record; delete it before rekeying")
+				return
+			}
 		}
 
 		var opErr error

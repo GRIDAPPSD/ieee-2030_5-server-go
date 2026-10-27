@@ -67,7 +67,7 @@ describe('Overview', () => {
   })
 })
 
-describe('Overview DER stat', () => {
+describe('Overview DER counts', () => {
   const der = (over: Partial<DashboardDER> = {}): DashboardDER => ({
     id: '0',
     reported: true,
@@ -80,63 +80,49 @@ describe('Overview DER stat', () => {
     clockAhead: false,
     ...over,
   })
+  const operating = (over: Partial<DashboardDER> = {}) => der({ connect: { ...der().connect!, operating: true }, ...over })
   const dev = (ders: DashboardDER[], over: Partial<DashboardDevice> = {}): DashboardDevice => ({
     ...device('online'),
     lastKnown: false,
     ders,
     ...over,
   })
-  const text = (d: DashboardData) => {
+  const counts = (d: DashboardData | null) => {
     const { container } = render(Overview, { props: { data: d } })
-    return container.querySelector('#derConnected')?.textContent?.replace(/\s+/g, ' ').trim()
+    const read = (id: string) => container.querySelector(id)?.textContent?.trim()
+    return { registered: read('#bigDeviceCount'), connected: read('#derConnected'), operating: read('#derOperating') }
   }
 
-  it('counts fresh connected DERs and separately the stale ones', () => {
-    const connectedDown = der({ connect: { ...der().connect!, raw: 0, connected: false } })
+  it('shows registered, connected and operating as separate plain numbers for a seeded fleet', () => {
+    const disconnected = der({ connect: { ...der().connect!, raw: 0, connected: false } })
+    const d: DashboardData = {
+      ...data,
+      deviceCount: 5,
+      devices: [dev([operating()]), dev([der()]), dev([disconnected]), dev([operating({ stale: true })]), dev([operating()], { comms: 'offline', lastKnown: true })],
+    }
+    expect(counts(d)).toEqual({ registered: '5', connected: '2', operating: '1' })
+  })
+
+  it('does not count a DER with no readable status as connected or operating', () => {
     const d: DashboardData = {
       ...data,
       deviceCount: 3,
-      devices: [dev([der()]), dev([der({ stale: true, ageSeconds: 4000 })]), dev([connectedDown])],
+      devices: [dev([der({ reported: false, connect: null })]), dev([], { derError: 'boom' }), dev([])],
     }
-    expect(text(d)).toBe('1 connected, 1 disconnected, 1 stale, 0 last known')
+    expect(counts(d)).toEqual({ registered: '3', connected: '0', operating: '0' })
   })
 
-  it('counts a hybrid connected through also only', () => {
-    const c = { ...der().connect!, raw: 0, connected: false, also: { ...der().connect!, source: 'storConnectStatus' } }
-    expect(text({ ...data, deviceCount: 1, devices: [dev([der({ connect: c })])] })).toBe('1 connected, 0 disconnected, 0 stale, 0 last known')
+  it('counts a hybrid connected and operating through also only', () => {
+    const c = { ...der().connect!, raw: 0, connected: false, also: { ...der().connect!, source: 'storConnectStatus', operating: true } }
+    expect(counts({ ...data, deviceCount: 1, devices: [dev([der({ connect: c })])] })).toEqual({ registered: '1', connected: '1', operating: '1' })
   })
 
-  it('does not count a last-known DER of an offline device as reporting connected', () => {
-    expect(text({ ...data, deviceCount: 1, devices: [dev([der()], { comms: 'offline', lastKnown: true })] })).toBe('0 connected, 0 disconnected, 0 stale, 1 last known')
+  it('counts every DER once, not every device', () => {
+    const d: DashboardData = { ...data, deviceCount: 1, devices: [dev([operating(), operating({ id: '1' })])] }
+    expect(counts(d)).toEqual({ registered: '1', connected: '2', operating: '2' })
   })
 
-  it('says Not reported when a DER has no status', () => {
-    expect(text({ ...data, deviceCount: 1, devices: [dev([der({ reported: false, connect: null })])] })).toBe('Not reported')
-  })
-
-  it('says Not reported when no device has a DER', () => {
-    expect(text({ ...data, deviceCount: 1, devices: [dev([])] })).toBe('Not reported')
-  })
-
-  it('counts a fresh DER on a last-known device as last known, and every reported DER once', () => {
-    const d: DashboardData = {
-      ...data,
-      deviceCount: 2,
-      devices: [
-        dev([der(), der({ id: '1', stale: true })], { comms: 'offline', lastKnown: true }),
-        dev([der()]),
-      ],
-    }
-    expect(text(d)).toBe('1 connected, 0 disconnected, 1 stale, 1 last known')
-  })
-
-  it('says how many devices could not be read, even when no DER read at all', () => {
-    expect(text({ ...data, deviceCount: 2, devices: [dev([], { derError: 'boom' }), dev([], { derError: 'bang' })] })).toBe('2 devices unreadable')
-  })
-
-  it('shows unreadable devices beside the counts of the ones that read', () => {
-    expect(text({ ...data, deviceCount: 2, devices: [dev([der()]), dev([], { derError: 'boom' })] })).toBe(
-      '1 connected, 0 disconnected, 0 stale, 0 last known, 1 device unreadable',
-    )
+  it('shows zeroes before the first update', () => {
+    expect(counts(null)).toEqual({ registered: '0', connected: '0', operating: '0' })
   })
 })

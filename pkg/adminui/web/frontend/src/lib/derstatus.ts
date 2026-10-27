@@ -36,6 +36,11 @@ export function anyConnected(c: DerConnect | null): boolean {
   return c !== null && (c.connected || (c.also?.connected ?? false))
 }
 
+// anyOperating mirrors anyConnected for the Operating bit.
+export function anyOperating(c: DerConnect | null): boolean {
+  return c !== null && (c.operating || (c.also?.operating ?? false))
+}
+
 // connectChips: bit 0 always renders, since a clear bit 0 is a positive
 // report of disconnection. The other set bits follow in bit order and
 // reserved bits are shown, never dropped.
@@ -162,6 +167,7 @@ export const deviceInverterView = (device: DashboardDevice): CellView => deviceV
 
 export interface DerCounts {
   connected: number
+  operating: number
   disconnected: number
   stale: number
   lastKnown: number
@@ -173,10 +179,11 @@ export interface DerCounts {
 // (judged from its own readingTime), else last known (a fresh reading on a
 // device that is not talking), else connected or disconnected by the
 // combined rule. A stale or last-known "Connected" is not a live report, so
-// it is never counted connected. unreadable counts devices whose DER read
-// failed, which are otherwise missing from every bucket.
+// it is never counted connected or operating. operating overlaps connected
+// and disconnected rather than being a bucket of its own. unreadable counts
+// devices whose DER read failed, which are otherwise missing from every bucket.
 export function derCounts(devices: DashboardDevice[]): DerCounts {
-  const n: DerCounts = { connected: 0, disconnected: 0, stale: 0, lastKnown: 0, unreadable: 0, reported: 0 }
+  const n: DerCounts = { connected: 0, operating: 0, disconnected: 0, stale: 0, lastKnown: 0, unreadable: 0, reported: 0 }
   for (const device of devices) {
     if (device.derError) n.unreadable++
     for (const der of device.ders) {
@@ -184,18 +191,14 @@ export function derCounts(devices: DashboardDevice[]): DerCounts {
       n.reported++
       if (der.stale) n.stale++
       else if (device.lastKnown) n.lastKnown++
-      else if (anyConnected(der.connect)) n.connected++
-      else n.disconnected++
+      else {
+        if (anyConnected(der.connect)) n.connected++
+        else n.disconnected++
+        // Operating is the DER's own genConnectStatus bit, counted under
+        // the same freshness rule as connected.
+        if (anyOperating(der.connect)) n.operating++
+      }
     }
   }
   return n
-}
-
-// derSummary is the Overview's DER stat text.
-export function derSummary(devices: DashboardDevice[]): string {
-  const n = derCounts(devices)
-  const unreadable = n.unreadable === 0 ? '' : `${n.unreadable} ${n.unreadable === 1 ? 'device' : 'devices'} unreadable`
-  if (n.reported === 0) return unreadable || 'Not reported'
-  const counts = `${n.connected} connected, ${n.disconnected} disconnected, ${n.stale} stale, ${n.lastKnown} last known`
-  return unreadable ? `${counts}, ${unreadable}` : counts
 }

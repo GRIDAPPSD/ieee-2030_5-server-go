@@ -175,3 +175,15 @@ test('a fresh server shows Not seen for every device and 0 online', async ({ pag
   await expect(comms.first()).toHaveText('Not seen');
   await expect(page.getByTestId('device-last-request').first()).toHaveText('');
 });
+
+// 7. The Overview shows Registered, Connected and Operating as separate
+// numbers. The fixture device has never posted a DERStatus, so it is
+// registered but is not counted connected or operating.
+test('overview counts a registered device with no status as neither connected nor operating', async ({ page }) => {
+  await page.goto(baseUrl + `/?token=${ADMIN_KEY}`);
+  await page.waitForLoadState('domcontentloaded');
+
+  await expect(page.locator('#bigDeviceCount')).toHaveText('1');
+  await expect(page.locator('#derConnected')).toHaveText('0');
+  await expect(page.locator('#derOperating')).toHaveText('0');
+});

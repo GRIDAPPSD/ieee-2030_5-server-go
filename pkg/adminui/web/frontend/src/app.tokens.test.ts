@@ -41,6 +41,41 @@ const BEFORE: Record<string, string> = {
   '--red': '#ef4444',
 }
 
+// Every custom property declaration in the file, wherever it sits. Legacy
+// variables and tokens may be declared only in the :root block and the light
+// block; a second :root, a component rule or a media override would redefine
+// one unseen by block().
+function stray(text: string): string[] {
+  const flat = text.replace(/\/\*[\s\S]*?\*\//g, '')
+  const seen: Record<string, number> = {}
+  for (const m of flat.matchAll(/(--[a-z0-9-]+)\s*:/g)) seen[m[1]] = (seen[m[1]] ?? 0) + 1
+  const dark = block(':root')
+  const light = block(":root[data-theme='light']")
+  return Object.entries(seen)
+    .filter(([name, n]) => n !== (name in dark ? 1 : 0) + (name in light ? 1 : 0))
+    .map(([name]) => name)
+}
+
+describe('custom property declarations', () => {
+  it('has none outside the :root and light blocks', () => {
+    expect(stray(css)).toEqual([])
+  })
+
+  it('declares each legacy variable exactly once', () => {
+    for (const name of Object.keys(BEFORE).filter((n) => !['--text', '--border', '--accent'].includes(n))) {
+      expect(css.match(new RegExp(`${name}\\s*:`, 'g'))).toHaveLength(1)
+    }
+  })
+
+  it.each([
+    ['a second :root', `${css}\n:root { --bg: red; }\n`, '--bg'],
+    ['a component rule', `${css}\n.card { --border: red; }\n`, '--border'],
+    ['a color-scheme media override', `${css}\n@media (prefers-color-scheme: light) { :root { --card: red; } }\n`, '--card'],
+  ])('catches %s', (_label, mutated, name) => {
+    expect(stray(mutated)).toContain(name)
+  })
+})
+
 describe('app.css design tokens', () => {
   const dark = block(':root')
 
@@ -70,6 +105,22 @@ describe('app.css design tokens', () => {
       expect(light[legacy]).toBeUndefined()
     }
     for (const name of Object.keys(light)) expect(dark[name], `${name} has no dark value`).toBeDefined()
+  })
+
+  it('builds each status tint from its own status color', () => {
+    const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')
+    for (const theme of [dark, { ...dark, ...block(":root[data-theme='light']") }]) {
+      for (const s of ['ok', 'warn', 'fault', 'stale', 'unknown']) {
+        expect(resolve(theme, `--status-${s}-bg`)).toMatch(new RegExp(`^rgba\\(${rgb(resolve(theme, `--status-${s}`))}, `))
+      }
+    }
+  })
+
+  it('aliases the chart chrome and input surface to the tokens they repeat', () => {
+    expect(dark['--chart-axis']).toBe('var(--text-muted)')
+    expect(dark['--chart-grid']).toBe('var(--border)')
+    expect(dark['--chart-tooltip-bg']).toBe('var(--surface-raised)')
+    expect(dark['--surface-input']).toBe('var(--surface-page)')
   })
 
   it('declares the type and spacing scales', () => {

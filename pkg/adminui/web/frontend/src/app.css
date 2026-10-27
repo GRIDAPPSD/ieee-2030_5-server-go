@@ -14,7 +14,7 @@
   --surface-page: #0f172a;
   --surface-card: #1e293b;
   --surface-raised: #273449;
-  --surface-input: #0f172a;
+  --surface-input: var(--surface-page);
 
   --text: #e2e8f0;
   --text-muted: #94a3b8;
@@ -31,11 +31,11 @@
   --danger-solid-hover: #b91c1c;
 
   --status-ok: #22c55e;
-  --status-ok-bg: rgba(74, 222, 128, 0.16);
+  --status-ok-bg: rgba(34, 197, 94, 0.16);
   --status-warn: #facc15;
   --status-warn-bg: rgba(250, 204, 21, 0.16);
   --status-fault: #ef4444;
-  --status-fault-bg: rgba(248, 113, 113, 0.18);
+  --status-fault-bg: rgba(239, 68, 68, 0.18);
   --status-stale: #d6b98c;
   --status-stale-bg: rgba(214, 185, 140, 0.16);
   --status-unknown: #94a3b8;
@@ -52,9 +52,9 @@
   --chart-4: #a3e635;
   --chart-5: #cbd5e1;
   --chart-area: rgba(96, 165, 250, 0.12);
-  --chart-axis: #94a3b8;
-  --chart-grid: #334155;
-  --chart-tooltip-bg: #273449;
+  --chart-axis: var(--text-muted);
+  --chart-grid: var(--border);
+  --chart-tooltip-bg: var(--surface-raised);
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Courier New', monospace;
@@ -93,7 +93,7 @@
   --surface-page: #f8fafc;
   --surface-card: #ffffff;
   --surface-raised: #f1f5f9;
-  --surface-input: #ffffff;
+  --surface-input: var(--surface-card);
 
   --text: #0f172a;
   --text-muted: #475569;
@@ -129,9 +129,7 @@
   --chart-4: #4d7c0f;
   --chart-5: #475569;
   --chart-area: rgba(37, 99, 235, 0.1);
-  --chart-axis: #475569;
-  --chart-grid: #cbd5e1;
-  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-bg: var(--surface-card);
 }
 
 * {

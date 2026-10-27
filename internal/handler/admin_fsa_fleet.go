@@ -127,7 +127,11 @@ func (h *AdminFSAHandler) FleetFSA(r *http.Request, aggregatorLFDI string) (stri
 	}
 	h.programMu.Lock()
 	defer h.programMu.Unlock()
+	return h.fleetFSALocked(r, aggregatorLFDI)
+}
 
+// fleetFSALocked is FleetFSA for a caller that holds programMu.
+func (h *AdminFSAHandler) fleetFSALocked(r *http.Request, aggregatorLFDI string) (string, error) {
 	fsaID, err := h.ensureFleetFSA(r, aggregatorLFDI)
 	if err != nil {
 		return "", err
@@ -169,20 +173,31 @@ func (h *AdminFSAHandler) ensureFleetFSA(r *http.Request, aggregatorLFDI string)
 	return fsaID, nil
 }
 
-// reconcileFleet makes fsaID's assigned devices equal the EndDevice records of
-// the aggregator's managed devices, excluding the aggregator's own. A managed
-// LFDI with no record is skipped, since it has nothing to assign. The caller
-// holds programMu. A failed device is named in the joined error and does not
-// stop the others; the next call converges from whatever was written.
-func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI string) error {
-	ctx := r.Context()
+// FleetDeviceError is a device reconcileFleet could not assign to, or
+// unassign from, its fleet FSA.
+type FleetDeviceError struct {
+	Device string
+	Op     string // "assign" or "unassign"
+	Err    error
+}
+
+func (e *FleetDeviceError) Error() string {
+	return fmt.Sprintf("fleet FSA: %s %s: %v", e.Op, e.Device, e.Err)
+}
+
+func (e *FleetDeviceError) Unwrap() error { return e.Err }
+
+// fleetWant returns the store ids, sorted, of the EndDevice records of the
+// devices aggregatorLFDI manages, excluding its own. A managed LFDI with no
+// record is skipped, since it has nothing to assign. It writes nothing.
+func (h *AdminFSAHandler) fleetWant(ctx context.Context, aggregatorLFDI string) ([]string, error) {
 	managed, err := h.Managers.ManagedBy(ctx, aggregatorLFDI)
 	if err != nil {
-		return fmt.Errorf("fleet FSA: ManagedBy(%q): %w", aggregatorLFDI, err)
+		return nil, fmt.Errorf("fleet FSA: ManagedBy(%q): %w", aggregatorLFDI, err)
 	}
 	ownID, err := h.fleetDeviceID(ctx, aggregatorLFDI)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var want []string
 	for _, lfdi := range managed {
@@ -191,13 +206,26 @@ func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI 
 		}
 		id, err := h.fleetDeviceID(ctx, lfdi)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if id != "" && id != ownID && !slices.Contains(want, id) {
 			want = append(want, id)
 		}
 	}
 	slices.Sort(want)
+	return want, nil
+}
+
+// reconcileFleet makes fsaID's assigned devices equal fleetWant. The caller
+// holds programMu. A failed device is a *FleetDeviceError in the joined
+// error and does not stop the others; the next call converges from whatever
+// was written.
+func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI string) error {
+	ctx := r.Context()
+	want, err := h.fleetWant(ctx, aggregatorLFDI)
+	if err != nil {
+		return err
+	}
 
 	// A device that fails is recorded and skipped, so one refusing device
 	// never blocks the others; the next call retries it.
@@ -207,7 +235,7 @@ func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI 
 			continue
 		}
 		if fault := h.unassignLocked(r, dev, fsaID); fault != nil {
-			errs = append(errs, fmt.Errorf("fleet FSA: unassign %s: %w", dev, fault.err))
+			errs = append(errs, &FleetDeviceError{Device: dev, Op: "unassign", Err: fault.err})
 		}
 	}
 	fsa, err := h.AdminFSAs.Get(ctx, fsaID)
@@ -220,7 +248,7 @@ func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI 
 			continue
 		}
 		if fault := h.assignLocked(r, dev, fsaID, fsa, fsaprogram.CompleteIfAssigned); fault != nil {
-			errs = append(errs, fmt.Errorf("fleet FSA: assign %s: %w", dev, fault.err))
+			errs = append(errs, &FleetDeviceError{Device: dev, Op: "assign", Err: fault.err})
 		}
 	}
 	return errors.Join(errs...)

@@ -7,11 +7,13 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // #163 wiring: build the *handler.AdminFSAHandler from the server's
@@ -150,6 +152,25 @@ func newAdminFSAControlHandler(fsaH *handler.AdminFSAHandler, derH *handler.Admi
 	fsaH.Replicas = h
 	derH.FSAControls = fsaH.AdminFSAs
 	return h
+}
+
+// newAdminGridRequestHandler builds the DERMS grid request handler over the
+// FSA control handler (#1156). Nil, mounting no route, without management
+// pairs, DER or DERCapability stores, or a fleet FSA wiring.
+func newAdminGridRequestHandler(stores *Stores, fsaCtlH *handler.AdminFSAControlHandler) *handler.AdminGridRequestHandler {
+	if fsaCtlH == nil || fsaCtlH.FSAs.Managers == nil || store.IsAbsent(stores.DERs) || store.IsAbsent(stores.DERCapabilities) {
+		return nil
+	}
+	managers, ok := stores.EndDeviceManagers.(*memory.EndDeviceManagementStore)
+	if !ok {
+		slog.Error("admin: grid request route not mounted: the management pair store cannot list aggregators", "event", "grid_request_unmounted")
+		return nil
+	}
+	maxW := stores.DERMSMaxDeviceW
+	if maxW == 0 {
+		maxW = dercontrol.DefaultMaxNameplateW
+	}
+	return &handler.AdminGridRequestHandler{Controls: fsaCtlH, Aggregators: managers, DERs: stores.DERs, Capabilities: stores.DERCapabilities, MaxDeviceW: maxW}
 }
 
 // CompleteFSAControlReplicas writes every live FSA control to each assigned

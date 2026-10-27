@@ -11,5 +11,5 @@ import (
 // record by recorder. The DERMS request route calls issueAcross and recorder
 // the same way.
 func (h *AdminFSAControlHandler) IssueAcrossForTest(ctx context.Context, req dercontrol.CreateRequest, devices []string, fsaID, tmplID string) (dercontrol.AcrossResult, error) {
-	return h.issueAcross(ctx, req, devices, fsaID, tmplID, h.recorder(fsaID, tmplID, req.Origin))
+	return h.issueAcross(ctx, req, devices, fsaID, tmplID, h.recorder(fsaID, tmplID, req.Origin, nil))
 }

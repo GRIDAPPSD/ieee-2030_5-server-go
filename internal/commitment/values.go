@@ -35,6 +35,10 @@ type Control struct {
 	TargetW     *sep2.ActivePower
 	Reach       int // managed devices of the fleet that read it
 	Cancelled   bool
+
+	// FleetTotal marks a copy of one fleet-wide target written to several
+	// devices: its copies share an mRID and are one commitment (#1156).
+	FleetTotal bool
 }
 
 // ConflictCode names the bound a ConflictError refuses on. It is a fixed

@@ -20,16 +20,11 @@ func (w Window) End() int64 {
 	return interval.End(w.Start, w.Duration)
 }
 
-// Overlaps reports whether w and o share a covered instant. Touching at an
-// instant is not overlap (the classic half-open test), and a window of
-// duration zero is guarded explicitly: without the guard, the half-open
-// test alone would read a zero-duration point as inside a wider window it
-// never covers.
+// Overlaps reports whether w and o share a covered instant, by
+// interval.Overlaps: touching is not overlap, and a window of duration zero
+// overlaps nothing.
 func (w Window) Overlaps(o Window) bool {
-	if w.Duration == 0 || o.Duration == 0 {
-		return false
-	}
-	return w.Start < o.End() && o.Start < w.End()
+	return interval.Overlaps(w.Start, w.End(), o.Start, o.End())
 }
 
 // Within reports whether every instant w covers is also covered by o.

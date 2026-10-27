@@ -320,6 +320,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 			if controlWrites {
 				mountWrite("POST /api/fsas/{id}/der-programs/{derpId}/controls", fsaCtlH.HandleCreate())
 				mountWrite("POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel", fsaCtlH.HandleCancel())
+				// #1156: a batch of grid requests split across the
+				// aggregators' fleet FSAs. Off nonSensitiveAdminWrites like
+				// every control write.
+				if gridH := newAdminGridRequestHandler(stores, fsaCtlH); gridH != nil {
+					mountWrite("POST /api/derms/grid-requests", gridH.HandleCreate())
+				}
 			}
 		}
 		// "GET /api/devices/{id}/der-programs" would conflict with "GET

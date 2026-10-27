@@ -208,3 +208,53 @@ func TestAdminFSAControl_SnapshotNamingNoTemplateRefused(t *testing.T) {
 		t.Fatal("a snapshot whose control names no template loaded; want an error")
 	}
 }
+
+// #1156: a grid share's basis survives a reload, and a read returns a copy
+// a caller cannot change the store through.
+func TestAdminFSAControl_GridShareReloadsAndCopies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, path := seededFSAWithTemplates(t)
+	c := mkFSAControl("derp-1", "c-g", "MRG", 100, 3000)
+	c.Origin = "derms"
+	c.GridShare = &memory.GridShare{
+		Batch: "b1", Row: 2, AggregatorLFDI: "AAAA", Direction: "charge", RequestValue: 50, RequestMultiplier: 3,
+		Devices: 3, WeightW: 15000, TotalWeightW: 20000, DefaultedDevices: []string{"7"}, Units: 38,
+	}
+	if err := s.CreateFSAControl(ctx, "fsa-A", c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FSAControl(ctx, "fsa-A", "derp-1", "c-g")
+	if err != nil || !reflect.DeepEqual(got, c) {
+		t.Fatalf("read = %+v, %v; want %+v", got, err, c)
+	}
+	got.GridShare.DefaultedDevices[0] = "changed"
+	got.GridShare.Units = 0
+	if again, _ := s.FSAControl(ctx, "fsa-A", "derp-1", "c-g"); again.GridShare.DefaultedDevices[0] != "7" || again.GridShare.Units != 38 {
+		t.Errorf("a change to a read copy reached the store: %+v", again.GridShare)
+	}
+	reloaded, err := memory.NewAdminFSAStoreWithPersistence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back, err := reloaded.FSAControl(ctx, "fsa-A", "derp-1", "c-g"); err != nil || !reflect.DeepEqual(back, c) {
+		t.Errorf("reloaded = %+v, %v; want %+v", back, err, c)
+	}
+}
+
+func TestFSAControl_Live(t *testing.T) {
+	t.Parallel()
+	c := mkFSAControl("derp-1", "c", "MR", 100, 1)
+	end := c.Start + int64(c.Duration)
+	if !c.Live(end - 1) {
+		t.Error("not live one second before its end")
+	}
+	if c.Live(end) {
+		t.Error("live at its end")
+	}
+	at := int64(105)
+	c.CancelledAt = &at
+	if c.Live(end - 1) {
+		t.Error("live after a cancel")
+	}
+}

@@ -312,6 +312,12 @@ type Config struct {
 	// kept, in whole hours. Env: SEP2_POWER_HISTORY_HOURS, 1 to 720. Zero
 	// means unset; use EffectivePowerHistoryRetention. Recording needs DataDir.
 	PowerHistoryHours int
+
+	// DERMSMaxDeviceW is the largest rtgMaxW, in watts, a DERMS grid request
+	// takes from one device as its split weight (#1156); a device reporting
+	// more is weighted at the test default. Env: SEP2_DERMS_MAX_DEVICE_W, 1 to
+	// 1000000000000. Zero means unset; use EffectiveDERMSMaxDeviceW.
+	DERMSMaxDeviceW int64
 }
 
 // ParsePEN validates the value of SEP2_PEN: empty resolves to the IEEE
@@ -561,6 +567,38 @@ func ParsePowerHistoryHours(v string) (int, error) {
 		return 0, fmt.Errorf("SEP2_POWER_HISTORY_HOURS: %d is outside 1 to %d", n, MaxPowerHistoryHours)
 	}
 	return n, nil
+}
+
+// MaxDERMSMaxDeviceW bounds SEP2_DERMS_MAX_DEVICE_W at 1 TW.
+const MaxDERMSMaxDeviceW = 1_000_000_000_000
+
+// ParseDERMSMaxDeviceW validates the value of SEP2_DERMS_MAX_DEVICE_W:
+// empty is unset (zero), anything else must be whole watts within the bounds.
+func ParseDERMSMaxDeviceW(v string) (int64, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_DERMS_MAX_DEVICE_W: %q is not a whole number of watts", v)
+	}
+	if n < 1 || n > MaxDERMSMaxDeviceW {
+		return 0, fmt.Errorf("SEP2_DERMS_MAX_DEVICE_W: %d is outside 1 to %d", n, int64(MaxDERMSMaxDeviceW))
+	}
+	return n, nil
+}
+
+// EffectiveDERMSMaxDeviceW resolves an unset DERMSMaxDeviceW to the default
+// and refuses a value outside the bounds.
+func (c *Config) EffectiveDERMSMaxDeviceW() (int64, error) {
+	w := c.DERMSMaxDeviceW
+	if w == 0 {
+		return dercontrol.DefaultMaxNameplateW, nil
+	}
+	if w < 1 || w > MaxDERMSMaxDeviceW {
+		return 0, fmt.Errorf("DERMS max device watts %d is outside 1 to %d", w, int64(MaxDERMSMaxDeviceW))
+	}
+	return w, nil
 }
 
 // EffectivePowerHistoryRetention resolves an unset PowerHistoryHours to the

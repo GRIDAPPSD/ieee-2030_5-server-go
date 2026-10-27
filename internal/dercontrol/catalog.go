@@ -430,6 +430,23 @@ func powerFactorKind(d intRange, multiplier int8) kind[PowerFactorInput, sep2.Fi
 	}
 }
 
+// ConnectedTarget is the function set of a DERMS grid share (#1156):
+// opModTargetW at target, with opModConnect and opModEnergize true, since a
+// DER is connected only when both are (IEEE 2030.5-2023 10.10.4.2.2).
+func ConnectedTarget(target sep2.ActivePower) *FunctionSet {
+	on := true
+	value, multiplier := int64(target.Value), int64(target.Multiplier)
+	return &FunctionSet{
+		OpModConnect:  &on,
+		OpModEnergize: &on,
+		OpModTargetW:  &ActivePowerInput{Value: &value, Multiplier: &multiplier},
+	}
+}
+
+// ValidMultiplier reports whether m is a power-of-ten multiplier a power
+// value may carry.
+func ValidMultiplier(m int64) bool { return powerOfTen.contains(m) }
+
 // ActivePowerInput is an active or reactive power as a request carries it,
 // and as the functions view reports it. A missing multiplier is 0.
 type ActivePowerInput struct {

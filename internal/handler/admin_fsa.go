@@ -489,7 +489,13 @@ func extractFSAID(href string) string {
 
 // newFSAID generates a short hex id when the caller doesn't supply mRID.
 func newFSAID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return "fsa-" + hex.EncodeToString(b[:])
+	return "fsa-" + newHexID(8)
+}
+
+// newHexID is n random bytes in hex. crypto/rand.Read never returns an
+// error, so its result is not checked.
+func newHexID(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

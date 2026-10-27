@@ -43,6 +43,14 @@ controls must stay within `powerAvailable`, and their summed energy within
 beneath, so every control's reach is 1 today: carrying out a grant across four
 devices takes four controls.
 
+A DERMS grid request share is the exception
+([#1156](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/1156)): one
+control on an aggregator's fleet FSA, copied to each of its devices, whose
+`opModTargetW` the aggregator reads as its fleet total. Its copies carry a
+fleet total mark on their lifecycle records, share one mRID, and are listed
+once, at the share's value, not once per copy. Any other control, from DERMS
+or not, is counted per copy.
+
 ## Cancelling and revising a grant
 
 Cancelling a grant cancels its controls first and marks the response last, so

@@ -341,6 +341,7 @@ func controlOf(scope, id, fleet string, ctrl sep2.DERControl, lc dercontrol.Life
 		GrantMRID:   lc.GrantMRID,
 		Reach:       lc.Reach,
 		Cancelled:   lc.CancelledAt != nil,
+		FleetTotal:  lc.FleetTotal,
 	}
 	if ctl.Reach == 0 {
 		ctl.Reach = 1

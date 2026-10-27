@@ -38,11 +38,12 @@ type AdminFSAControlHandler struct {
 	Issuer   FSAControlIssuer
 }
 
-// FSAControlIssuer writes one control to every copy of a template, and the
-// recorded controls to a copy made later. The production implementation is
+// FSAControlIssuer writes controls to every copy of their templates, and
+// the recorded controls to a copy made later. The production implementation is
 // *dercontrol.Issuer.
 type FSAControlIssuer interface {
-	IssueAcross(ctx context.Context, req dercontrol.CreateRequest, targets []dercontrol.Target, record dercontrol.RecordWriter) (dercontrol.AcrossResult, error)
+	IssueAcrossAll(ctx context.Context, items []dercontrol.Across, check dercontrol.AcrossCheck) ([]dercontrol.AcrossResult, error)
+	PlanAcrossAll(ctx context.Context, items []dercontrol.Across, check dercontrol.AcrossCheck) error
 	Replicate(ctx context.Context, replicas []dercontrol.Replica) ([]dercontrol.Result, error)
 }
 
@@ -167,20 +168,18 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 		devices := fh.AdminFSAs.Devices(ctx, fsaID)
-		for _, dev := range devices {
-			present, err := fh.Copies.Check(ctx, dev, fsaID, t)
-			if err == nil && !present {
-				logged.add("device_id", dev)
-				ch.refuse(w, r, fsaControlOp, refuseCopyMissing, &logged)
-				return
-			}
-			if err != nil {
-				fh.templateFailed(w, r, "copy_check", err)
-				return
-			}
+		missing, err := h.missingCopy(ctx, fsaID, t, devices)
+		if err != nil {
+			fh.templateFailed(w, r, "copy_check", err)
+			return
+		}
+		if missing != "" {
+			logged.add("device_id", missing)
+			ch.refuse(w, r, fsaControlOp, refuseCopyMissing, &logged)
+			return
 		}
 
-		record := h.recorder(fsaID, t.ID, req.Origin)
+		record := h.recorder(fsaID, t.ID, req.Origin, nil)
 		routeHref := "/api/fsas/" + fsaID + "/der-programs/" + t.ID + "/controls"
 		res, err := h.issueAcross(ctx, req, devices, fsaID, t.ID, record)
 		var undo *dercontrol.UndoError
@@ -193,37 +192,78 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 
-		for _, c := range res.Copies {
-			ch.notify(ctx, c.Scope)
-		}
-		rec, err := fh.AdminFSAs.FSAControl(ctx, fsaID, t.ID, res.ID)
-		if err != nil {
-			fh.templateFailed(w, r, "record_read", err)
+		h.notifyCopies(ctx, res)
+		rec, ok := h.readRecord(w, r, fsaID, t.ID, res.ID)
+		if !ok {
 			return
 		}
 		var audit derControlLog
 		addBaseToLog(&audit, res.Control)
 		ch.log(r, slog.LevelInfo, "admin: FSA DER control created", "der_fsa_control_created", append(audit.attrs,
 			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", len(res.Copies)))
+		notified, persisted := h.createdFlags()
 		writeJSON(w, http.StatusCreated, FSAControlCreated{
 			FSAControlView:        h.view(ctx, fsaID, rec, devices, sep2time.Now().Unix()),
-			NotificationAttempted: ch.Notifier != nil,
-			Persisted:             ch.Persisted && fh.AdminFSAs.Persists(),
+			NotificationAttempted: notified,
+			Persisted:             persisted,
 		})
 	}
 }
 
+// notifyCopies notifies the program and control lists of every copy written
+// for res, once the last write of a create is done.
+func (h *AdminFSAControlHandler) notifyCopies(ctx context.Context, res ...dercontrol.AcrossResult) {
+	for _, a := range res {
+		for _, c := range a.Copies {
+			h.Controls.notify(ctx, c.Scope)
+		}
+	}
+}
+
+// readRecord reads the FSA control record a create just wrote, answering 500
+// when it cannot.
+func (h *AdminFSAControlHandler) readRecord(w http.ResponseWriter, r *http.Request, fsaID, tmplID, id string) (memory.FSAControl, bool) {
+	rec, err := h.FSAs.AdminFSAs.FSAControl(r.Context(), fsaID, tmplID, id)
+	if err != nil {
+		h.FSAs.templateFailed(w, r, "record_read", err)
+		return memory.FSAControl{}, false
+	}
+	return rec, true
+}
+
+// createdFlags are a create reply's notificationAttempted and persisted.
+func (h *AdminFSAControlHandler) createdFlags() (notified, persisted bool) {
+	return h.Controls.Notifier != nil, h.Controls.Persisted && h.FSAs.AdminFSAs.Persists()
+}
+
+// missingCopy returns the first of devices holding no copy of t, or "" when
+// every device holds one.
+func (h *AdminFSAControlHandler) missingCopy(ctx context.Context, fsaID string, t memory.ProgramTemplate, devices []string) (string, error) {
+	for _, dev := range devices {
+		present, err := h.FSAs.Copies.Check(ctx, dev, fsaID, t)
+		if err != nil {
+			return "", err
+		}
+		if !present {
+			return dev, nil
+		}
+	}
+	return "", nil
+}
+
 // recorder is the RecordWriter for a control on fsaID's template tmplID: it
-// stores the FSA's record, marked derms when origin is dercontrol.OriginDERMS,
-// and returns how to remove it. IssueAcross owns the origin check and runs it
-// before it calls the writer, so a value it refused never reaches here.
-func (h *AdminFSAControlHandler) recorder(fsaID, tmplID, origin string) dercontrol.RecordWriter {
+// stores the FSA's record, marked derms when origin is dercontrol.OriginDERMS
+// and carrying share when it is a grid request's, and returns how to remove
+// it. IssueAcross owns the origin check and runs it before it calls the
+// writer, so a value it refused never reaches here.
+func (h *AdminFSAControlHandler) recorder(fsaID, tmplID, origin string, share *memory.GridShare) dercontrol.RecordWriter {
 	fh := h.FSAs
 	return func(ctx context.Context, id string, ctrl sep2.DERControl) (func(context.Context) error, error) {
 		rec := recordOf(tmplID, id, ctrl)
 		if origin == dercontrol.OriginDERMS {
 			rec.Origin = origin
 		}
+		rec.GridShare = share
 		if err := fh.AdminFSAs.CreateFSAControl(ctx, fsaID, rec); err != nil {
 			return nil, err
 		}
@@ -238,31 +278,79 @@ func (h *AdminFSAControlHandler) recorder(fsaID, tmplID, origin string) dercontr
 	}
 }
 
-// issueAcross runs the fan-out to every device's copy inside the commitment
-// lock of each device's fleet. With no device assigned there is no fleet to
-// check, and only the record is written.
+// fsaIssue is one control on an FSA template, sent to devices' copies.
+type fsaIssue struct {
+	req           dercontrol.CreateRequest
+	devices       []string
+	fsaID, tmplID string
+	record        dercontrol.RecordWriter
+	startOffset   int64
+	fleetTotal    bool
+}
+
+// issueAcross is issueAcrossAll for one control, its error unwrapped by
+// dercontrol.SoleItemError.
 func (h *AdminFSAControlHandler) issueAcross(ctx context.Context, req dercontrol.CreateRequest, devices []string, fsaID, tmplID string, record dercontrol.RecordWriter) (dercontrol.AcrossResult, error) {
-	if len(devices) == 0 {
-		return h.Issuer.IssueAcross(ctx, req, nil, record)
-	}
-	fleets, keys, err := h.fleetsOf(ctx, devices)
+	res, err := h.issueAcrossAll(ctx, []fsaIssue{{req: req, devices: devices, fsaID: fsaID, tmplID: tmplID, record: record}}, nil)
 	if err != nil {
-		return dercontrol.AcrossResult{}, err
+		return dercontrol.AcrossResult{}, dercontrol.SoleItemError(err)
 	}
-	var res dercontrol.AcrossResult
-	err = h.Controls.withinFleets(ctx, keys, func(v commitment.View) error {
-		targets := make([]dercontrol.Target, 0, len(devices))
-		for _, dev := range devices {
-			targets = append(targets, dercontrol.Target{
-				Scope: dercontrol.Scope{EndDeviceID: dev, FSAID: fsaID, DERProgramID: tmplID},
-				Fleet: dercontrol.Fleet{Key: fleets[dev], Reach: controlReach, Check: checkIn(v)},
-			})
-		}
+	return res[0], nil
+}
+
+// issueAcrossAll runs every fan-out to its devices' copies in one issuer
+// call, inside the commitment lock of every device's fleet, so the controls
+// are written whole or not at all. With no device in any of them there is no
+// fleet to check, and only the records are written.
+func (h *AdminFSAControlHandler) issueAcrossAll(ctx context.Context, issues []fsaIssue, check dercontrol.AcrossCheck) ([]dercontrol.AcrossResult, error) {
+	var res []dercontrol.AcrossResult
+	err := h.withinIssueFleets(ctx, issues, func(items []dercontrol.Across) error {
 		var err error
-		res, err = h.Issuer.IssueAcross(ctx, req, targets, record)
+		res, err = h.Issuer.IssueAcrossAll(ctx, items, check)
 		return err
 	})
 	return res, err
+}
+
+// planAcrossAll is issueAcrossAll with every check and no write.
+func (h *AdminFSAControlHandler) planAcrossAll(ctx context.Context, issues []fsaIssue, check dercontrol.AcrossCheck) error {
+	return h.withinIssueFleets(ctx, issues, func(items []dercontrol.Across) error {
+		return h.Issuer.PlanAcrossAll(ctx, items, check)
+	})
+}
+
+// withinIssueFleets builds the issuer's items from issues and calls run with
+// them inside the commitment lock of every device's fleet, or without a lock
+// when no issue names a device.
+func (h *AdminFSAControlHandler) withinIssueFleets(ctx context.Context, issues []fsaIssue, run func([]dercontrol.Across) error) error {
+	var devices []string
+	for _, is := range issues {
+		devices = append(devices, is.devices...)
+	}
+	items := func(v commitment.View, fleets map[string]string) []dercontrol.Across {
+		out := make([]dercontrol.Across, 0, len(issues))
+		for _, is := range issues {
+			var targets []dercontrol.Target
+			for _, dev := range is.devices {
+				targets = append(targets, dercontrol.Target{
+					Scope: dercontrol.Scope{EndDeviceID: dev, FSAID: is.fsaID, DERProgramID: is.tmplID},
+					Fleet: dercontrol.Fleet{Key: fleets[dev], Reach: controlReach, Check: checkIn(v)},
+				})
+			}
+			out = append(out, dercontrol.Across{Req: is.req, Targets: targets, Record: is.record, StartOffset: is.startOffset, FleetTotal: is.fleetTotal})
+		}
+		return out
+	}
+	if len(devices) == 0 {
+		return run(items(nil, nil))
+	}
+	fleets, keys, err := h.fleetsOf(ctx, devices)
+	if err != nil {
+		return err
+	}
+	return h.Controls.withinFleets(ctx, keys, func(v commitment.View) error {
+		return run(items(v, fleets))
+	})
 }
 
 // fleetsOf resolves each device's fleet, returning the map and the distinct
@@ -570,14 +658,15 @@ func liveReplicas(ctx context.Context, admin *memory.AdminFSAStore, deviceID, fs
 	var out []dercontrol.Replica
 	for _, t := range admin.Templates(ctx, fsaID) {
 		for _, rec := range admin.FSAControls(ctx, fsaID, t.ID) {
-			if rec.CancelledAt != nil || rec.Held || rec.Ended(now) {
+			if rec.Held || !rec.Live(now) {
 				continue
 			}
 			out = append(out, dercontrol.Replica{
-				Target:  dercontrol.Target{Scope: dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID}},
-				ID:      rec.ID,
-				Control: controlOf(rec),
-				Origin:  rec.Origin,
+				Target:     dercontrol.Target{Scope: dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID}},
+				ID:         rec.ID,
+				Control:    controlOf(rec),
+				Origin:     rec.Origin,
+				FleetTotal: rec.GridShare != nil,
 			})
 		}
 	}

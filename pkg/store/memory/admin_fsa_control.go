@@ -39,10 +39,38 @@ type FSAControl struct {
 	// loads with it empty.
 	Origin string `json:"origin,omitempty"`
 
+	// GridShare is set on a control that is one aggregator's share of a
+	// DERMS grid request (#1156), and keeps the basis it was split on.
+	GridShare *GridShare `json:"gridShare,omitempty"`
+
 	// Held is true for a record HoldFSAControl kept from replication: one a
 	// failed write left in a state other than the one the operator was told.
 	// It is never persisted, so it lasts until the next restart.
 	Held bool `json:"-"`
+}
+
+// GridShare is one aggregator's share of one row of a DERMS grid request,
+// with the basis fixed when the request was split. Weights are watts of
+// nameplate rtgMaxW, a device without one counted at the test default.
+type GridShare struct {
+	Batch          string `json:"batch"`
+	Row            int    `json:"row"`
+	AggregatorLFDI string `json:"aggregatorLFDI"`
+	// Direction is "discharge" or "charge"; RequestValue x 10^RequestMultiplier
+	// W is the row's unsigned total.
+	Direction         string  `json:"direction"`
+	RequestValue      int64   `json:"requestValue"`
+	RequestMultiplier int8    `json:"requestMultiplier"`
+	Devices           int     `json:"devices"`
+	WeightW           float64 `json:"weightW"`
+	TotalWeightW      float64 `json:"totalWeightW"`
+	// DefaultedDevices are the device ids weighted at the test default for
+	// reporting no nameplate, and OverCapDevices those whose nameplate was
+	// over the per-device cap.
+	DefaultedDevices []string `json:"defaultedDevices,omitempty"`
+	OverCapDevices   []string `json:"overCapDevices,omitempty"`
+	// Units is the share in units of 10^RequestMultiplier W before encoding.
+	Units int64 `json:"units"`
 }
 
 // Copy returns an independent copy.
@@ -53,12 +81,24 @@ func (c FSAControl) Copy() FSAControl {
 		v := *c.CancelledAt
 		out.CancelledAt = &v
 	}
+	if c.GridShare != nil {
+		g := *c.GridShare
+		g.DefaultedDevices = slices.Clone(c.GridShare.DefaultedDevices)
+		g.OverCapDevices = slices.Clone(c.GridShare.OverCapDevices)
+		out.GridShare = &g
+	}
 	return out
 }
 
 // Ended reports whether the control's interval has passed at now.
 func (c FSAControl) Ended(now int64) bool {
 	return now >= interval.End(c.Start, c.Duration)
+}
+
+// Live reports whether the control is still to be carried out at now:
+// neither cancelled nor ended.
+func (c FSAControl) Live(now int64) bool {
+	return c.CancelledAt == nil && !c.Ended(now)
 }
 
 func compareFSAControlKey(c FSAControl, key [2]string) int {

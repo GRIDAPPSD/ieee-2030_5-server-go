@@ -182,18 +182,6 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-/* On a narrow screen the tabs wrap, so none sits unseen off the edge. */
-@media (max-width: 800px) {
-  .tab-bar {
-    flex-wrap: wrap;
-    padding: 0 var(--sp-4);
-  }
-
-  .tab-bar a {
-    padding: 10px 12px;
-  }
-}
-
 .tab-bar a {
   padding: 10px 16px;
   font-size: 13px;
@@ -205,6 +193,18 @@ body {
 .tab-bar a[aria-current='page'] {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+
+/* On a narrow screen the tabs wrap, so none sits unseen off the edge. */
+@media (max-width: 800px) {
+  .tab-bar {
+    flex-wrap: wrap;
+    padding: 0 var(--sp-4);
+  }
+
+  .tab-bar a {
+    padding: 10px 12px;
+  }
 }
 
 .grid {

@@ -283,10 +283,10 @@ describe('PowerCard', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(chartSeries()).toEqual([
-      ['North discharge', [0.5]],
-      ['North charge', [-0.1]],
-      ['South discharge', [0.25]],
-      ['South charge', []],
+      ['AGG1... discharge', [0.5]],
+      ['AGG1... charge', [-0.1]],
+      ['AGG2... discharge', [0.25]],
+      ['AGG2... charge', []],
       ['Direct discharge', []],
       ['Direct charge', [-0.3]],
     ])
@@ -303,9 +303,39 @@ describe('PowerCard', () => {
 
     expect(screen.getByTestId('power-now')).toHaveTextContent('2.0 kW')
     const list = screen.getByTestId('power-by-aggregator')
-    expect(list).toHaveTextContent('North 2.0 kW')
-    expect(list).toHaveTextContent('South unavailable')
+    expect(list).toHaveTextContent('AGG1... 2.0 kW')
+    expect(list).toHaveTextContent('AGG2... unavailable')
     expect(list).toHaveTextContent('Direct -0.5 kW')
+    unmount()
+  })
+
+  it('labels an aggregator by its device label when the wire name is the LFDI, with the LFDI on hover', async () => {
+    const lfdi = 'AABBCCDDEEFF00112233'
+    const entries = [
+      { key: lfdi, name: lfdi, latestW: 1000, latestMissing: [], discharged: [[1000, 0.5]], charged: [[1000, 0.1]] },
+      { key: 'direct', name: 'Direct', latestW: null, latestMissing: [], discharged: [[1000, null]], charged: [[1000, null]] },
+    ]
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer({ aggregatorEnergy: entries }) })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(chartSeries().map((s) => s[0])).toEqual(['AABBCCDDEEFF0011... discharge', 'AABBCCDDEEFF0011... charge', 'Direct discharge', 'Direct charge'])
+    const item = screen.getByTestId('power-by-aggregator').querySelector('li')!
+    expect(item).toHaveAttribute('title', lfdi)
+    expect(item).toHaveTextContent('AABBCCDDEEFF0011... 1.0 kW')
+    unmount()
+  })
+
+  it('draws the single total series when the per-aggregator list is empty', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer({ aggregatorEnergy: [] }) })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(chartSeries()).toEqual([
+      ['Discharged', [0.5]],
+      ['Charged', [-0.25]],
+    ])
+    expect(screen.queryByTestId('power-by-aggregator')).toBeNull()
     unmount()
   })
 

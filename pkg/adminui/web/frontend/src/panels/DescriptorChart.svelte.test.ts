@@ -254,6 +254,25 @@ describe('DescriptorChart', () => {
     expect(disconnect).toHaveBeenCalledTimes(1)
   })
 
+  it('leaves the time axis to the data when no range is given', async () => {
+    const { instance } = await mounted()
+    const x = (instance.getOption() as { xAxis: { min?: unknown; max?: unknown }[] }).xAxis[0]
+    expect(x.min).toBeUndefined()
+    expect(x.max).toBeUndefined()
+  })
+
+  it('shows the hint under a legend name on hover and the plain name without one', async () => {
+    const hinted = { unit: 'kWh', series: [{ name: 'Roof', hint: 'AABB', points: [[1000, 1]] as [number, number][] }, { name: 'Plain', points: [[1000, 1]] as [number, number][] }] }
+    render(DescriptorChart, { props: { body: hinted, empty: 'none' } })
+    const el = (await screen.findByTestId('descriptor-chart')) as HTMLElement
+    await waitFor(() => expect(echarts.getInstanceByDom(el)).toBeDefined())
+    await waitFor(() => expect(echarts.getInstanceByDom(el)!.getOption().series).toHaveLength(2))
+    const legend = (echarts.getInstanceByDom(el)!.getOption() as { legend: { tooltip: { show: boolean; formatter: (p: { name: string }) => string } }[] }).legend[0]
+    expect(legend.tooltip.show).toBe(true)
+    expect(legend.tooltip.formatter({ name: 'Roof' })).toBe('Roof (AABB)')
+    expect(legend.tooltip.formatter({ name: 'Plain' })).toBe('Plain')
+  })
+
   it('says so in words when no series has a point, and builds no chart', () => {
     render(DescriptorChart, { props: { body: { unit: '%', series: [{ name: 'a', points: [] }] }, empty: 'No samples yet.' } })
     expect(screen.getByTestId('descriptor-chart-empty')).toHaveTextContent('No samples yet.')

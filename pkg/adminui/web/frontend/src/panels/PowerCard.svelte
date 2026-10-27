@@ -11,6 +11,7 @@
     DIRECT_KEY,
     POWER_WINDOWS,
     aggregatorBars,
+    aggregatorLabels,
     cachedPower,
     energyBars,
     energyTotals,
@@ -61,7 +62,7 @@
   const bars = $derived.by(() => {
     if (answer === null) return null
     const per = answer.aggregatorEnergy
-    return per !== null && per.length > 0 ? aggregatorBars(per, answer.energyChart.unit) : energyBars(answer.energyChart)
+    return per !== null && per.length > 0 ? aggregatorBars(per, answer.energyChart.unit, deviceLabel) : energyBars(answer.energyChart)
   })
 
 
@@ -142,9 +143,9 @@
         {/if}
         {#if answer.aggregatorEnergy !== null && answer.aggregatorEnergy.length > 0}
           <ul class="power-by-aggregator" data-testid="power-by-aggregator">
-            {#each answer.aggregatorEnergy as e (e.key)}
+            {#each answer.aggregatorEnergy as e, i (e.key)}
               <li title={e.key === DIRECT_KEY ? 'DERs with no aggregator' : e.key}>
-                <span class="stat-label">{e.name}</span>
+                <span class="stat-label">{aggregatorLabels(answer.aggregatorEnergy, deviceLabel)[i]}</span>
                 {#if e.latestW !== null}{formatKw(e.latestW)}{:else if e.latestMissing.length > 0}unavailable{:else}no reading{/if}
               </li>
             {/each}

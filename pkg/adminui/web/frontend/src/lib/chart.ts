@@ -103,8 +103,8 @@ export function chartTooltip(unit: string): (params: TooltipParam | TooltipParam
 }
 
 // Charge carries a diagonal hatch so the two directions never rest on hue.
-function chargeDecal(theme: ChartTheme) {
-  return { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: Math.PI / 4, color: theme.direction.charge.edge }
+function chargeDecal(color: string) {
+  return { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: Math.PI / 4, color }
 }
 
 // The palette holds 5 colors and ECharts cycles it, so lines 6 to 10 repeat
@@ -121,23 +121,9 @@ function withAlpha(color: string, alpha: number): string {
   return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`
 }
 
-// A bar in one palette slot. Discharge is solid; charge is a lighter fill with
-// the diagonal hatch in the full color, so the two never rest on hue.
-function paletteBar(s: DrawnChartSeries, theme: ChartTheme): Record<string, unknown> {
-  const color = theme.palette[(s.colorIndex ?? 0) % theme.palette.length]
-  const charge = s.direction === 'charge'
-  return {
-    name: s.name,
-    type: 'bar',
-    stack: 'energy',
-    data: s.points,
-    itemStyle: {
-      color: charge ? withAlpha(color, 0.35) : color,
-      borderColor: color,
-      borderWidth: 1,
-      ...(charge ? { decal: { ...chargeDecal(theme), color } } : {}),
-    },
-  }
+// One palette color as a bar's colors: solid for discharge, a lighter fill for charge.
+function paletteColors(color: string, charge: boolean): { edge: string; fill: string } {
+  return { edge: color, fill: charge ? withAlpha(color, 0.35) : color }
 }
 
 // The ECharts series for one body series. Bars on one stack share a
@@ -147,9 +133,15 @@ export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0):
     const type = lineType(index)
     return { name: s.name, type: 'line', showSymbol: false, data: s.points, ...(type === 'solid' ? {} : { lineStyle: { type } }) }
   }
-  if (s.colorIndex !== undefined) return paletteBar(s, theme)
-  const colors = theme.direction[s.direction ?? 'discharge']
+  const charge = s.direction === 'charge'
+  // A palette slot colors an aggregator; otherwise the direction does. Charge
+  // takes a lighter fill either way, and both carry the hatch in the edge color.
+  const colors =
+    s.colorIndex === undefined
+      ? theme.direction[s.direction ?? 'discharge']
+      : paletteColors(theme.palette[s.colorIndex % theme.palette.length], charge)
   return {
+    ...(s.id === undefined ? {} : { id: s.id }),
     name: s.name,
     type: 'bar',
     stack: 'energy',
@@ -158,7 +150,7 @@ export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0):
       color: colors.fill,
       borderColor: colors.edge,
       borderWidth: 1,
-      ...(s.direction === 'charge' ? { decal: chargeDecal(theme) } : {}),
+      ...(charge ? { decal: chargeDecal(colors.edge) } : {}),
     },
   }
 }

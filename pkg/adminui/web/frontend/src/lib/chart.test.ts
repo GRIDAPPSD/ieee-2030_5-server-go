@@ -3,7 +3,8 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { descriptorChartRefusals, MAX_CHART_SECTIONS, MAX_CHART_SERIES, MAX_CHART_SERIES_POINTS, MAX_DESCRIPTOR_CHART_POINTS } from './chart'
+import { seriesOption, descriptorChartRefusals, MAX_CHART_SECTIONS, MAX_CHART_SERIES, MAX_CHART_SERIES_POINTS, MAX_DESCRIPTOR_CHART_POINTS } from './chart'
+import type { ChartTheme } from './chartTheme'
 import type { Descriptor, DescriptorChartBody, DescriptorSection } from './descriptor'
 
 type WireValue = number | 'NaN' | 'Infinity' | '-Infinity'
@@ -83,5 +84,49 @@ describe('chart refusals', () => {
   it('refuses a body of the wrong shape as malformed', () => {
     const d: Descriptor = { version: 2, sections: [{ kind: 'chart', heading: '', prose: [], empty: '', body: { unit: 1 } }] }
     expect(descriptorChartRefusals(d)).toEqual(['malformed'])
+  })
+})
+
+describe('seriesOption bars', () => {
+  const theme: ChartTheme = {
+    palette: ['#112233', '#445566', '#778899', '#aabbcc', '#ddeeff'],
+    area: '',
+    text: '',
+    axis: '',
+    grid: '',
+    tooltipBg: '',
+    tooltipBorder: '',
+    direction: {
+      discharge: { edge: '#fb923c', fill: 'rgba(251,146,60,0.45)' },
+      charge: { edge: '#c4b5fd', fill: 'rgba(196,181,253,0.40)' },
+    },
+  }
+  type Item = { color: string; borderColor: string; decal?: { color: string } }
+  const item = (o: Record<string, unknown>) => o.itemStyle as Item
+  const bar = (direction: 'discharge' | 'charge', colorIndex?: number) =>
+    seriesOption({ name: 'n', points: [], type: 'bar', direction, ...(colorIndex === undefined ? {} : { colorIndex }) }, theme)
+
+  it('colors a palette bar by its slot, with a lighter hatched fill for charge only', () => {
+    const discharge = item(bar('discharge', 1))
+    const charge = item(bar('charge', 1))
+    expect(discharge.color).toBe('#445566')
+    expect(discharge.decal).toBeUndefined()
+    expect(charge.borderColor).toBe('#445566')
+    expect(charge.color).toBe('rgba(68, 85, 102, 0.35)')
+    expect(charge.color).not.toBe(discharge.color)
+    expect(charge.decal?.color).toBe('#445566')
+  })
+
+  it('colors a direction bar by its direction, hatching charge only', () => {
+    expect(item(bar('discharge')).color).toBe('rgba(251,146,60,0.45)')
+    expect(item(bar('discharge')).decal).toBeUndefined()
+    expect(item(bar('charge')).color).toBe('rgba(196,181,253,0.40)')
+    expect(item(bar('charge')).decal?.color).toBe('#c4b5fd')
+  })
+
+  it('wraps a palette slot past the end and passes the series id through', () => {
+    expect(item(bar('discharge', 6)).color).toBe('#445566')
+    expect(seriesOption({ name: 'n', points: [], type: 'bar', id: 'k:charge' }, theme).id).toBe('k:charge')
+    expect(bar('discharge')).not.toHaveProperty('id')
   })
 })

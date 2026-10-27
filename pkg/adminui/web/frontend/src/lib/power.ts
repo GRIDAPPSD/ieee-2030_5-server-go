@@ -211,17 +211,30 @@ export const formatKwh = (kwh: number): string => `${kwh.toFixed(3)} kWh`
 // the shown answer arrived. The charts read this one range so they line up.
 export const windowRange = (endMs: number, windowSeconds: number): [number, number] => [endMs - windowSeconds * 1000, endMs]
 
+// The label of each aggregator, in order: its device label, or "Direct". The
+// server sends the LFDI as the name, so the label comes from the device
+// profiles. Two aggregators that share a label get a short LFDI prefix, so a
+// legend never merges them.
+export function aggregatorLabels(entries: AggregatorEnergy[], labelOf: (lfdi: string) => string): string[] {
+  const base = entries.map((e) => (e.key === DIRECT_KEY ? 'Direct' : labelOf(e.key)))
+  return base.map((label, i) => (base.filter((l) => l === label).length > 1 ? `${label} (${entries[i].key.slice(0, 8)})` : label))
+}
+
 // One bar series per aggregator and direction, in the order the server sent
 // them. Discharge sits above zero, charge below whatever sign the wire used.
-// "Direct" takes the neutral last palette slot.
-export function aggregatorBars(entries: AggregatorEnergy[], unit: string): DrawnChartBody {
+// "Direct" takes the neutral last palette slot. Each series is keyed by the
+// aggregator, and its LFDI is the legend hover text.
+export function aggregatorBars(entries: AggregatorEnergy[], unit: string, labelOf: (lfdi: string) => string): DrawnChartBody {
   const points = (b: [number, number | null][], sign: 1 | -1): [number, number][] =>
     b.flatMap(([s, kwh]): [number, number][] => (kwh === null ? [] : [[s * 1000, sign * Math.abs(kwh)]]))
+  const labels = aggregatorLabels(entries, labelOf)
   const series = entries.flatMap((e, i): DrawnChartSeries[] => {
     const colorIndex = e.key === DIRECT_KEY ? 4 : i % 4
+    const hint = e.key === DIRECT_KEY ? undefined : e.key
+    const common = { type: 'bar' as const, colorIndex, ...(hint === undefined ? {} : { hint }) }
     return [
-      { name: `${e.name} discharge`, points: points(e.discharged, 1), type: 'bar', direction: 'discharge', colorIndex },
-      { name: `${e.name} charge`, points: points(e.charged, -1), type: 'bar', direction: 'charge', colorIndex },
+      { id: `${e.key}:discharge`, name: `${labels[i]} discharge`, points: points(e.discharged, 1), direction: 'discharge', ...common },
+      { id: `${e.key}:charge`, name: `${labels[i]} charge`, points: points(e.charged, -1), direction: 'charge', ...common },
     ]
   })
   return { unit, series }

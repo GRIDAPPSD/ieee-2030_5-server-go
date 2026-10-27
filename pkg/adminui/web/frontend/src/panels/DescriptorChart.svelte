@@ -48,6 +48,32 @@
     }
   })
 
+  // Hover text per legend name, for series that carry a hint such as an LFDI.
+  const hints = $derived(new Map(body.series.flatMap((s) => (s.hint === undefined ? [] : [[s.name, s.hint] as const]))))
+
+  // A long legend name is cut to a width that leaves a scroll page room for
+  // one whole entry on a phone; the hover text carries the full name.
+  function legendOption(textColor: string) {
+    const width = container?.clientWidth ?? 1000
+    const narrow = width < 600
+    return {
+      type: 'scroll',
+      textStyle: { color: textColor, ...(narrow ? { width: width - 158, overflow: 'truncate' } : {}) },
+      // A set width makes each scroll page hold whole entries, never a cut one.
+      ...(narrow ? { width: width - 100, left: 0 } : {}),
+      pageTextStyle: { color: textColor },
+      top: 0,
+      tooltip: {
+        show: true,
+        renderMode: 'richText',
+        formatter: (p: { name?: string }) => {
+          const name = p.name ?? ''
+          return richTextSafe(hints.has(name) ? `${name} (${hints.get(name)})` : name)
+        },
+      },
+    }
+  }
+
   $effect(() => {
     if (chart === null) return
     const theme = chartTheme()
@@ -58,7 +84,7 @@
         backgroundColor: 'transparent',
         animation: false,
         tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit), ...tooltipStyle(theme) },
-        legend: { type: 'scroll', textStyle: { color: textColor }, pageTextStyle: { color: textColor }, top: 0 },
+        legend: legendOption(textColor),
         grid: { left: 60, right: 30, top: 56, bottom: 30 },
         xAxis: {
           type: 'time',

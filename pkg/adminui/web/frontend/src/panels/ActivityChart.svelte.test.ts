@@ -27,6 +27,8 @@ describe('ActivityChart', () => {
     expect(reg.areaStyle.color).toBe(darkToken('--chart-area'))
     expect(comms.lineStyle.color).toBe(darkToken('--chart-2'))
     expect(mups.lineStyle.color).toBe(darkToken('--chart-3'))
+    // The legend marker takes the series item color, so it must match the line.
+    expect([reg, comms, mups].map((x) => x.itemStyle.color)).toEqual([reg, comms, mups].map((x) => x.lineStyle.color))
     expect(option.xAxis[0].axisLabel.color).toBe(darkToken('--chart-axis'))
     expect(option.yAxis[0].splitLine.lineStyle.color).toBe(darkToken('--chart-grid'))
     expect(option.legend[0].textStyle.color).toBe(darkToken('--chart-axis'))

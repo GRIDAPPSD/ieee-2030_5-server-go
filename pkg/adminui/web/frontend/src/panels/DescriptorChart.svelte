@@ -3,15 +3,15 @@
   // ECharts' canvas text: the tooltip uses renderMode 'richText', since the
   // default HTML tooltip interpolates a series name into markup.
   import * as echarts from 'echarts/core'
-  import { LineChart } from 'echarts/charts'
+  import { BarChart, LineChart } from 'echarts/charts'
   import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
   import { CanvasRenderer } from 'echarts/renderers'
-  import { chartTooltip, richTextSafe } from '../lib/chart'
-  import type { DescriptorChartBody } from '../lib/descriptor'
+  import { chartTooltip, richTextSafe, seriesOption } from '../lib/chart'
+  import type { DrawnChartBody } from '../lib/descriptor'
 
-  echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+  echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-  let { body, empty }: { body: DescriptorChartBody; empty: string } = $props()
+  let { body, empty }: { body: DrawnChartBody; empty: string } = $props()
 
   let container: HTMLDivElement | null = $state(null)
   let chart: echarts.ECharts | null = $state.raw(null)
@@ -57,19 +57,15 @@
         },
         yAxis: {
           type: 'value',
-          scale: true,
+          // Bars start at zero, or a discharge-only window exaggerates them.
+          scale: !body.series.some((s) => s.type === 'bar'),
           boundaryGap: ['5%', '5%'],
           name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },
           axisLabel: { color: textColor },
           splitLine: { lineStyle: { color: '#334155' } },
         },
-        series: body.series.map((s) => ({
-          name: s.name,
-          type: 'line',
-          showSymbol: false,
-          data: s.points,
-        })),
+        series: body.series.map(seriesOption),
       },
       true,
     )

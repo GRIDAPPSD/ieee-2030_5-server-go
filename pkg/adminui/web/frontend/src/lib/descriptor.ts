@@ -135,13 +135,14 @@ function firstOf(s: string, chars: string): number {
   return s.length
 }
 
+// What a panel, an action or a card says when the admin session is missing.
+export const SIGN_IN_AGAIN = 'Admin session required. Sign in again.'
+
 // How often an open panel is re-read, and how long one read may take. The
 // server bounds a View at 5s, so a read that outlasts 10s has lost its
 // connection rather than its View.
 export const PANEL_POLL_MS = 15000
 
-// What a panel, an action or a card says when the admin session is missing.
-export const SIGN_IN_AGAIN = 'Admin session required. Sign in again.'
 export const PANEL_REQUEST_TIMEOUT_MS = 10000
 
 export interface DescriptorChartSeries {
@@ -149,9 +150,24 @@ export interface DescriptorChartSeries {
   points: [number, number][]
 }
 
+// How a series is drawn, which the wire does not carry: a series with no type
+// is a line; direction picks the discharge or charge palette for a bar.
+export type ChartSeriesType = 'line' | 'bar'
+export type ChartDirection = 'discharge' | 'charge'
+
+export interface DrawnChartSeries extends DescriptorChartSeries {
+  type?: ChartSeriesType
+  direction?: ChartDirection
+}
+
 export interface DescriptorChartBody {
   unit: string
   series: DescriptorChartSeries[]
+}
+
+export interface DrawnChartBody {
+  unit: string
+  series: DrawnChartSeries[]
 }
 
 // Narrows a /choices reply. A reply that does not match is refused whole,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   cachedPower,
+  energyBars,
   energyTotals,
   forgetPower,
   formatKw,
@@ -117,5 +118,23 @@ describe('energyTotals', () => {
 
   it('reads a missing series as zero', () => {
     expect(energyTotals({ unit: 'kWh', series: [] })).toEqual({ discharged: 0, charged: 0 })
+  })
+})
+
+describe('energyBars', () => {
+  it('types each series a bar, Charged as charge and the rest as discharge, keeping names and points', () => {
+    const chart = {
+      unit: 'kWh',
+      series: [
+        { name: 'Discharged', points: [[1000, 0.5]] as [number, number][] },
+        { name: 'Charged', points: [[1000, -0.25]] as [number, number][] },
+      ],
+    }
+    expect(energyBars(chart).series).toEqual([
+      { name: 'Discharged', points: [[1000, 0.5]], type: 'bar', direction: 'discharge' },
+      { name: 'Charged', points: [[1000, -0.25]], type: 'bar', direction: 'charge' },
+    ])
+    expect(energyBars(chart).unit).toBe('kWh')
+    expect(chart.series[0]).not.toHaveProperty('type')
   })
 })

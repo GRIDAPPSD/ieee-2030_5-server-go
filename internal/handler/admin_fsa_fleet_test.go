@@ -317,3 +317,111 @@ func TestFleetFSA_ConcurrentReconcilesAndAssignsLeaveTheManagedSet(t *testing.T)
 		t.Errorf("fleet FSAs for the aggregator = %d, want 1", fleets)
 	}
 }
+
+// One device that refuses to leave must not block the others: a device
+// program of the operator's own keeps device 1 assigned, yet device 2 is
+// still assigned and the failure is returned.
+func TestFleetFSA_OneRefusingDeviceDoesNotBlockTheOthers(t *testing.T) {
+	t.Parallel()
+	f := newFleetFSAFixture(t)
+	ctx := context.Background()
+	f.pair(t, fleetL1)
+	id := f.fleet(t)
+
+	// Written through the store, since the route now refuses it.
+	prog := memory.ProgramTemplate{ID: "derp-own1", MRID: "0A0B0C0D0E0F101112131415161718AA", Description: "own", Primacy: 70, DefaultMRID: "0A0B0C0D0E0F101112131415161718BB", DefaultControlBase: &sep2.DERControlBase{}}
+	if _, err := f.copies.EnsureDevice(ctx, "1", id, prog); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.managers.Unassign(ctx, fleetL1); err != nil {
+		t.Fatal(err)
+	}
+	f.pair(t, fleetL2)
+
+	_, err := f.h.FleetFSA(httptest.NewRequest(http.MethodPost, "/fleet", nil), fleetAgg)
+	if err == nil {
+		t.Fatal("FleetFSA returned no error although device 1 could not be unassigned")
+	}
+	got := f.h.AdminFSAs.Devices(ctx, id)
+	if !slices.Contains(got, "2") {
+		t.Errorf("assigned = %v, want device 2 assigned despite device 1 refusing", got)
+	}
+	if !slices.Contains(got, "1") {
+		t.Errorf("assigned = %v, want device 1 kept: its own program blocks the unassign", got)
+	}
+}
+
+func TestFleetFSA_ProgramsAreServerOwned(t *testing.T) {
+	t.Parallel()
+	f := newFleetFSAFixture(t)
+	ctx := context.Background()
+	f.pair(t, fleetL1)
+	id := f.fleet(t)
+	tmplID := f.h.AdminFSAs.Templates(ctx, id)[0].ID
+
+	cases := []struct{ name, method, target, body string }{
+		{"template create", http.MethodPost, "/api/fsas/" + id + "/der-programs", voltSupportBody},
+		{"template delete", http.MethodDelete, "/api/fsas/" + id + "/der-programs/" + tmplID, ""},
+		{"device program create", http.MethodPost, "/api/devices/1/fsas/" + id + "/der-programs", voltSupportBody},
+	}
+	for _, tc := range cases {
+		w := f.do(tc.method, tc.target, tc.body)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"fsa_server_managed"`) {
+			t.Errorf("%s: %d %s, want 409 fsa_server_managed", tc.name, w.Code, w.Body.String())
+		}
+	}
+	if got := f.h.AdminFSAs.Templates(ctx, id); len(got) != 1 || got[0].ID != tmplID {
+		t.Errorf("templates after refused changes = %v, want only %s", got, tmplID)
+	}
+	if held, err := f.copies.DevicePrograms(ctx, "1", id); err != nil || len(held) != 0 {
+		t.Errorf("device programs on device 1 = %v, %v, want none", held, err)
+	}
+}
+
+func TestFleetFSA_DeleteOnlyOnceTheAggregatorIsGone(t *testing.T) {
+	t.Parallel()
+	f := newFleetFSAFixture(t)
+	ctx := context.Background()
+	f.pair(t, fleetL1)
+	id := f.fleet(t)
+	tmplID := f.h.AdminFSAs.Templates(ctx, id)[0].ID
+
+	// Pairs gone, aggregator's own EndDevice still registered: refused.
+	if err := f.managers.Unassign(ctx, fleetL1); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.do(http.MethodDelete, "/api/fsas/"+id, ""); w.Code != http.StatusConflict {
+		t.Fatalf("delete with the aggregator's EndDevice present = %d %s, want 409", w.Code, w.Body.String())
+	}
+	if _, err := f.h.AdminFSAs.Get(ctx, id); err != nil {
+		t.Fatalf("FSA gone after a refused delete: %v", err)
+	}
+
+	// No pairs and no EndDevice: deleted with its devices, copies and program.
+	if err := f.devices.Delete(ctx, "9"); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.do(http.MethodDelete, "/api/fsas/"+id, ""); w.Code != http.StatusNoContent {
+		t.Fatalf("delete of a gone aggregator's fleet = %d %s, want 204", w.Code, w.Body.String())
+	}
+	if _, err := f.h.AdminFSAs.Get(ctx, id); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("FSA after delete: %v, want ErrNotFound", err)
+	}
+	if _, ok := f.h.AdminFSAs.FleetFSA(fleetAgg); ok {
+		t.Error("the fleet binding outlived the delete")
+	}
+	if _, err := f.copies.Programs.Get(ctx, "1", tmplID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("device 1 copy after delete: %v, want ErrNotFound", err)
+	}
+
+	// Control: pairs present and no EndDevice is still refused.
+	f2 := newFleetFSAFixture(t)
+	f2.pair(t, fleetL1)
+	id2 := f2.fleet(t)
+	if err := f2.devices.Delete(ctx, "9"); err != nil {
+		t.Fatal(err)
+	}
+	if w := f2.do(http.MethodDelete, "/api/fsas/"+id2, ""); w.Code != http.StatusConflict {
+		t.Errorf("delete with a pair still present = %d %s, want 409", w.Code, w.Body.String())
+	}
+}

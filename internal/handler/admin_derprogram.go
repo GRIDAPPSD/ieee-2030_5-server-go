@@ -123,7 +123,7 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			h.templateFailed(w, r, "fsa_lookup", err)
 			return
 		}
-		if h.deviceOnlyRefused(w, fsaID) {
+		if h.deviceOnlyRefused(w, fsaID) || h.serverManagedRefused(w, fsaID) {
 			return
 		}
 		if !validHrefSegment(fsaID) {
@@ -146,50 +146,10 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			return
 		}
 
-		devices := h.AdminFSAs.Devices(r.Context(), fsaID)
-		for _, dev := range devices {
-			if _, err := h.Copies.Check(r.Context(), dev, fsaID, tmpl); err != nil {
-				h.copyRefused(w, r, err)
-				return
-			}
-		}
-
-		switch err := h.AdminFSAs.CreateTemplate(r.Context(), fsaID, tmpl); {
-		case err == nil:
-		case errors.Is(err, store.ErrAlreadyExists):
-			writeError(w, http.StatusConflict, "a template with this mRID already exists on this fsa")
+		devices, fault := h.writeTemplate(r, fsaID, tmpl)
+		if fault != nil {
+			fault.answer(w)
 			return
-		case errors.Is(err, store.ErrNotFound):
-			writeError(w, http.StatusNotFound, "fsa not found")
-			return
-		default:
-			h.templateFailed(w, r, "template_write", err)
-			return
-		}
-
-		// The template is undone last, so a copy whose undo fails still has
-		// its template, and the boot rebuild completes that copy.
-		steps := []rollbackStep{{template: tmpl.ID, part: "template", undo: func(ctx context.Context) error {
-			return h.AdminFSAs.DeleteTemplate(ctx, fsaID, tmpl.ID)
-		}}}
-		for _, dev := range devices {
-			undo, err := h.Copies.Ensure(r.Context(), dev, fsaID, tmpl)
-			if err == nil {
-				steps = append(steps, rollbackStep{device: dev, template: tmpl.ID, part: "copy", undo: undo})
-				continue
-			}
-			if !h.rolledBack(r, err, steps, &incompleteLog{"admin: DER program template create left partly applied", "der_program_template_incomplete",
-				[]any{"fsa", fsaID, "template", tmpl.ID, "error", err}}) {
-				writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-					"program template write failed; template %s was kept on fsa %s and its device copies are completed at the next restart", tmpl.ID, fsaID))
-				return
-			}
-			h.copyRefused(w, r, err)
-			return
-		}
-
-		for _, dev := range devices {
-			h.notify(r.Context(), programListHref(dev, fsaID))
 		}
 		h.logged(r).InfoContext(r.Context(), "admin: DER program template created", "event", "der_program_template_created",
 			"fsa", fsaID, "template", tmpl.ID, "mrid", tmpl.MRID, "copies", len(devices))
@@ -411,6 +371,9 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			writeError(w, http.StatusConflict, "device or fsa id cannot form a program href")
 			return
 		}
+		if h.serverManagedRefused(w, fsaID) {
+			return
+		}
 
 		h.programMu.Lock()
 		defer h.programMu.Unlock()
@@ -478,11 +441,55 @@ func (h *AdminFSAHandler) ensureDeviceFailed(w http.ResponseWriter, r *http.Requ
 // copyRefused answers a copy that conflicts with a device's own program as
 // 409, and any other failure as a 500.
 func (h *AdminFSAHandler) copyRefused(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, fsaprogram.ErrCopyConflict) {
-		writeError(w, http.StatusConflict, "a device assigned to this fsa already holds a program with this id or mRID")
-		return
+	h.copyRefusedFault(r, err).answer(w)
+}
+
+// writeTemplate adds tmpl, whose ids are minted, to fsaID and copies it to
+// every assigned device, returning those devices. Every copy is checked before
+// anything is written, so a conflict refuses the template with nothing to undo.
+// The caller holds programMu.
+func (h *AdminFSAHandler) writeTemplate(r *http.Request, fsaID string, tmpl memory.ProgramTemplate) ([]string, *membershipFault) {
+	ctx := r.Context()
+	devices := h.AdminFSAs.Devices(ctx, fsaID)
+	for _, dev := range devices {
+		if _, err := h.Copies.Check(ctx, dev, fsaID, tmpl); err != nil {
+			return nil, h.copyRefusedFault(r, err)
+		}
 	}
-	h.templateFailed(w, r, "copy_write", err)
+
+	switch err := h.AdminFSAs.CreateTemplate(ctx, fsaID, tmpl); {
+	case err == nil:
+	case errors.Is(err, store.ErrAlreadyExists):
+		return nil, statusFault(err, http.StatusConflict, "a template with this mRID already exists on this fsa")
+	case errors.Is(err, store.ErrNotFound):
+		return nil, statusFault(err, http.StatusNotFound, "fsa not found")
+	default:
+		return nil, h.failedFault(r, "template_write", err)
+	}
+
+	// The template is undone last, so a copy whose undo fails still has
+	// its template, and the boot rebuild completes that copy.
+	steps := []rollbackStep{{template: tmpl.ID, part: "template", undo: func(ctx context.Context) error {
+		return h.AdminFSAs.DeleteTemplate(ctx, fsaID, tmpl.ID)
+	}}}
+	for _, dev := range devices {
+		undo, err := h.Copies.Ensure(ctx, dev, fsaID, tmpl)
+		if err == nil {
+			steps = append(steps, rollbackStep{device: dev, template: tmpl.ID, part: "copy", undo: undo})
+			continue
+		}
+		if !h.rolledBack(r, err, steps, &incompleteLog{"admin: DER program template create left partly applied", "der_program_template_incomplete",
+			[]any{"fsa", fsaID, "template", tmpl.ID, "error", err}}) {
+			return nil, statusFault(err, http.StatusInternalServerError, fmt.Sprintf(
+				"program template write failed; template %s was kept on fsa %s and its device copies are completed at the next restart", tmpl.ID, fsaID))
+		}
+		return nil, h.copyRefusedFault(r, err)
+	}
+
+	for _, dev := range devices {
+		h.notify(ctx, programListHref(dev, fsaID))
+	}
+	return devices, nil
 }
 
 // errStoresUnwired is the cause logged when a route needs program stores the

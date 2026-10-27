@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -42,15 +40,66 @@ type FleetDeviceLookup interface {
 	GetByLFDI(ctx context.Context, lfdi string) (sep2.EndDevice, error)
 }
 
-// serverManagedRefused answers a delete or an assignment change on a
-// server-managed FSA, and reports whether it did. It is the one place that
-// decides an FSA is the server's.
+// serverManagedRefused answers a change the server reserves for a fleet FSA
+// (delete, assignment, adding or deleting a program, a device program), and
+// reports whether it did. It is the one place that decides an FSA is the
+// server's. Editing the program stays open.
 func (h *AdminFSAHandler) serverManagedRefused(w http.ResponseWriter, fsaID string) bool {
 	if h.AdminFSAs.FleetAggregator(fsaID) == "" {
 		return false
 	}
-	refuseProgram(w, "fsa_server_managed", "this fsa is the server-managed fleet of an aggregator; it cannot be deleted and its device assignment follows the aggregator's managed devices")
+	refuseProgram(w, "fsa_server_managed", "this fsa is the server-managed fleet of an aggregator; the server owns its device assignment and its one program, which can be edited but not added to or deleted")
 	return true
+}
+
+// deleteFleet deletes a fleet FSA whose aggregator is gone: it has no managed
+// devices and no EndDevice record. Otherwise it answers the server-managed
+// refusal. The devices are unassigned and the program deleted first, so the
+// store's own in-use checks hold. It answers and returns.
+func (h *AdminFSAHandler) deleteFleet(w http.ResponseWriter, r *http.Request, fsaID, aggregatorLFDI string) {
+	ctx := r.Context()
+	if h.Managers == nil || h.FleetDevices == nil {
+		h.serverManagedRefused(w, fsaID)
+		return
+	}
+	h.programMu.Lock()
+	defer h.programMu.Unlock()
+
+	// Fail closed: a lookup that cannot answer never reads as "gone".
+	managed, err := h.Managers.ManagedBy(ctx, aggregatorLFDI)
+	if err != nil {
+		h.templateFailed(w, r, "fleet_managed_by", err)
+		return
+	}
+	ownID, err := h.fleetDeviceID(ctx, aggregatorLFDI)
+	if err != nil {
+		h.templateFailed(w, r, "fleet_aggregator_lookup", err)
+		return
+	}
+	if len(managed) > 0 || ownID != "" {
+		h.serverManagedRefused(w, fsaID)
+		return
+	}
+	for _, dev := range h.AdminFSAs.Devices(ctx, fsaID) {
+		if fault := h.unassignLocked(r, dev, fsaID); fault != nil {
+			fault.answer(w)
+			return
+		}
+	}
+	for _, t := range h.AdminFSAs.Templates(ctx, fsaID) {
+		if err := h.AdminFSAs.DeleteTemplate(ctx, fsaID, t.ID); err != nil {
+			h.templateFailed(w, r, "fleet_template_delete", err)
+			return
+		}
+	}
+	switch err := h.AdminFSAs.Delete(ctx, fsaID); {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "fsa not found")
+	default:
+		h.templateFailed(w, r, "fleet_delete", err)
+	}
 }
 
 // FleetFSA returns the id of aggregatorLFDI's fleet FSA, creating it with one
@@ -84,15 +133,11 @@ func (h *AdminFSAHandler) ensureFleetFSA(r *http.Request, aggregatorLFDI string)
 	ctx := r.Context()
 	fsaID, ok := h.AdminFSAs.FleetFSA(aggregatorLFDI)
 	if !ok {
-		id, err := mrid.New(rand.Read, h.PEN)
+		id, fsa, err := h.newBoundFSA("fleet", aggregatorLFDI)
 		if err != nil {
 			return "", fmt.Errorf("fleet FSA: mint: %w", err)
 		}
-		desc := "fleet " + aggregatorLFDI
-		if len(desc) > maxDescriptionOctets {
-			desc = desc[:maxDescriptionOctets]
-		}
-		if err := h.AdminFSAs.CreateFleet(ctx, id, newAdminFSA(id, desc), aggregatorLFDI); err != nil {
+		if err := h.AdminFSAs.CreateFleet(ctx, id, fsa, aggregatorLFDI); err != nil {
 			return "", fmt.Errorf("fleet FSA: create: %w", err)
 		}
 		fsaID = id
@@ -106,27 +151,9 @@ func (h *AdminFSAHandler) ensureFleetFSA(r *http.Request, aggregatorLFDI string)
 	if err := h.mintTemplateIDs(&tmpl); err != nil {
 		return "", fmt.Errorf("fleet FSA: mint template: %w", err)
 	}
-	if err := h.AdminFSAs.CreateTemplate(ctx, fsaID, tmpl); err != nil {
-		return "", fmt.Errorf("fleet FSA: create template: %w", err)
-	}
 	// A template added to an FSA that already has devices is copied to each.
-	steps := []rollbackStep{{template: tmpl.ID, part: "template", undo: func(ctx context.Context) error {
-		return h.AdminFSAs.DeleteTemplate(ctx, fsaID, tmpl.ID)
-	}}}
-	devices := h.AdminFSAs.Devices(ctx, fsaID)
-	for _, dev := range devices {
-		undo, err := h.Copies.Ensure(ctx, dev, fsaID, tmpl)
-		if err != nil {
-			if !h.rolledBack(r, err, steps, &incompleteLog{"admin: fleet program template left partly applied", "fleet_template_incomplete",
-				[]any{"fsa", fsaID, "template", tmpl.ID, "error", err}}) {
-				return "", fmt.Errorf("fleet FSA: copy template to %s, undo incomplete: %w", dev, err)
-			}
-			return "", fmt.Errorf("fleet FSA: copy template to %s: %w", dev, err)
-		}
-		steps = append(steps, rollbackStep{device: dev, template: tmpl.ID, part: "copy", undo: undo})
-	}
-	for _, dev := range devices {
-		h.notify(ctx, programListHref(dev, fsaID))
+	if _, fault := h.writeTemplate(r, fsaID, tmpl); fault != nil {
+		return "", fmt.Errorf("fleet FSA: program template: %w", fault.err)
 	}
 	return fsaID, nil
 }
@@ -134,8 +161,8 @@ func (h *AdminFSAHandler) ensureFleetFSA(r *http.Request, aggregatorLFDI string)
 // reconcileFleet makes fsaID's assigned devices equal the EndDevice records of
 // the aggregator's managed devices, excluding the aggregator's own. A managed
 // LFDI with no record is skipped, since it has nothing to assign. The caller
-// holds programMu. It stops at the first failed write and names it; the next
-// call converges from whatever was written.
+// holds programMu. A failed device is named in the joined error and does not
+// stop the others; the next call converges from whatever was written.
 func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI string) error {
 	ctx := r.Context()
 	managed, err := h.Managers.ManagedBy(ctx, aggregatorLFDI)
@@ -161,17 +188,20 @@ func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI 
 	}
 	slices.Sort(want)
 
+	// A device that fails is recorded and skipped, so one refusing device
+	// never blocks the others; the next call retries it.
+	var errs []error
 	for _, dev := range h.AdminFSAs.Devices(ctx, fsaID) {
 		if slices.Contains(want, dev) {
 			continue
 		}
 		if fault := h.unassignLocked(r, dev, fsaID); fault != nil {
-			return fmt.Errorf("fleet FSA: unassign %s: %w", dev, fault.err)
+			errs = append(errs, fmt.Errorf("fleet FSA: unassign %s: %w", dev, fault.err))
 		}
 	}
 	fsa, err := h.AdminFSAs.Get(ctx, fsaID)
 	if err != nil {
-		return fmt.Errorf("fleet FSA: read %s: %w", fsaID, err)
+		return errors.Join(append(errs, fmt.Errorf("fleet FSA: read %s: %w", fsaID, err))...)
 	}
 	have := h.AdminFSAs.Devices(ctx, fsaID)
 	for _, dev := range want {
@@ -179,10 +209,10 @@ func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI 
 			continue
 		}
 		if fault := h.assignLocked(r, dev, fsaID, fsa, fsaprogram.CompleteIfAssigned); fault != nil {
-			return fmt.Errorf("fleet FSA: assign %s: %w", dev, fault.err)
+			errs = append(errs, fmt.Errorf("fleet FSA: assign %s: %w", dev, fault.err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // fleetDeviceID returns the store id of the EndDevice with lfdi, or "" when

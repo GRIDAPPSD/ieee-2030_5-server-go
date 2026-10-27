@@ -16,6 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -225,7 +226,8 @@ func (h *AdminFSAHandler) HandleDeleteAdminFSA() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "id required")
 			return
 		}
-		if h.serverManagedRefused(w, id) {
+		if aggregator := h.AdminFSAs.FleetAggregator(id); aggregator != "" {
+			h.deleteFleet(w, r, id, aggregator)
 			return
 		}
 		err := h.AdminFSAs.Delete(r.Context(), id)
@@ -444,6 +446,21 @@ func newAdminFSA(id, description string) sep2.FunctionSetAssignments {
 		Description:        description,
 		DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
 	}
+}
+
+// newBoundFSA mints the id and admin record of an FSA the server creates for
+// owner (a device or an aggregator). The description is label and owner cut to
+// the 32 octets a description holds.
+func (h *AdminFSAHandler) newBoundFSA(label, owner string) (string, sep2.FunctionSetAssignments, error) {
+	id, err := mrid.New(rand.Read, h.PEN)
+	if err != nil {
+		return "", sep2.FunctionSetAssignments{}, err
+	}
+	desc := label + " " + owner
+	if len(desc) > maxDescriptionOctets {
+		desc = desc[:maxDescriptionOctets]
+	}
+	return id, newAdminFSA(id, desc), nil
 }
 
 // rollbackSteps names the writes fsaprogram.Assign made for deviceID.

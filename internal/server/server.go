@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2cert"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
@@ -1021,6 +1022,15 @@ func buildBannerInput(cfg *config.Config, svc *handler.AdminCertService, tlsMode
 // root, matching the pattern the shared library's own peer verifier uses
 // (vendor/.../pkg/sep2tls/verify.go).
 //
+// A CSIP leaf (the SunSpec test PKI's server certificates among them)
+// carries a critical SAN holding only a HardwareModuleName, which the stdlib
+// parser leaves in UnhandledCriticalExtensions, so a bare Verify failed with
+// "unhandled critical extension" on a leaf that does chain to the serving
+// CA. Each certificate's SAN is acknowledged first, by the same rule the
+// shared library's peer verifier applies: only when every otherName in it
+// is a well-formed HardwareModuleName. Any other unhandled critical
+// extension still fails the check.
+//
 // Pure function so tests assert content directly without intercepting log
 // output or standing up a listener.
 func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) string {
@@ -1034,6 +1044,9 @@ func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) stri
 	chain, err := certs.ParseCertificateChainPEM(leafPEM)
 	if err != nil {
 		return ""
+	}
+	for _, c := range chain {
+		acknowledgeHardwareModuleSAN(c)
 	}
 	leaf := chain[0]
 	roots := x509.NewCertPool()
@@ -1051,6 +1064,27 @@ func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) stri
 			certFile, servingCA.Subject, err)
 	}
 	return ""
+}
+
+// acknowledgeHardwareModuleSAN removes the SubjectAlternativeName OID from
+// cert.UnhandledCriticalExtensions when every otherName in the SAN is a
+// well-formed HardwareModuleName. It mirrors clearKnownCriticalSAN in the
+// shared library's sep2tls verifier, which is unexported; the exported
+// verifier there also pins ClientAuth key usage, which a server leaf need
+// not carry. It mutates cert, so callers pass a freshly parsed copy.
+func acknowledgeHardwareModuleSAN(cert *x509.Certificate) {
+	if len(cert.UnhandledCriticalExtensions) == 0 {
+		return
+	}
+	allHMN, _ := sep2cert.SANAllOtherNamesAreHardwareModuleName(cert)
+	filtered := cert.UnhandledCriticalExtensions[:0]
+	for _, oid := range cert.UnhandledCriticalExtensions {
+		if oid.Equal(sep2cert.OIDSubjectAltName) && allHMN {
+			continue
+		}
+		filtered = append(filtered, oid)
+	}
+	cert.UnhandledCriticalExtensions = filtered
 }
 
 // buildAdminTLSConfig assembles the admin listener's *tls.Config from the

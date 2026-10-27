@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Release(ctx, managerLFDI, managedLFDI)`, a compare-and-delete; an embedder
   that implements the interface must add it.
 
+### Fixed
+
+- The startup check that the server certificate chains to the advertised
+  serving CA no longer warns "unhandled critical extension" for a CSIP leaf
+  whose critical SAN holds only a HardwareModuleName, such as the SunSpec test
+  PKI's server certificates. It now acknowledges that SAN the way device
+  verification does, so the warning fires only on a real mismatch.
+
 ## [0.18.0] - 2026-10-21
 
 This entry covers `v0.17.0..v0.18.0`. It is a MINOR release under the 0.x

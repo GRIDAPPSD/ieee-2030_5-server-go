@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2cert"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
@@ -67,6 +68,55 @@ func generateIntermediateCA(t *testing.T, cn string, parentCert *x509.Certificat
 	}
 	pemBytes := pemEncodeCert(t, der)
 	return cert, key, pemBytes
+}
+
+// generateHardwareModuleLeaf builds a leaf shaped like the SunSpec test
+// PKI's server certificates: empty Subject, a critical SAN holding only a
+// HardwareModuleName, and no ExtKeyUsage. The SAN extension is copied from
+// a certs.GenerateDeviceCert leaf so its encoding is the one this repo
+// already mints and the stdlib leaves unhandled.
+func generateHardwareModuleLeaf(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	devicePEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{HWSerialNum: "hmn-leaf"})
+	if err != nil {
+		t.Fatalf("GenerateDeviceCert: %v", err)
+	}
+	device, err := certs.ParseCertificatePEM(devicePEM)
+	if err != nil {
+		t.Fatalf("parse device cert: %v", err)
+	}
+	var san *pkix.Extension
+	for i, e := range device.Extensions {
+		if e.Id.Equal(sep2cert.OIDSubjectAltName) {
+			san = &device.Extensions[i]
+		}
+	}
+	if san == nil || !san.Critical {
+		t.Fatal("device cert has no critical SAN to copy")
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate leaf key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:    big.NewInt(1101),
+		NotBefore:       time.Now().Add(-1 * time.Minute),
+		NotAfter:        time.Now().AddDate(1, 0, 0),
+		KeyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
+		ExtraExtensions: []pkix.Extension{*san},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	parsed, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	if len(parsed.UnhandledCriticalExtensions) == 0 {
+		t.Fatal("leaf has no unhandled critical extension; the test would not exercise the fix")
+	}
+	return pemEncodeCert(t, der)
 }
 
 func TestServingCAMismatchWarning(t *testing.T) {
@@ -194,6 +244,30 @@ func TestServingCAMismatchWarning(t *testing.T) {
 		got := servingCAMismatchWarning(mismatchedLeafFile, servingCACert)
 		if got == "" {
 			t.Fatal("got no warning for a leaf signed by an unrelated CA; the chain check can no longer fire")
+		}
+	})
+
+	// A leaf with a critical HardwareModuleName-only SAN, like the SunSpec
+	// test PKI's server certificates, used to warn "unhandled critical
+	// extension" even when it chained to the serving CA. The same leaf from
+	// an unrelated CA must still warn.
+	hmnLeafFile := write("hmn-leaf.crt", generateHardwareModuleLeaf(t, servingCACert, servingCAKey))
+	hmnMismatchedLeafFile := write("hmn-mismatched-leaf.crt", generateHardwareModuleLeaf(t, otherCACert, otherCAKey))
+
+	t.Run("HardwareModuleName SAN leaf signed by the serving CA: no warning", func(t *testing.T) {
+		got := servingCAMismatchWarning(hmnLeafFile, servingCACert)
+		if got != "" {
+			t.Errorf("got warning for a CSIP-shaped leaf signed by the serving CA: %q", got)
+		}
+	})
+
+	t.Run("HardwareModuleName SAN leaf from an unrelated CA: still warns", func(t *testing.T) {
+		got := servingCAMismatchWarning(hmnMismatchedLeafFile, servingCACert)
+		if got == "" {
+			t.Fatal("got no warning for a CSIP-shaped leaf signed by an unrelated CA")
+		}
+		if strings.Contains(got, "unhandled critical extension") {
+			t.Errorf("warning still reports the acknowledged SAN: %q", got)
 		}
 	})
 }

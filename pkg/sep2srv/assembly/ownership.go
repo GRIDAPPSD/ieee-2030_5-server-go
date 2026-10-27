@@ -188,6 +188,12 @@ const (
 	reasonNotOwner        = "not-owner"
 	reasonNotManager      = "not-owner-or-manager"
 	reasonManagedDirect   = "managed-direct"
+	// reasonManagedSubscriber is logged when a paired DER's subscription is
+	// withheld at delivery.
+	reasonManagedSubscriber = "managed-subscriber"
+	// reasonSubscriberUnread is logged when a delivery is withheld because the
+	// subscriber's EndDevice could not be read.
+	reasonSubscriberUnread = "subscriber-unread"
 	// reasonManagementFailed is logged for a 500, not a refusal: the
 	// exclusivity check could not read the management store.
 	reasonManagementFailed = "management-store-error"
@@ -256,19 +262,45 @@ func (g *ownershipGate) exclusive(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		_, managed, err := coreedev.ManagerOf(r.Context(), g.managers, callerLFDI)
-		switch {
-		case err != nil:
-			g.denials.record(r, ownershipVerdict{caller: callerLFDI, reason: reasonManagementFailed, path: r.URL.Path})
+		v, outcome, _ := g.pairOutcome(r.Context(), callerLFDI, r.URL.Path, reasonManagedDirect)
+		switch outcome {
+		case pairFailed:
+			g.denials.record(r, v)
 			// The budgeted line above is the record; srverr.Internal would add an
 			// unbudgeted line per request during an outage.
 			http.Error(w, srverr.DefaultMessage, http.StatusInternalServerError)
-		case managed:
-			g.refuse(w, r, ownershipVerdict{caller: callerLFDI, reason: reasonManagedDirect, path: r.URL.Path})
+		case pairManaged:
+			g.refuse(w, r, v)
 		default:
 			next.ServeHTTP(w, r)
 		}
 	})
+}
+
+type pairResult int
+
+const (
+	pairFree pairResult = iota
+	pairManaged
+	pairFailed
+)
+
+// pairOutcome is the one decision on whether lfdi is the managed side of a
+// pair, shared by the request gate and the delivery check. The verdict names
+// the refusal for the denial log; a store failure is returned as err and is
+// never read as "not managed", so both callers fail closed.
+func (g *ownershipGate) pairOutcome(ctx context.Context, lfdi, path, managedReason string) (ownershipVerdict, pairResult, error) {
+	_, managed, err := coreedev.ManagerOf(ctx, g.managers, lfdi)
+	v := ownershipVerdict{caller: lfdi, path: path}
+	switch {
+	case err != nil:
+		v.reason = reasonManagementFailed
+		return v, pairFailed, err
+	case managed:
+		v.reason = managedReason
+		return v, pairManaged, nil
+	}
+	return v, pairFree, nil
 }
 
 func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict {

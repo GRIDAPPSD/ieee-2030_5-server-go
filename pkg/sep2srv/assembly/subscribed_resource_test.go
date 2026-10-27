@@ -111,9 +111,20 @@ func storedFor(t *testing.T, stores *assembly.Stores, resource string) int {
 	return len(recs)
 }
 
+// unpairB removes the pair on device B, whose subscriptions are otherwise
+// withheld while it is paired.
+func unpairB(t *testing.T, f subscribedResourceFleet) {
+	t.Helper()
+	managers := f.stores.EndDeviceManagers.(*memory.EndDeviceManagementStore)
+	if err := managers.Unassign(context.Background(), deviceLFDIB); err != nil {
+		t.Fatalf("unassign: %v", err)
+	}
+}
+
 func TestSubscribedResource_CrossDeviceSubscribeIsRefusedAndNotNotified(t *testing.T) {
 	t.Parallel()
 	f := newSubscribedResourceFleet(t)
+	unpairB(t, f)
 	rcvA, rcvB := newNotificationReceiver(t), newNotificationReceiver(t)
 
 	if got := subscribe(t, f.a, subDevAID, "/edev/5/frp", rcvA.srv.URL); got != http.StatusBadRequest {
@@ -164,16 +175,13 @@ func TestSubscribedResource_ManagerMaySubscribeToAManagedDeviceUntilRevoked(t *t
 	if got := rcvM.waitFor(t, 1); got[0].SubscribedResource != "/edev/5/frp" {
 		t.Fatalf("manager's notification = %+v, want one for /edev/5/frp", got[0])
 	}
-	rcvB.waitFor(t, 1)
+	assertNothingFor(t, rcvB, "paired B")
 
 	// Revoking management takes effect at delivery for a subscription
-	// accepted while it held.
-	managers := f.stores.EndDeviceManagers.(*memory.EndDeviceManagementStore)
-	if err := managers.Unassign(context.Background(), deviceLFDIB); err != nil {
-		t.Fatalf("unassign: %v", err)
-	}
+	// accepted while it held, and ends the withholding of B's own.
+	unpairB(t, f)
 	postWindowRequest(t, f.b, subDevBID)
-	rcvB.waitFor(t, 2)
+	rcvB.waitFor(t, 1)
 	time.Sleep(300 * time.Millisecond)
 	rcvM.mu.Lock()
 	defer rcvM.mu.Unlock()
@@ -185,6 +193,7 @@ func TestSubscribedResource_ManagerMaySubscribeToAManagedDeviceUntilRevoked(t *t
 func TestSubscribedResource_StoredCrossDeviceSubscriptionIsNotNotified(t *testing.T) {
 	t.Parallel()
 	f := newSubscribedResourceFleet(t)
+	unpairB(t, f)
 	rcvA, rcvB := newNotificationReceiver(t), newNotificationReceiver(t)
 
 	planted := sep2.Subscription{

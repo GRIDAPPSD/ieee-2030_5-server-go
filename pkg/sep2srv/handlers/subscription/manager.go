@@ -66,10 +66,18 @@ var ErrInvalidNotificationURI = errors.New("subscription has no notificationURI"
 // treat it the same as ErrQueueFull: best-effort, not fatal to the caller.
 var ErrManagerClosed = errors.New("notification manager closed")
 
+// ErrWithholdRecorded marks a SubscriberCheck error whose cause the check has
+// already written to its own bounded log, so Notify and the worker do not add
+// an unbounded line per notification for a standing refusal or outage.
+var ErrWithholdRecorded = errors.New("delivery withheld; reason already logged")
+
 type notificationTask struct {
 	subscriptionID  string
 	notificationURI string
 	payload         []byte
+	// recheck, when set, is the subscription the worker re-checks just before
+	// sending, so a change since enqueue (a new pair) still withholds.
+	recheck *sep2.Subscription
 }
 
 // Manager handles dispatching notifications to subscribers.
@@ -370,7 +378,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 		sub := rec.Subscription
 		if check != nil {
 			if err := (*check)(ctx, sub); err != nil {
-				log.Printf("notification: not notifying subscription %q for %q: %v", sub.Href, loggedResource(sub.SubscribedResource), err)
+				m.logWithheld(sub, err)
 				continue
 			}
 		}
@@ -392,6 +400,9 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			notificationURI: sub.NotificationURI,
 			payload:         payload,
 		}
+		if check != nil {
+			task.recheck = &sub
+		}
 
 		if err := m.enqueue(task); err != nil {
 			if errors.Is(err, ErrManagerClosed) {
@@ -403,6 +414,13 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 	}
 }
 
+func (m *Manager) logWithheld(sub sep2.Subscription, err error) {
+	if errors.Is(err, ErrWithholdRecorded) {
+		return
+	}
+	log.Printf("notification: not notifying subscription %q for %q: %v", sub.Href, loggedResource(sub.SubscribedResource), err)
+}
+
 func (m *Manager) worker(ctx context.Context) {
 	defer m.wg.Done()
 	for task := range m.queue {
@@ -412,6 +430,14 @@ func (m *Manager) worker(ctx context.Context) {
 			m.observe(outcomeManagerClosed)
 			log.Printf("notification: manager shutting down, dropping for %s", redactURI(task.notificationURI))
 			continue
+		}
+		if task.recheck != nil {
+			if check := m.subscriberCheck.Load(); check != nil {
+				if err := (*check)(ctx, *task.recheck); err != nil {
+					m.logWithheld(*task.recheck, err)
+					continue
+				}
+			}
 		}
 		err := m.deliver(ctx, task)
 		switch {

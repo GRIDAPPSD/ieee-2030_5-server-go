@@ -1,9 +1,11 @@
 package subscription_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -144,8 +146,8 @@ func TestManagerNotify_SubscriberCheckWithholdsDelivery(t *testing.T) {
 	if got := hits.paths(); len(got) != 1 || got[0] != "/admitted" {
 		t.Errorf("deliveries = %v, want only /admitted", got)
 	}
-	if checked.Load() != 2 {
-		t.Errorf("check ran %d times, want once per subscription (2)", checked.Load())
+	if checked.Load() != 3 {
+		t.Errorf("check ran %d times, want once per subscription at Notify and once more for the admitted one at send (3)", checked.Load())
 	}
 }
 
@@ -206,5 +208,96 @@ func (d *deliveries) paths() []string {
 		default:
 			return d.got
 		}
+	}
+}
+
+func TestManagerNotify_CheckIsRepeatedAtSendTime(t *testing.T) {
+	t.Parallel()
+	hits := newDeliveries()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.add(r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	store := &mockSubStore{subs: []sep2.Subscription{{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/3/sub/1"}},
+		SubscribedResource:   "/edev/5/frp",
+		NotificationURI:      srv.URL + "/n",
+	}}}
+	mgr := subscription.NewManager(store, 1, 10, loopbackReceivers)
+	var refuse atomic.Bool
+	mgr.SetSubscriberCheck(func(context.Context, sep2.Subscription) error {
+		if refuse.Load() {
+			return errors.New("paired since enqueue")
+		}
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); mgr.Start(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	// Hold the single worker so the notification sits in the queue while the
+	// check's answer changes.
+	release := make(chan struct{})
+	blocker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(blocker.Close)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	if err := mgr.NotifyRemoved(ctx, sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/9/sub/1"}},
+		SubscribedResource:   "/edev/9/frp",
+		NotificationURI:      blocker.URL,
+	}); err != nil {
+		t.Fatalf("NotifyRemoved: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	mgr.Notify(ctx, "/edev/5/frp", sep2.NotificationStatusDefault)
+	refuse.Store(true)
+	close(release)
+
+	time.Sleep(300 * time.Millisecond)
+	if got := hits.paths(); len(got) != 0 {
+		t.Errorf("deliveries = %v, want none: the check refused before send", got)
+	}
+}
+
+func TestManagerNotify_RecordedWithholdIsNotLoggedAgain(t *testing.T) {
+	store := &mockSubStore{subs: []sep2.Subscription{{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/3/sub/1"}},
+		SubscribedResource:   "/edev/5/frp",
+		NotificationURI:      "http://127.0.0.1:1/n",
+	}}}
+	mgr := subscription.NewManager(store, 1, 10, loopbackReceivers)
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+
+	ctx := context.Background()
+	mgr.SetSubscriberCheck(func(context.Context, sep2.Subscription) error {
+		return fmt.Errorf("%w: refused", subscription.ErrWithholdRecorded)
+	})
+	for range 5 {
+		mgr.Notify(ctx, "/edev/5/frp", sep2.NotificationStatusDefault)
+	}
+	if n := strings.Count(buf.String(), "not notifying subscription"); n != 0 {
+		t.Errorf("recorded withholds wrote %d unbudgeted lines, want 0; log=%q", n, buf.String())
+	}
+
+	mgr.SetSubscriberCheck(func(context.Context, sep2.Subscription) error { return errors.New("plain refusal") })
+	mgr.Notify(ctx, "/edev/5/frp", sep2.NotificationStatusDefault)
+	if n := strings.Count(buf.String(), "not notifying subscription"); n != 1 {
+		t.Errorf("control: unrecorded refusal wrote %d lines, want 1", n)
 	}
 }

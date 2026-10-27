@@ -15,7 +15,10 @@ import type { DashboardData, DashboardDevice } from './lib/dashboard'
 import type { AdminFSA, TopologyNode } from './lib/fsa'
 import { installCanvasStub } from './test-canvas-stub'
 
+import { useAppCss } from './test-tokens'
+
 installCanvasStub()
+useAppCss()
 
 function dashboardData(timestamp: string, devices: DashboardData['devices']): DashboardData {
   return {

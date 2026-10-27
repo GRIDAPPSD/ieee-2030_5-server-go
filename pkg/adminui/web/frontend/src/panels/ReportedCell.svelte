@@ -32,8 +32,8 @@
     font-size: 12px;
   }
   .chip.warn {
-    color: #f59e0b;
-    border-color: #f59e0b;
+    color: var(--status-warn);
+    border-color: var(--status-warn);
   }
   .note {
     font-size: 11px;

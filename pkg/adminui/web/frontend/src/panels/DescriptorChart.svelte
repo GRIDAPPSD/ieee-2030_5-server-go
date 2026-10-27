@@ -7,6 +7,7 @@
   import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
   import { CanvasRenderer } from 'echarts/renderers'
   import { chartTooltip, richTextSafe, seriesOption } from '../lib/chart'
+  import { chartTheme, tooltipStyle } from '../lib/chartTheme'
   import type { DrawnChartBody } from '../lib/descriptor'
 
   echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -18,8 +19,6 @@
   let initError = $state('')
 
   const hasPoints = $derived(body.series.some((s) => s.points.length > 0))
-
-  const textColor = '#94a3b8'
 
   $effect(() => {
     if (container === null) return
@@ -43,11 +42,14 @@
 
   $effect(() => {
     if (chart === null) return
+    const theme = chartTheme()
+    const textColor = theme.axis
     chart.setOption(
       {
+        color: theme.palette,
         backgroundColor: 'transparent',
         animation: false,
-        tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit) },
+        tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit), ...tooltipStyle(theme) },
         legend: { type: 'scroll', textStyle: { color: textColor }, pageTextStyle: { color: textColor }, top: 0 },
         grid: { left: 60, right: 30, top: 56, bottom: 30 },
         xAxis: {
@@ -63,9 +65,9 @@
           name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },
           axisLabel: { color: textColor },
-          splitLine: { lineStyle: { color: '#334155' } },
+          splitLine: { lineStyle: { color: theme.grid } },
         },
-        series: body.series.map(seriesOption),
+        series: body.series.map((s, i) => seriesOption(s, theme, i)),
       },
       true,
     )

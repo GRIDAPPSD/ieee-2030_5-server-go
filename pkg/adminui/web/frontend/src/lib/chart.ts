@@ -1,7 +1,8 @@
 // The chart bounds and refusal rules pkg/sep2admin enforces at encode,
 // applied again as a second defence. testdata/chart_cases.json holds the
 // cases both sides run; the codes below are the ones it names.
-import type { ChartDirection, Descriptor, DescriptorChartBody, DrawnChartSeries } from './descriptor'
+import type { ChartTheme } from './chartTheme'
+import type { Descriptor, DescriptorChartBody, DrawnChartSeries } from './descriptor'
 
 export const MAX_CHART_SERIES = 16
 export const MAX_CHART_SERIES_POINTS = 720
@@ -101,21 +102,26 @@ export function chartTooltip(unit: string): (params: TooltipParam | TooltipParam
   }
 }
 
-// The dark-theme direction colors from the admin UI theme design. They live
-// here until the theme tokens land and replace them.
-export const DIRECTION_COLORS: Record<ChartDirection, { edge: string; fill: string }> = {
-  discharge: { edge: '#fb923c', fill: 'rgba(251,146,60,0.45)' },
-  charge: { edge: '#c4b5fd', fill: 'rgba(196,181,253,0.40)' },
+// Charge carries a diagonal hatch so the two directions never rest on hue.
+function chargeDecal(theme: ChartTheme) {
+  return { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: Math.PI / 4, color: theme.direction.charge.edge }
 }
 
-// Charge carries a diagonal hatch so the two directions never rest on hue.
-const CHARGE_DECAL = { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: Math.PI / 4, color: DIRECTION_COLORS.charge.edge }
+// The palette holds 5 colors and ECharts cycles it, so lines 6 to 10 repeat
+// them dashed, 11 to 15 dotted, and 16 solid again.
+function lineType(index: number): 'solid' | 'dashed' | 'dotted' {
+  const round = Math.floor(index / 5) % 3
+  return round === 1 ? 'dashed' : round === 2 ? 'dotted' : 'solid'
+}
 
 // The ECharts series for one body series. Bars on one stack share a
 // timestamp, so discharge above zero and charge below never sit side by side.
-export function seriesOption(s: DrawnChartSeries): Record<string, unknown> {
-  if (s.type !== 'bar') return { name: s.name, type: 'line', showSymbol: false, data: s.points }
-  const colors = DIRECTION_COLORS[s.direction ?? 'discharge']
+export function seriesOption(s: DrawnChartSeries, theme: ChartTheme, index = 0): Record<string, unknown> {
+  if (s.type !== 'bar') {
+    const type = lineType(index)
+    return { name: s.name, type: 'line', showSymbol: false, data: s.points, ...(type === 'solid' ? {} : { lineStyle: { type } }) }
+  }
+  const colors = theme.direction[s.direction ?? 'discharge']
   return {
     name: s.name,
     type: 'bar',
@@ -125,7 +131,7 @@ export function seriesOption(s: DrawnChartSeries): Record<string, unknown> {
       color: colors.fill,
       borderColor: colors.edge,
       borderWidth: 1,
-      ...(s.direction === 'charge' ? { decal: CHARGE_DECAL } : {}),
+      ...(s.direction === 'charge' ? { decal: chargeDecal(theme) } : {}),
     },
   }
 }

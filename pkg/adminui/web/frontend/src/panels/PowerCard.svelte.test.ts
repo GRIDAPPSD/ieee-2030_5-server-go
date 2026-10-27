@@ -10,7 +10,10 @@ import { POWER_WINDOWS, forgetPower } from '../lib/power'
 import { wireAnswer } from '../lib/power.fixture'
 import { installCanvasStub } from '../test-canvas-stub'
 
+import { useAppCss } from '../test-tokens'
+
 installCanvasStub()
+useAppCss()
 
 beforeEach(() => {
   vi.useFakeTimers()

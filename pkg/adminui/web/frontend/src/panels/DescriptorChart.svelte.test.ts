@@ -8,6 +8,7 @@ import * as echarts from 'echarts/core'
 import DescriptorChart from './DescriptorChart.svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
 import { installCanvasStub } from '../test-canvas-stub'
+import { darkToken, useAppCss } from '../test-tokens'
 import type { Descriptor, DescriptorChartBody, DrawnChartBody } from '../lib/descriptor'
 
 installCanvasStub()
@@ -24,6 +25,8 @@ const fixture = JSON.parse(
 const chartSection = fixture.sections.find((s) => s.kind === 'chart')!
 const body = chartSection.body as DescriptorChartBody
 const hostile = '<img src=x onerror=alert(1)>'
+
+useAppCss()
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -70,12 +73,59 @@ describe('DescriptorChart', () => {
     const [dis, chg, dflt] = option.series
     expect([dis.type, chg.type, dflt.type]).toEqual(['bar', 'bar', 'bar'])
     expect([dis.stack, chg.stack, dflt.stack]).toEqual(['energy', 'energy', 'energy'])
-    expect(dis.itemStyle).toMatchObject({ color: 'rgba(251,146,60,0.45)', borderColor: '#fb923c', borderWidth: 1 })
+    const dFill = darkToken('--power-discharge-fill')
+    const dEdge = darkToken('--power-discharge')
+    const cFill = darkToken('--power-charge-fill')
+    const cEdge = darkToken('--power-charge')
+    expect(dis.itemStyle).toMatchObject({ color: dFill, borderColor: dEdge, borderWidth: 1 })
     expect(dis.itemStyle.decal).toBeUndefined()
-    expect(chg.itemStyle).toMatchObject({ color: 'rgba(196,181,253,0.40)', borderColor: '#c4b5fd', borderWidth: 1 })
-    expect(chg.itemStyle.decal).toMatchObject({ symbol: 'rect', rotation: Math.PI / 4, color: '#c4b5fd', dashArrayX: [1, 0], dashArrayY: [2, 3] })
-    expect(dflt.itemStyle).toMatchObject({ color: 'rgba(251,146,60,0.45)', borderColor: '#fb923c' })
+    expect(chg.itemStyle).toMatchObject({ color: cFill, borderColor: cEdge, borderWidth: 1 })
+    expect(chg.itemStyle.decal).toMatchObject({ symbol: 'rect', rotation: Math.PI / 4, color: cEdge, dashArrayX: [1, 0], dashArrayY: [2, 3] })
+    expect(dflt.itemStyle).toMatchObject({ color: dFill, borderColor: dEdge })
     expect(dflt.itemStyle.decal).toBeUndefined()
+  })
+
+  it('colors the palette, axes, grid, legend and tooltip from the tokens', async () => {
+    const { instance } = await mounted()
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(body.series.length))
+    const option = instance.getOption() as Record<string, any>
+    expect(option.color).toEqual([1, 2, 3, 4, 5].map((n) => darkToken(`--chart-${n}`)))
+    expect(option.xAxis[0].axisLabel.color).toBe(darkToken('--chart-axis'))
+    expect(option.yAxis[0].axisLabel.color).toBe(darkToken('--chart-axis'))
+    expect(option.yAxis[0].splitLine.lineStyle.color).toBe(darkToken('--chart-grid'))
+    expect(option.legend[0].textStyle.color).toBe(darkToken('--chart-axis'))
+    expect(option.tooltip[0].backgroundColor).toBe(darkToken('--chart-tooltip-bg'))
+    expect(option.tooltip[0].textStyle.color).toBe(darkToken('--text'))
+  })
+
+  it('keeps both direction fills translucent', async () => {
+    for (const name of ['--power-discharge-fill', '--power-charge-fill']) {
+      const m = darkToken(name).match(/^rgba\((\d+),(\d+),(\d+),([0-9.]+)\)$/)
+      expect(m, `${name} is not rgba`).not.toBeNull()
+      expect(parseFloat(m![4])).toBeGreaterThan(0)
+      expect(parseFloat(m![4])).toBeLessThan(1)
+    }
+    const { instance } = await mounted({
+      unit: 'kWh',
+      series: [
+        { name: 'D', points: [[1759343400000, 0.5]], type: 'bar', direction: 'discharge' },
+        { name: 'C', points: [[1759343400000, -0.25]], type: 'bar', direction: 'charge' },
+      ],
+    })
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(2))
+    for (const s of (instance.getOption() as { series: { itemStyle: { color: string } }[] }).series) {
+      const alpha = s.itemStyle.color.match(/^rgba\(\d+,\d+,\d+,([0-9.]+)\)$/)
+      expect(alpha, `fill ${s.itemStyle.color} is opaque`).not.toBeNull()
+      expect(parseFloat(alpha![1])).toBeLessThan(1)
+    }
+  })
+
+  it('repeats the palette dashed for lines 6 to 10, dotted for 11 to 15, solid at 16', async () => {
+    const series = Array.from({ length: 16 }, (_, k) => ({ name: `s${k}`, points: [[1759343400000, k]] as [number, number][] }))
+    const { instance } = await mounted({ unit: '%', series })
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(16))
+    const types = (instance.getOption() as { series: { lineStyle?: { type?: string } }[] }).series.map((s) => s.lineStyle?.type ?? 'solid')
+    expect(types).toEqual([...Array(5).fill('solid'), ...Array(5).fill('dashed'), ...Array(5).fill('dotted'), 'solid'])
   })
 
   it('draws an untyped series as a line with the full line option', async () => {

@@ -7,6 +7,7 @@ import {
   formatKwh,
   keepPower,
   lastPowerChoice,
+  MAX_KEPT_ANSWERS,
   parsePower,
   powerBucketMs,
   powerPath,
@@ -63,6 +64,26 @@ describe('the kept answer', () => {
     forgetPower()
     expect(cachedPower('all', 900)).toBeUndefined()
     expect(lastPowerChoice()).toEqual({ scope: 'all', window: 900 })
+  })
+})
+
+describe('the kept answers bound', () => {
+  it('drops the oldest answer past the cap and keeps the newest', () => {
+    const answer = parsePower(wireAnswer())!
+    for (let i = 0; i < MAX_KEPT_ANSWERS + 1; i++) keepPower(`AGG${i}`, 900, { answer, at: i })
+    expect(cachedPower('AGG0', 900)).toBeUndefined()
+    expect(cachedPower('AGG1', 900)?.at).toBe(1)
+    expect(cachedPower(`AGG${MAX_KEPT_ANSWERS}`, 900)?.at).toBe(MAX_KEPT_ANSWERS)
+  })
+
+  it('counts a re-kept answer as newest, not as a second entry', () => {
+    const answer = parsePower(wireAnswer())!
+    keepPower('AGG0', 900, { answer, at: 0 })
+    for (let i = 1; i < MAX_KEPT_ANSWERS; i++) keepPower(`AGG${i}`, 900, { answer, at: i })
+    keepPower('AGG0', 900, { answer, at: 99 })
+    keepPower('NEW', 900, { answer, at: 100 })
+    expect(cachedPower('AGG0', 900)?.at).toBe(99)
+    expect(cachedPower('AGG1', 900)).toBeUndefined()
   })
 })
 

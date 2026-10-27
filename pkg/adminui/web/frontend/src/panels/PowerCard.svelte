@@ -4,7 +4,7 @@
   // is destroyed, so leaving the tab stops polling. The last answer per scope
   // and window lives in lib/power, not here, so a return draws at once.
   import { fetchJSON } from '../lib/api'
-  import { PANEL_REQUEST_TIMEOUT_MS } from '../lib/descriptor'
+  import { PANEL_REQUEST_TIMEOUT_MS, SIGN_IN_AGAIN } from '../lib/descriptor'
   import { deviceLabel } from '../lib/devices'
   import {
     ALL_SCOPE,
@@ -21,6 +21,7 @@
     rememberPowerChoice,
     type PowerAnswer,
   } from '../lib/power'
+  import { startPoll } from '../lib/poll'
   import DescriptorChart from './DescriptorChart.svelte'
 
   const start = lastPowerChoice()
@@ -41,7 +42,7 @@
   function describe(status: number, message: string): string {
     switch (status) {
       case 401:
-        return 'Admin session required. Sign in again.'
+        return SIGN_IN_AGAIN
       case 404:
         return 'That aggregator manages no devices.'
       default:
@@ -55,8 +56,6 @@
     const sc = scope
     const win = windowSeconds
     rememberPowerChoice(sc, win)
-    const ctrl = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
 
     const kept = cachedPower(sc, win)
     answer = kept?.answer ?? null
@@ -65,12 +64,9 @@
     error = ''
     if (kept) aggregators = kept.answer.aggregators
 
-    async function load() {
-      const res = await fetchJSON<unknown>(powerPath(sc, win), {
-        signal: ctrl.signal,
-        timeoutMs: PANEL_REQUEST_TIMEOUT_MS,
-      })
-      if (ctrl.signal.aborted) return
+    return startPoll(async (signal) => {
+      const res = await fetchJSON<unknown>(powerPath(sc, win), { signal, timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
+      if (signal.aborted) return undefined
       const parsed = res.ok ? parsePower(res.data) : null
       if (parsed !== null) {
         const at = Date.now()
@@ -80,20 +76,13 @@
         aggregators = parsed.aggregators
         fresh = true
         error = ''
-        timer = setTimeout(load, parsed.bucketSeconds * 1000)
-        return
+        return parsed.bucketSeconds * 1000
       }
       // A failed or unreadable refresh keeps the last chart, marked with its time.
       fresh = false
       error = res.ok ? 'The server sent a power reply that could not be read.' : describe(res.status, res.error)
-      timer = setTimeout(load, powerBucketMs(win))
-    }
-    void load()
-
-    return () => {
-      ctrl.abort()
-      clearTimeout(timer)
-    }
+      return powerBucketMs(win)
+    })
   })
 
   const totals = $derived(answer === null ? null : energyTotals(answer.energyChart))

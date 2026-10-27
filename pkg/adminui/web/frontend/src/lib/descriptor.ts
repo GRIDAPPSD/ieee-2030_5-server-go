@@ -139,6 +139,9 @@ function firstOf(s: string, chars: string): number {
 // server bounds a View at 5s, so a read that outlasts 10s has lost its
 // connection rather than its View.
 export const PANEL_POLL_MS = 15000
+
+// What a panel, an action or a card says when the admin session is missing.
+export const SIGN_IN_AGAIN = 'Admin session required. Sign in again.'
 export const PANEL_REQUEST_TIMEOUT_MS = 10000
 
 export interface DescriptorChartSeries {

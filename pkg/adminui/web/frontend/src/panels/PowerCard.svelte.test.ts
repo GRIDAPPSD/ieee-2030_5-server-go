@@ -141,6 +141,19 @@ describe('PowerCard', () => {
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
+  it('does not read again when the read settles as cancelled after unmount', async () => {
+    let settle!: (r: Awaited<ReturnType<typeof api.fetchJSON>>) => void
+    const spy = vi.spyOn(api, 'fetchJSON').mockReturnValue(new Promise((resolve) => (settle = resolve)))
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(spy).toHaveBeenCalledTimes(1)
+
+    unmount()
+    settle({ ok: false, status: 0, error: 'request cancelled' })
+    await vi.advanceTimersByTimeAsync(5000 * 6)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
   it('draws the previous chart at once on return, marked with its time, before the next read lands', async () => {
     const first = vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer() })
     const a = render(PowerCard)

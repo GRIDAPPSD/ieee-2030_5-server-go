@@ -4,7 +4,7 @@
   // effect owns the read: a panel swap or unmount aborts it.
   import { fetchJSON } from '../lib/api'
   import { actionURL, parseActions, type ActionSpec } from '../lib/actions'
-  import { PANEL_REQUEST_TIMEOUT_MS } from '../lib/descriptor'
+  import { PANEL_REQUEST_TIMEOUT_MS, SIGN_IN_AGAIN } from '../lib/descriptor'
   import ActionForm from './ActionForm.svelte'
 
   let { id }: { id: string } = $props()
@@ -26,7 +26,7 @@
       case 504:
         return 'The panel did not answer in time.'
       case 401:
-        return 'Admin session required. Sign in again.'
+        return SIGN_IN_AGAIN
       case 404:
         return 'No actions are available for this panel.'
       default:

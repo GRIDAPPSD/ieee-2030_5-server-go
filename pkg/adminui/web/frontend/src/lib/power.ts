@@ -101,6 +101,10 @@ export interface PowerEntry {
   at: number
 }
 
+// Four windows by every aggregator and "all" would otherwise grow with the
+// fleet; the oldest-kept answer goes first once this many are held.
+export const MAX_KEPT_ANSWERS = 32
+
 const answers = new Map<string, PowerEntry>()
 let choice = { scope: ALL_SCOPE, window: POWER_WINDOWS[0].seconds }
 
@@ -110,7 +114,11 @@ export const cachedPower = (scope: string, windowSeconds: number): PowerEntry | 
   answers.get(keyOf(scope, windowSeconds))
 
 export function keepPower(scope: string, windowSeconds: number, entry: PowerEntry): void {
-  answers.set(keyOf(scope, windowSeconds), entry)
+  const key = keyOf(scope, windowSeconds)
+  // Re-inserting moves the key to the newest position in Map order.
+  answers.delete(key)
+  answers.set(key, entry)
+  while (answers.size > MAX_KEPT_ANSWERS) answers.delete(answers.keys().next().value as string)
 }
 
 // The scope and window last chosen, so a return to the tab opens on the same
@@ -121,6 +129,7 @@ export function rememberPowerChoice(scope: string, windowSeconds: number): void 
   choice = { scope, window: windowSeconds }
 }
 
+// forgetPower resets the kept answers and the choice; the tests call it.
 export function forgetPower(): void {
   answers.clear()
   choice = { scope: ALL_SCOPE, window: POWER_WINDOWS[0].seconds }

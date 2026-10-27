@@ -385,7 +385,7 @@ func TestAccumulateRollup_MeasurementStalenessIsPerValueNotDeviceStatus(t *testi
 	t.Run("stale P with no DERStatus at all", func(t *testing.T) {
 		dev := FleetDevice{
 			Status:       nil,
-			Measurements: FleetDeviceMeasurements{P: &FleetMeasurement{Value: 700, ReadingTime: now - staleAfterSeconds - 1}},
+			Measurements: FleetDeviceMeasurements{P: &FleetMeasurement{Value: 700, ReadingTime: now - mirrorReadingStaleSeconds - 1}},
 		}
 		var rollup FleetRollup
 		accumulateRollup(&rollup, dev, now)
@@ -1054,31 +1054,6 @@ func TestFleetRollup_NetUnderDER2023IsKnown(t *testing.T) {
 // --- #715 fix round 4 item 2: a future-dated client-set readingTime must
 // --- never read as negative age. -----------------------------------------
 
-// TestClampedAge_FutureDatedIsFlooredAtZero proves the floor mechanism
-// itself: clientClockStale's boolean result is identical whether a future
-// date floors to 0 or stays negative (both fail the staleness comparison),
-// so only a direct assertion on the age value can distinguish the two.
-func TestClampedAge_FutureDatedIsFlooredAtZero(t *testing.T) {
-	t.Parallel()
-	now := int64(1000)
-	future := int64(5000) // 4000 seconds in the future
-	if got := clampedAge(future, now); got != 0 {
-		t.Errorf("clampedAge(future, now) = %d, want 0 (floored, not -4000)", got)
-	}
-}
-
-// TestClampedAge_PastIsUnaffected is the control: an ordinary past
-// readingTime is not floored, so clampedAge(future,...) = 0 above is not
-// merely clampedAge always returning 0.
-func TestClampedAge_PastIsUnaffected(t *testing.T) {
-	t.Parallel()
-	now := int64(1000)
-	past := int64(400)
-	if got := clampedAge(past, now); got != 600 {
-		t.Errorf("clampedAge(past, now) = %d, want 600", got)
-	}
-}
-
 // TestAccumulateRollup_StatusDatedYear2100IsStaleNotConnected pins that a
 // DERStatus dated far in the future cannot be aged: it counts as stale and
 // never as connected, rather than reading as the freshest report possible.
@@ -1113,16 +1088,16 @@ func TestMeasurementStale_Boundary(t *testing.T) {
 	now := int64(100000)
 
 	t.Run("exactly at the boundary is not stale", func(t *testing.T) {
-		m := &FleetMeasurement{ReadingTime: now - staleAfterSeconds}
+		m := &FleetMeasurement{ReadingTime: now - mirrorReadingStaleSeconds}
 		if measurementStale(m, now) {
-			t.Error("measurementStale at exactly staleAfterSeconds = true, want false")
+			t.Error("measurementStale at exactly mirrorReadingStaleSeconds = true, want false")
 		}
 	})
 
 	t.Run("one second past the boundary is stale", func(t *testing.T) {
-		m := &FleetMeasurement{ReadingTime: now - staleAfterSeconds - 1}
+		m := &FleetMeasurement{ReadingTime: now - mirrorReadingStaleSeconds - 1}
 		if !measurementStale(m, now) {
-			t.Error("measurementStale one second past staleAfterSeconds = false, want true")
+			t.Error("measurementStale one second past mirrorReadingStaleSeconds = false, want true")
 		}
 	})
 }
@@ -1360,8 +1335,8 @@ func TestFleetRollup_StaleUndirectedReadingDoesNotFlagSum(t *testing.T) {
 }
 
 // derStatusStaleAfter is the DERStatus stale limit (2 x pollRate + 60 s at the
-// served 900 s pollRate); DERAvailability and mirror readings keep
-// staleAfterSeconds.
+// served 900 s pollRate), which DERAvailability shares; mirror readings use
+// mirrorReadingStaleSeconds.
 var derStatusStaleAfter = derstatus.StaleAfterSeconds(derstatus.DefaultPollRateSeconds)
 
 // TestAccumulateRollup_StatusStaleUsesPollRateRule pins the change from the
@@ -1425,19 +1400,59 @@ func TestAccumulateRollup_ClockAheadIsNotConnected(t *testing.T) {
 	}
 }
 
-// DERAvailability keeps the 15 minute rule: at 1000 s old it is stale, where
-// the 1860 s DERStatus rule would call it current.
-func TestAccumulateRollup_AvailabilityKeepsFifteenMinuteRule(t *testing.T) {
+// TestAccumulateRollup_AvailabilityStaleMatchesAssess pins one availability
+// reading as fresh or stale exactly as derstatus.Assess judges it, just
+// inside and just past the 1860 s limit, so the fleet row and a device view
+// cannot disagree about the same reading.
+func TestAccumulateRollup_AvailabilityStaleMatchesAssess(t *testing.T) {
 	t.Parallel()
 	now := int64(1_000_000)
-	statW := 700.0
-	dev := FleetDevice{
-		Status:       &FleetDeviceStatus{ReadingTime: now},
-		Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: now - 1000},
+	cases := []struct {
+		name      string
+		age       int64
+		wantStale bool
+	}{
+		{"1000 s old, past the old 900 s rule, still fresh", 1000, false},
+		{"just inside the limit", derStatusStaleAfter, false},
+		{"just past the limit", derStatusStaleAfter + 1, true},
 	}
-	var rollup FleetRollup
-	accumulateRollup(&rollup, dev, now)
-	if rollup.StatWAvail.Stale != 1 || rollup.StatWAvail.Sum != 0 {
-		t.Errorf("StatWAvail = %+v, want Stale 1, Sum 0 at 1000 s old", rollup.StatWAvail)
+	for _, tc := range cases {
+		readingTime := now - tc.age
+		assessed := derstatus.Assess(readingTime, now, derstatus.DefaultPollRateSeconds).Stale
+		if assessed != tc.wantStale {
+			t.Fatalf("%s: derstatus.Assess stale = %v, want %v", tc.name, assessed, tc.wantStale)
+		}
+		statW := 700.0
+		dev := FleetDevice{Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: readingTime}}
+		var rollup FleetRollup
+		accumulateRollup(&rollup, dev, now)
+		gotStale := rollup.StatWAvail.Stale == 1
+		if gotStale != assessed {
+			t.Errorf("%s: fleet availability stale = %v, Assess = %v", tc.name, gotStale, assessed)
+		}
+		wantSum := 700.0
+		if tc.wantStale {
+			wantSum = 0
+		}
+		if rollup.StatWAvail.Sum != wantSum {
+			t.Errorf("%s: StatWAvail.Sum = %v, want %v", tc.name, rollup.StatWAvail.Sum, wantSum)
+		}
+	}
+}
+
+// A future-dated availability reading is judged as Assess judges it: current
+// inside one pollRate of skew, stale and never summed beyond it.
+func TestAccumulateRollup_AvailabilityClockAheadMatchesAssess(t *testing.T) {
+	t.Parallel()
+	now := int64(1_000_000)
+	for _, ahead := range []int64{int64(derstatus.DefaultPollRateSeconds), int64(derstatus.DefaultPollRateSeconds) + 1} {
+		readingTime := now + ahead
+		want := derstatus.Assess(readingTime, now, derstatus.DefaultPollRateSeconds).Stale
+		statW := 700.0
+		var rollup FleetRollup
+		accumulateRollup(&rollup, FleetDevice{Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: readingTime}}, now)
+		if got := rollup.StatWAvail.Stale == 1; got != want {
+			t.Errorf("ahead %d s: fleet stale = %v, Assess = %v", ahead, got, want)
+		}
 	}
 }

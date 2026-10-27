@@ -114,7 +114,7 @@ func (s *SubscriptionStore) deleteDevice(ctx context.Context, deviceID string, k
 // device or lies beneath it. With keepNotifiable, the device's own
 // subscriptions to resources outside its tree are left out.
 func (s *SubscriptionStore) deviceSubscriptionIDs(deviceID string, keepNotifiable bool) []string {
-	self := "/edev/" + deviceID
+	self := store.DeviceHref(deviceID)
 	inTree := func(res string) bool { return res == self || strings.HasPrefix(res, self+"/") }
 	s.idxMu.RLock()
 	defer s.idxMu.RUnlock()

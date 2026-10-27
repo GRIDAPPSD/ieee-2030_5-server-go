@@ -527,7 +527,7 @@ func buildEndDevice(s EndDeviceSpec) sep2.EndDevice {
 		SFDI:        s.SFDI,
 		LFDI:        s.LFDI,
 	}
-	dev.Href = fmt.Sprintf("/edev/%s", s.ID)
+	dev.Href = store.DeviceHref(s.ID)
 	if s.Enabled != nil {
 		v := *s.Enabled
 		dev.Enabled = &v

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -64,7 +63,7 @@ func AutoRegistrationMiddleware(edevStore store.EndDeviceStore, mode Registratio
 			enabled := true
 			edev := sep2.EndDevice{
 				SubscribableResource: sep2.SubscribableResource{
-					Resource: sep2.Resource{Href: coreedev.DeviceHref(id)},
+					Resource: sep2.Resource{Href: store.DeviceHref(id)},
 				},
 				SFDI:                           identity.SFDI,
 				LFDI:                           identity.LFDI,

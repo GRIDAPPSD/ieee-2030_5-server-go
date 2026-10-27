@@ -6,6 +6,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
+// DeviceHref is the href of the EndDevice stored under id, "/edev/{id}". It
+// is the one place a device's own href is built; sub-resource hrefs append
+// to it.
+func DeviceHref(id string) string { return "/edev/" + id }
+
 // EndDeviceReader is the read-only half of [EndDeviceStore]: [ResourceReader]
 // plus the identity lookups, and nothing that writes. This is the handle a
 // telemetry consumer or an administrative read surface should hold.

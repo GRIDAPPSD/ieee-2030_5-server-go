@@ -339,7 +339,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 			srverr.Internal(w, r, fmt.Errorf("allocate a device index: %w", err))
 			return
 		}
-		dev.Href = DeviceHref(id)
+		dev.Href = store.DeviceHref(id)
 		dev.FunctionSetAssignmentsListLink = &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa", id)}
 
 		// RegistrationLink is deliberately NOT stamped here.
@@ -629,7 +629,7 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 			return
 		}
 
-		dev.Href = DeviceHref(id)
+		dev.Href = store.DeviceHref(id)
 		dev.LFDI, dev.SFDI = current.LFDI, current.SFDI
 		dev.ChangedTime = time.Now().Unix()
 
@@ -767,9 +767,6 @@ func WithAfterNotify(fn func(ctx context.Context, id string) error) DeleteOption
 	return func(c *deleteConfig) { c.afterNotify = fn }
 }
 
-// DeviceHref is the href of the EndDevice stored under id.
-func DeviceHref(id string) string { return EndDeviceListHref + "/" + id }
-
 // recipientPreparer is satisfied by *subscription.Manager, and by an adapter
 // that forwards to one.
 type recipientPreparer interface {
@@ -792,7 +789,7 @@ func PrepareDeleted(ctx context.Context, n ResourceNotifier, id string) (send fu
 	if n == nil {
 		return func() {}
 	}
-	href := DeviceHref(id)
+	href := store.DeviceHref(id)
 	if p, ok := n.(recipientPreparer); ok {
 		deliver := p.PrepareNotify(ctx, href)
 		return func() { deliver(sep2.NotificationStatusCanceledDeleted) }

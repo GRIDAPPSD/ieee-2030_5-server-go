@@ -20,6 +20,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	srvmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -131,6 +132,11 @@ type AdminDERControlHandler struct {
 	EndDevices EndDeviceGetter
 	Responses  ResponseLister
 	Notifier   ResourceNotifier
+
+	// Managers names the devices a listed control's device manages, so a
+	// Response the device sends for one of them is counted on its controls.
+	// Nil means no device manages another.
+	Managers store.EndDeviceManagementReader
 
 	// Fleets and Ledger bound every create by the commitments of the
 	// program's fleet (GRIDAPPSD/ieee-2030_5-server-go#714). A nil one
@@ -336,12 +342,24 @@ type DERControlCreated struct {
 	Persisted             bool     `json:"persisted"`
 }
 
-// DERControlResponseCounts counts the Response records a device posted for
-// one control. ByStatus is keyed by the decimal ResponseStatus, or "absent"
-// for a Response carrying no status.
+// DERControlResponseCounts counts the Response records posted for one
+// control by the device it is listed under or by a device that one manages.
+// ByStatus is keyed by the decimal ResponseStatus, or "absent" for a Response
+// carrying no status. Total and ByStatus cover every counted Response;
+// ByDevice splits the same Responses by the endDeviceLFDI each named, one
+// entry per device with at least one, ordered by LFDI.
 type DERControlResponseCounts struct {
-	Total    int            `json:"total"`
-	ByStatus map[string]int `json:"byStatus"`
+	Total    int                    `json:"total"`
+	ByStatus map[string]int         `json:"byStatus"`
+	ByDevice []DeviceResponseCounts `json:"byDevice"`
+}
+
+// DeviceResponseCounts is the share of a control's Response counts that
+// named one device, whose LFDI is upper case.
+type DeviceResponseCounts struct {
+	EndDeviceLFDI string         `json:"endDeviceLFDI"`
+	Total         int            `json:"total"`
+	ByStatus      map[string]int `json:"byStatus"`
 }
 
 // DERControlListItem is one entry of GET /api/der/controls.
@@ -1205,12 +1223,15 @@ func (idx responseCountIndex) forMRID(mrid string) DERControlResponseCounts {
 	if c, ok := idx[mrid]; ok {
 		return c
 	}
-	return DERControlResponseCounts{ByStatus: map[string]int{}}
+	return DERControlResponseCounts{ByStatus: map[string]int{}, ByDevice: []DeviceResponseCounts{}}
 }
 
 // responseCounts reads every ResponseSet once and counts the Responses whose
-// endDeviceLFDI matches lfdi. LFDIs compare case-insensitively: hexBinary
-// allows either case and devices differ in which they send.
+// endDeviceLFDI is lfdi or names a device lfdi currently manages. LFDIs
+// compare case-insensitively: hexBinary allows either case and devices differ
+// in which they send. "Manages" is coreedev.CurrentManagerOwns over h.Managers,
+// the rule POST /rsps admits a manager's Response by, so a Response is counted
+// for exactly the senders the server accepted it from.
 func (h *AdminDERControlHandler) responseCounts(ctx context.Context, lfdi string) (responseCountIndex, error) {
 	idx := responseCountIndex{}
 	if h.Responses == nil || lfdi == "" {
@@ -1220,24 +1241,60 @@ func (h *AdminDERControlHandler) responseCounts(ctx context.Context, lfdi string
 	if err != nil {
 		return nil, err
 	}
+	// One management lookup per distinct named device, not per Response.
+	counted := map[string]bool{}
+	countsDevice := func(named string) (bool, error) {
+		if v, ok := counted[named]; ok {
+			return v, nil
+		}
+		v := strings.EqualFold(named, lfdi)
+		if !v && !store.IsAbsent(h.Managers) {
+			var err error
+			v, err = coreedev.CurrentManagerOwns(ctx, h.Managers, named, lfdi)
+			if err != nil {
+				return false, err
+			}
+		}
+		counted[named] = v
+		return v, nil
+	}
 	for _, set := range sets {
 		page, err := h.Responses.List(ctx, set, store.ListOptions{Unbounded: true})
 		if err != nil {
 			return nil, err
 		}
 		for _, rsp := range page.Items {
-			if rsp.Subject == "" || !strings.EqualFold(rsp.EndDeviceLFDI, lfdi) {
+			if rsp.Subject == "" || rsp.EndDeviceLFDI == "" {
+				continue
+			}
+			named := strings.ToUpper(strings.TrimSpace(rsp.EndDeviceLFDI))
+			ok, err := countsDevice(named)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
 				continue
 			}
 			key := "absent"
 			if rsp.Status != nil {
 				key = strconv.Itoa(int(*rsp.Status))
 			}
-			c := idx.forMRID(strings.ToUpper(rsp.Subject))
+			mrid := strings.ToUpper(rsp.Subject)
+			c := idx.forMRID(mrid)
 			c.Total++
 			c.ByStatus[key]++
-			idx[strings.ToUpper(rsp.Subject)] = c
+			i := slices.IndexFunc(c.ByDevice, func(d DeviceResponseCounts) bool { return d.EndDeviceLFDI == named })
+			if i < 0 {
+				c.ByDevice = append(c.ByDevice, DeviceResponseCounts{EndDeviceLFDI: named, ByStatus: map[string]int{}})
+				i = len(c.ByDevice) - 1
+			}
+			c.ByDevice[i].Total++
+			c.ByDevice[i].ByStatus[key]++
+			idx[mrid] = c
 		}
+	}
+	for _, c := range idx {
+		slices.SortFunc(c.ByDevice, func(a, b DeviceResponseCounts) int { return strings.Compare(a.EndDeviceLFDI, b.EndDeviceLFDI) })
 	}
 	return idx, nil
 }

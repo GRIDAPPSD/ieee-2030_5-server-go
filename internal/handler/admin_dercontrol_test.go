@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -108,6 +109,7 @@ func newDCHarnessWith(t *testing.T, pen *uint32, programs *memory.DERProgramStor
 		Programs:   d.programs,
 		EndDevices: d.devices,
 		Responses:  d.responses,
+		Managers:   d.managers,
 		Notifier:   d.notifier,
 		Fleets:     commitment.Resolver{Devices: d.devices, Managers: d.managers},
 		Ledger:     sources.NewLedger(d.devices, d.managers, d.grants, d.grantMarks, d.controls, d.lifecycles),
@@ -405,6 +407,84 @@ func TestDERControlCreate_InternalErrorHasNoDetail(t *testing.T) {
 	}
 }
 
+// A control listed under a manager counts the Responses it sent for a device
+// it manages, by the same rule POST /rsps admits them by: the pair must be
+// current, and a Response naming any other device is not counted.
+func TestDERControlList_CountsManagedDeviceResponses(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	ctx := context.Background()
+	const unrelated = "0000000000000000000000000000000000000002"
+
+	w := d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":%d,"durationSeconds":300}`, futureStart(60)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	mrid := decodeCreated(t, w).MRID
+	if err := d.managers.Assign(ctx, dcLFDI, dcOtherLFDI); err != nil {
+		t.Fatal(err)
+	}
+
+	status := func(v uint8) *uint8 { return &v }
+	for i, rsp := range []sep2.Response{
+		{EndDeviceLFDI: dcLFDI, Subject: mrid, Status: status(1)},
+		{EndDeviceLFDI: strings.ToLower(dcOtherLFDI), Subject: mrid, Status: status(2)},
+		{EndDeviceLFDI: dcOtherLFDI, Subject: mrid, Status: status(2)},
+		{EndDeviceLFDI: unrelated, Subject: mrid, Status: status(3)},
+	} {
+		if err := d.responses.Create(ctx, "1", fmt.Sprint(i), rsp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	list := func() handler.DERControlResponseCounts {
+		t.Helper()
+		w := d.do(t, http.MethodGet, "/api/der/controls?device=0", "")
+		var got handler.DERControlList
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Controls) != 1 {
+			t.Fatalf("list: %d %s", w.Code, w.Body.String())
+		}
+		return got.Controls[0].Responses
+	}
+
+	got := list()
+	sumTotal, sumStatus := 0, map[string]int{}
+	for _, e := range got.ByDevice {
+		sumTotal += e.Total
+		for k, n := range e.ByStatus {
+			sumStatus[k] += n
+		}
+	}
+	if sumTotal != got.Total || !maps.Equal(sumStatus, got.ByStatus) {
+		t.Errorf("byDevice sums to %d %v, want the totals %d %v", sumTotal, sumStatus, got.Total, got.ByStatus)
+	}
+	want := handler.DERControlResponseCounts{
+		Total:    3,
+		ByStatus: map[string]int{"1": 1, "2": 2},
+		// Ordered by LFDI: dcOtherLFDI (all zeros) sorts before dcLFDI.
+		ByDevice: []handler.DeviceResponseCounts{
+			{EndDeviceLFDI: dcOtherLFDI, Total: 2, ByStatus: map[string]int{"2": 2}},
+			{EndDeviceLFDI: dcLFDI, Total: 1, ByStatus: map[string]int{"1": 1}},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("managed counts = %+v, want %+v", got, want)
+	}
+
+	// Management ended: the managed device's Responses fall out of the count.
+	if err := d.managers.Unassign(ctx, dcOtherLFDI); err != nil {
+		t.Fatal(err)
+	}
+	got = list()
+	want = handler.DERControlResponseCounts{
+		Total:    1,
+		ByStatus: map[string]int{"1": 1},
+		ByDevice: []handler.DeviceResponseCounts{{EndDeviceLFDI: dcLFDI, Total: 1, ByStatus: map[string]int{"1": 1}}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("counts after management ended = %+v, want %+v", got, want)
+	}
+}
+
 // Criterion 3: the list shows admin-issued controls for the device with
 // derived status and Response counts matched on subject and endDeviceLFDI.
 func TestDERControlList(t *testing.T) {
@@ -474,8 +554,12 @@ func TestDERControlList(t *testing.T) {
 	if gb.Responses.Total != 0 || gb.Responses.ByStatus == nil || len(gb.Responses.ByStatus) != 0 {
 		t.Errorf("b responses = %+v, want total 0 and an empty byStatus", gb.Responses)
 	}
-	if !strings.Contains(w.Body.String(), `"byStatus":{}`) {
-		t.Errorf("an empty byStatus is not serialized as {}: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"byStatus":{},"byDevice":[]`) {
+		t.Errorf("an empty byStatus and byDevice are not serialized as {} and []: %s", w.Body.String())
+	}
+	wantDev := []handler.DeviceResponseCounts{{EndDeviceLFDI: dcLFDI, Total: 4, ByStatus: map[string]int{"1": 2, "2": 1, "absent": 1}}}
+	if !reflect.DeepEqual(ga.Responses.ByDevice, wantDev) {
+		t.Errorf("a byDevice = %+v, want %+v", ga.Responses.ByDevice, wantDev)
 	}
 
 	w = d.do(t, http.MethodGet, "/api/der/controls?device=0&derProgramHref=/edev/0/fsa/0/derp/1", "")

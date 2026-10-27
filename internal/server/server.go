@@ -1042,6 +1042,11 @@ func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) stri
 		return ""
 	}
 	leaf := chain[0]
+	// A CSIP leaf's critical SAN holds only a HardwareModuleName, which the
+	// stdlib leaves unhandled; core owns the rule for acknowledging it.
+	for _, c := range chain {
+		sepTLS.AcknowledgeHardwareModuleSAN(c)
+	}
 	roots := x509.NewCertPool()
 	roots.AddCert(servingCA)
 	intermediates := x509.NewCertPool()

@@ -25,17 +25,20 @@ func TestReadingsExpired_Boundary(t *testing.T) {
 	const now, ret = int64(1_800_000_000), 90000 * time.Second
 	cutoff := now - 90000
 	for _, tc := range []struct {
-		name string
-		ws   int64
-		ret  time.Duration
-		want bool
+		name  string
+		ws    int64
+		ret   time.Duration
+		floor int64
+		want  bool
 	}{
-		{"earliest reading at the cutoff", cutoff + maxHoldSeconds, ret, false},
-		{"earliest reading one second past it", cutoff + maxHoldSeconds - 1, ret, true},
-		{"ended after the cutoff, started before it", cutoff - 100, ret, true},
-		{"retention unknown", cutoff - 100000, 0, false},
+		{"earliest reading at the cutoff", cutoff + maxHoldSeconds, ret, 0, false},
+		{"earliest reading one second past it", cutoff + maxHoldSeconds - 1, ret, 0, true},
+		{"ended after the cutoff, started before it", cutoff - 100, ret, 0, true},
+		{"retention unknown", cutoff - 100000, 0, 0, false},
+		{"window starting at the floor", now - 100, 0, now - 100, false},
+		{"window starting one second before the floor", now - 101, 0, now - 100, true},
 	} {
-		if got := readingsExpired(tc.ws, now, tc.ret); got != tc.want {
+		if got := readingsExpired(tc.ws, now, tc.ret, tc.floor); got != tc.want {
 			t.Errorf("%s: readingsExpired = %v, want %v", tc.name, got, tc.want)
 		}
 	}

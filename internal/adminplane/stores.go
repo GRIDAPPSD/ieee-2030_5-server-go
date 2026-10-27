@@ -148,6 +148,10 @@ type Stores struct {
 	MirrorReadingRetention    time.Duration
 	MirrorReadingMaxPerSeries int
 
+	// PowerHistory keeps the power route's final buckets across a restart.
+	// Nil without a data directory: the route then reads only its readings.
+	PowerHistory *handler.PowerHistory
+
 	// DERControlIssuer is the process's one DER control issuer (#763), shared
 	// by the admin DER control handler and the grant cancel writers. Nil makes
 	// each of them build its own.

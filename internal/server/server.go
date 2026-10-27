@@ -351,6 +351,15 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if stores.MirrorReadingMaxPerSeries, err = cfg.EffectiveMirrorReadingMaxPerSeries(); err != nil {
 		return nil, nil, err
 	}
+	if dir := cfg.EffectivePowerHistoryDir(); dir != "" {
+		retention, err := cfg.EffectivePowerHistoryRetention()
+		if err != nil {
+			return nil, nil, err
+		}
+		if stores.PowerHistory, err = handler.OpenPowerHistory(dir, retention, time.Now().Unix()); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return stores, endDevices, nil
 }
@@ -505,6 +514,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// #806: mirror readings are swept the same way, at boot and every minute.
 	stopMirrorRetention := startMirrorRetentionAtBoot(ctx, stores, slog.Default(), time.Now)
 	defer stopMirrorRetention()
+	// The power route's final buckets are recorded every 5 s when a data
+	// directory is set.
+	stopPowerHistory := adminplane.StartPowerHistory(ctx, stores)
+	defer stopPowerHistory()
 
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the

@@ -593,3 +593,33 @@ func TestConfigFromEnvAdminTrustedOrigins(t *testing.T) {
 		t.Errorf("AdminTrustedOrigins = %q, want the env value verbatim", got)
 	}
 }
+
+// SEP2_POWER_HISTORY_HOURS reaches the config as whole hours, unset resolves
+// to 48 h, and a value outside 1 to 720 is a startup error naming it.
+func TestConfigFromEnvPowerHistoryHours(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	for _, c := range []struct {
+		env  string
+		want time.Duration
+	}{{"", 48 * time.Hour}, {"1", time.Hour}, {"720", 720 * time.Hour}} {
+		t.Run("value "+c.env, func(t *testing.T) {
+			t.Setenv("SEP2_POWER_HISTORY_HOURS", c.env)
+			cfg, err := configFromEnv(resolver())
+			if err != nil {
+				t.Fatalf("configFromEnv: %v", err)
+			}
+			if got, err := cfg.EffectivePowerHistoryRetention(); err != nil || got != c.want {
+				t.Errorf("EffectivePowerHistoryRetention = %v, %v, want %v", got, err, c.want)
+			}
+		})
+	}
+	for _, bad := range []string{"0", "721", "-1", "two", "1.5"} {
+		t.Run("invalid "+bad, func(t *testing.T) {
+			t.Setenv("SEP2_POWER_HISTORY_HOURS", bad)
+			if cfg, err := configFromEnv(resolver()); err == nil || !strings.Contains(err.Error(), "SEP2_POWER_HISTORY_HOURS") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_POWER_HISTORY_HOURS", cfg, err)
+			}
+		})
+	}
+}

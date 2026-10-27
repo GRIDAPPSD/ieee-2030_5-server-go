@@ -368,6 +368,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	powerHistoryHours, err := config.ParsePowerHistoryHours(os.Getenv("SEP2_POWER_HISTORY_HOURS"))
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -467,6 +471,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// readings per series.
 		MirrorReadingRetention:    mirrorReadingRetention,
 		MirrorReadingMaxPerSeries: mirrorReadingMaxPerSeries,
+
+		// Unset by default (zero), which resolves to 48 hours; kept only
+		// with SEP2_DATA_DIR set.
+		PowerHistoryHours: powerHistoryHours,
 	}, nil
 }
 

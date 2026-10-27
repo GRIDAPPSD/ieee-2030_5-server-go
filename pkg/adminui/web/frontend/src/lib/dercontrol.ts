@@ -133,6 +133,20 @@ export function localDateTimeInput(d: Date = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+// startPickerValue is what a start picker shows when it opens: a start already
+// typed is kept unless it has passed, otherwise the current moment. Every form
+// with a Start now box opens its picker through this.
+export function startPickerValue(current: string, nowMs: number = Date.now()): string {
+  return current === '' || Date.parse(current) < nowMs ? localDateTimeInput(new Date(nowMs)) : current
+}
+
+// localDateTimeSeconds reads a datetime-local value as the browser's local
+// time, in epoch seconds, or null when it is not a date.
+export function localDateTimeSeconds(value: string): number | null {
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
+}
+
 // expectedDeviceReadTime is a nominal estimate, never a delivery time: the
 // stored time plus the DERControlList pollRate, for a device that polls on
 // schedule and misses the push. An offline device never reads it.

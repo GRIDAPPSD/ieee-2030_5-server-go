@@ -37,6 +37,7 @@
   import LoginPanel from './panels/LoginPanel.svelte'
   import FleetPane from './panels/FleetPane.svelte'
   import RequestQueuePane from './panels/RequestQueuePane.svelte'
+import GridRequestPane from './panels/GridRequestPane.svelte'
   import DispatchPane from './panels/DispatchPane.svelte'
   import PanelView from './panels/PanelView.svelte'
   import StreamPanel from './panels/StreamPanel.svelte'
@@ -306,6 +307,7 @@
     {:else if activeTab === 'derms'}
       <FleetPane />
       <RequestQueuePane />
+      <GridRequestPane />
       <DispatchPane />
     {:else if activePanel}
       {#key activePanel.id}

@@ -7,6 +7,7 @@ import { keptControl, type DERControlCreated } from './dercontrol'
 import { postJSON, type RequestOptions } from './api'
 import type { FleetDevice } from './fleet'
 import { normalizeResponse, scaledNumber, type ResponseView, type ScaledValue } from './flowreservation'
+import { isObject } from './json'
 
 export interface GrantView {
   edevId: string
@@ -19,10 +20,6 @@ export interface GrantList {
   aggregatorLFDI: string
   now: number | null
   grants: GrantView[]
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
 // parseGrants checks every field the pane reads before anything renders,

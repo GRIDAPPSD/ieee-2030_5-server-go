@@ -22,11 +22,13 @@ function sourceFiles(dir: string): string[] {
 // A control function is an element named opMod followed by a capital.
 export const ELEMENT = /\bopMod[A-Z]\w*/
 
-// The file below is bound to one element by design and is not part of the
-// control form: the Dispatch tab sends target power only. Each entry must
-// still name an element, so the list shrinks when the names go.
-const ELEMENT_ALLOWED: Record<string, string> = {
-  'src/panels/DispatchPane.svelte': 'Dispatch tab reads the target power of a control',
+// The files below are bound to one element by design and are not part of the
+// control form: the Dispatch tab and the grid blocks send target power only.
+// An entry names the elements a file may name, so a second one in the same file
+// fails; each must still be named, so the list shrinks when the names go.
+const ELEMENT_ALLOWED: Record<string, { elements: string[]; why: string }> = {
+  'src/lib/gridrows.ts': { elements: ['opModTargetW'], why: 'the confirm step words the wire value of the target power' },
+  'src/panels/DispatchPane.svelte': { elements: ['opModTargetW'], why: 'Dispatch tab reads the target power of a control' },
 }
 
 const files = sourceFiles(srcDir)
@@ -38,9 +40,14 @@ describe('the control form names no control function', () => {
     expect(files).toContain('src/lib/controlcatalog.ts')
   })
 
-  it('no non-test file under src names an element, except the allowed one', () => {
-    const named = files.filter((f) => ELEMENT.test(readFileSync(f, 'utf8')))
-    expect(named).toEqual(Object.keys(ELEMENT_ALLOWED).sort())
+  it('no non-test file under src names an element, except the allowed ones and only the allowed elements', () => {
+    const named: Record<string, string[]> = {}
+    for (const f of files) {
+      const found = new Set(readFileSync(f, 'utf8').match(new RegExp(ELEMENT.source, 'g')) ?? [])
+      if (found.size > 0) named[f] = [...found].sort()
+    }
+    const allowed = Object.fromEntries(Object.entries(ELEMENT_ALLOWED).map(([f, a]) => [f, a.elements.slice().sort()]))
+    expect(named).toEqual(allowed)
   })
 
   it('the catalog row type has no value member and no index signature to read one through', () => {

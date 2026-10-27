@@ -42,7 +42,7 @@
     canCancel,
     expectedDeviceReadTime,
     fmtTime,
-    localDateTimeInput,
+    startPickerValue,
     keptControl,
     originMarker,
     POLL_RATE_SECONDS,
@@ -383,7 +383,7 @@
   // A start time the user already typed is kept unless it has passed.
   function onStartNowChange(e: Event) {
     startNow = (e.currentTarget as HTMLInputElement).checked
-    if (!startNow && (startAt === '' || Date.parse(startAt) < Date.now())) startAt = localDateTimeInput()
+    if (!startNow) startAt = startPickerValue(startAt)
   }
 
   function editPending() {

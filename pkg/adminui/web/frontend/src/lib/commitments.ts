@@ -3,6 +3,7 @@
 // route sent it: power and energy are magnitudes, direction names the flow,
 // and a quantity the response does not carry is null, never zero.
 import type { Interval } from './flowreservation'
+import { isObject } from './json'
 
 export interface CommittedGrant {
   mRID: string
@@ -28,10 +29,6 @@ export interface Commitments {
   now: number
   grants: CommittedGrant[]
   plainControls: CommittedControl[]
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function isNumber(v: unknown): v is number {

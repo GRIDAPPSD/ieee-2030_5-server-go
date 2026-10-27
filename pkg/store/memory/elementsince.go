@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -40,29 +41,71 @@ type elementSeen struct {
 	at    time.Time
 }
 
-var _ store.ElementSinceReader = (*ElementSinceStore[sep2.DERStatus])(nil)
+// SinceStore is a ScopedStore that also reports per-element since times.
+type SinceStore[T store.Copier[T]] interface {
+	store.ScopedStore[T]
+	store.ElementSinceReader
+}
 
 // NewElementSinceStore wraps inner. A nil clock means time.Now.
-func NewElementSinceStore[T store.Copier[T]](inner store.ScopedStore[T], fingerprint func(T) map[string]string, clock func() time.Time) *ElementSinceStore[T] {
+//
+// The cascade probes decide by type assertion whether a store can remove a
+// parent or a prefix, so the returned value carries DeleteParent and
+// DeleteParentsWithPrefix only when inner has them; a decorator that always
+// had them would pass the probe and then fail the delete.
+func NewElementSinceStore[T store.Copier[T]](inner store.ScopedStore[T], fingerprint func(T) map[string]string, clock func() time.Time) SinceStore[T] {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &ElementSinceStore[T]{
+	b := &ElementSinceStore[T]{
 		ScopedStore: inner,
 		fingerprint: fingerprint,
 		clock:       clock,
 		since:       make(map[elementKey]map[string]elementSeen),
 	}
+	_, parent := inner.(parentCascader)
+	_, prefix := inner.(prefixCascader)
+	switch {
+	case parent && prefix:
+		return sinceBoth[T]{b}
+	case parent:
+		return sinceParent[T]{b}
+	case prefix:
+		return sincePrefix[T]{b}
+	}
+	return b
 }
 
 // NewDERStatusSinceStore wraps inner for DERStatus resources.
-func NewDERStatusSinceStore(inner store.ScopedStore[sep2.DERStatus], clock func() time.Time) *ElementSinceStore[sep2.DERStatus] {
+func NewDERStatusSinceStore(inner store.ScopedStore[sep2.DERStatus], clock func() time.Time) SinceStore[sep2.DERStatus] {
 	return NewElementSinceStore(inner, derStatusElements, clock)
 }
 
 // NewDERAvailabilitySinceStore wraps inner for DERAvailability resources.
-func NewDERAvailabilitySinceStore(inner store.ScopedStore[sep2.DERAvailability], clock func() time.Time) *ElementSinceStore[sep2.DERAvailability] {
+func NewDERAvailabilitySinceStore(inner store.ScopedStore[sep2.DERAvailability], clock func() time.Time) SinceStore[sep2.DERAvailability] {
 	return NewElementSinceStore(inner, derAvailabilityElements, clock)
+}
+
+type sinceParent[T store.Copier[T]] struct{ *ElementSinceStore[T] }
+
+func (s sinceParent[T]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
+	return s.deleteParent(ctx, parentID)
+}
+
+type sincePrefix[T store.Copier[T]] struct{ *ElementSinceStore[T] }
+
+func (s sincePrefix[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
+	return s.deletePrefix(ctx, prefix)
+}
+
+type sinceBoth[T store.Copier[T]] struct{ *ElementSinceStore[T] }
+
+func (s sinceBoth[T]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
+	return s.deleteParent(ctx, parentID)
+}
+
+func (s sinceBoth[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
+	return s.deletePrefix(ctx, prefix)
 }
 
 // Create stores resource and records its elements.
@@ -91,54 +134,44 @@ func (s *ElementSinceStore[T]) Update(ctx context.Context, parentID, id string, 
 func (s *ElementSinceStore[T]) Delete(ctx context.Context, parentID, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.ScopedStore.Delete(ctx, parentID, id); err != nil {
-		return err
+	err := s.ScopedStore.Delete(ctx, parentID, id)
+	if err == nil || errors.Is(err, store.ErrNotFound) {
+		delete(s.since, elementKey{parentID, id})
 	}
-	delete(s.since, elementKey{parentID, id})
-	return nil
+	return err
 }
 
-// DeleteParent forwards the bulk removal the inner store offers and drops the
-// times under that parent. It refuses, as the cascade does, when the inner
-// store has no such capability, so a decorated store never hides one.
-func (s *ElementSinceStore[T]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
-	inner, ok := s.ScopedStore.(parentCascader)
-	if !ok {
-		return 0, fmt.Errorf("the store (%T) cannot cascade a parent delete", s.ScopedStore)
-	}
+// deleteParent and deletePrefix run only on wrappers built for an inner store
+// that has the capability. They reconcile after the call even when it failed
+// part way: a time is dropped for every resource the inner store no longer
+// holds, so a partial removal leaves no time for a resource that is gone.
+func (s *ElementSinceStore[T]) deleteParent(ctx context.Context, parentID string) (uint32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n, err := inner.DeleteParent(ctx, parentID)
-	if err != nil {
-		return n, err
-	}
+	n, err := s.ScopedStore.(parentCascader).DeleteParent(ctx, parentID)
+	s.reconcile(ctx, func(k elementKey) bool { return k.parentID == parentID })
+	return n, err
+}
+
+func (s *ElementSinceStore[T]) deletePrefix(ctx context.Context, prefix string) (uint32, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, err := s.ScopedStore.(prefixCascader).DeleteParentsWithPrefix(ctx, prefix)
+	s.reconcile(ctx, func(k elementKey) bool { return strings.HasPrefix(k.parentID, prefix) })
+	return n, err
+}
+
+// reconcile must be called with s.mu held. A key whose resource cannot be
+// confirmed gone (any error other than ErrNotFound) keeps its time.
+func (s *ElementSinceStore[T]) reconcile(ctx context.Context, match func(elementKey) bool) {
 	for k := range s.since {
-		if k.parentID == parentID {
+		if !match(k) {
+			continue
+		}
+		if _, err := s.ScopedStore.Get(ctx, k.parentID, k.id); errors.Is(err, store.ErrNotFound) {
 			delete(s.since, k)
 		}
 	}
-	return n, nil
-}
-
-// DeleteParentsWithPrefix forwards the one-operation prefix removal and drops
-// the times under every parent it matched.
-func (s *ElementSinceStore[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
-	inner, ok := s.ScopedStore.(prefixCascader)
-	if !ok {
-		return 0, fmt.Errorf("the store (%T) cannot cascade a prefix delete", s.ScopedStore)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n, err := inner.DeleteParentsWithPrefix(ctx, prefix)
-	if err != nil {
-		return n, err
-	}
-	for k := range s.since {
-		if strings.HasPrefix(k.parentID, prefix) {
-			delete(s.since, k)
-		}
-	}
-	return n, nil
 }
 
 // ElementSince implements store.ElementSinceReader.

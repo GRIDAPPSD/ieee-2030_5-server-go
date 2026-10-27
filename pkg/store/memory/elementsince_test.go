@@ -3,6 +3,8 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -190,7 +192,9 @@ func TestElementSince_BulkDeletesDropTheirTimes(t *testing.T) {
 	put(t, st, "other/1", socStatus(8000, 1, 1))
 	put(t, st, "dev2/1", socStatus(8000, 1, 1))
 
-	if _, err := st.DeleteParentsWithPrefix(context.Background(), "dev/"); err != nil {
+	if _, err := st.(interface {
+		DeleteParentsWithPrefix(context.Context, string) (uint32, error)
+	}).DeleteParentsWithPrefix(context.Background(), "dev/"); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"dev/1", "dev/2"} {
@@ -204,7 +208,9 @@ func TestElementSince_BulkDeletesDropTheirTimes(t *testing.T) {
 		}
 	}
 
-	if _, err := st.DeleteParent(context.Background(), "other/1"); err != nil {
+	if _, err := st.(interface {
+		DeleteParent(context.Context, string) (uint32, error)
+	}).DeleteParent(context.Background(), "other/1"); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(st.ElementSince("other/1", "status")); n != 0 {
@@ -212,5 +218,137 @@ func TestElementSince_BulkDeletesDropTheirTimes(t *testing.T) {
 	}
 	if n := len(st.ElementSince("dev2/1", "status")); n != 1 {
 		t.Errorf("DeleteParent touched another parent: %d", n)
+	}
+}
+
+// plainScoped hides every optional capability of the store it wraps.
+type plainScoped[T store.Copier[T]] struct{ store.ScopedStore[T] }
+
+func TestElementSince_ExposesCascadesOnlyWhenInnerHasThem(t *testing.T) {
+	type parent interface {
+		DeleteParent(context.Context, string) (uint32, error)
+	}
+	type prefix interface {
+		DeleteParentsWithPrefix(context.Context, string) (uint32, error)
+	}
+	full := memory.NewDERStatusSinceStore(memory.NewScopedStore[sep2.DERStatus](), nil)
+	if _, ok := full.(parent); !ok {
+		t.Error("inner has DeleteParent, wrapper hides it")
+	}
+	if _, ok := full.(prefix); !ok {
+		t.Error("inner has DeleteParentsWithPrefix, wrapper hides it")
+	}
+	bare := memory.NewDERStatusSinceStore(plainScoped[sep2.DERStatus]{memory.NewScopedStore[sep2.DERStatus]()}, nil)
+	if _, ok := bare.(parent); ok {
+		t.Error("inner lacks DeleteParent, wrapper claims it")
+	}
+	if _, ok := bare.(prefix); ok {
+		t.Error("inner lacks DeleteParentsWithPrefix, wrapper claims it")
+	}
+	if _, ok := bare.(store.ElementSinceReader); !ok {
+		t.Error("wrapper lost ElementSince")
+	}
+}
+
+// Every pointer field of the resource is a schema element; a new one that the
+// fingerprint forgets would never get a since.
+func TestElementSince_FingerprintCoversEveryElement(t *testing.T) {
+	cases := []struct {
+		name string
+		got  func() (int, int)
+	}{
+		{"DERStatus", func() (int, int) {
+			var v sep2.DERStatus
+			return fillPointers(&v), len(memory.DERStatusElementsForTest(v))
+		}},
+		{"DERAvailability", func() (int, int) {
+			var v sep2.DERAvailability
+			return fillPointers(&v), len(memory.DERAvailabilityElementsForTest(v))
+		}},
+	}
+	for _, c := range cases {
+		want, got := c.got()
+		if want == 0 || got != want {
+			t.Errorf("%s: %d pointer elements, fingerprint covers %d", c.name, want, got)
+		}
+	}
+}
+
+func fillPointers(v any) int {
+	rv := reflect.ValueOf(v).Elem()
+	n := 0
+	for i := 0; i < rv.NumField(); i++ {
+		f := rv.Field(i)
+		if f.Kind() == reflect.Pointer {
+			f.Set(reflect.New(f.Type().Elem()))
+			n++
+		}
+	}
+	return n
+}
+
+func TestElementSince_ConcurrentWriters(t *testing.T) {
+	clk := newClock()
+	st := memory.NewDERStatusSinceStore(memory.NewScopedStore[sep2.DERStatus](), clk.Now)
+	put(t, st, "1/1", socStatus(1, 1, 1))
+	var wg sync.WaitGroup
+	for w := 0; w < 2; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				if err := st.Update(context.Background(), "1/1", "status", socStatus(uint16(w*1000+i), 1, 1)); err != nil {
+					t.Errorf("update: %v", err)
+					return
+				}
+				st.ElementSince("1/1", "status")
+			}
+		}(w)
+	}
+	wg.Wait()
+	if _, ok := st.ElementSince("1/1", "status")["stateOfChargeStatus"]; !ok {
+		t.Fatal("element lost under concurrent writers")
+	}
+}
+
+func TestElementSince_DeleteNotFoundClearsStaleTime(t *testing.T) {
+	clk := newClock()
+	inner := memory.NewScopedStore[sep2.DERStatus]()
+	st := memory.NewDERStatusSinceStore(inner, clk.Now)
+	put(t, st, "1/1", socStatus(8000, 1, 1))
+	// Removed behind the decorator's back, so its record is stale.
+	if err := inner.Delete(context.Background(), "1/1", "status"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Delete(context.Background(), "1/1", "status"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Delete = %v, want ErrNotFound", err)
+	}
+	if n := len(st.ElementSince("1/1", "status")); n != 0 {
+		t.Fatalf("stale time kept: %d", n)
+	}
+}
+
+// failingBulk deletes the resources under the parent, then reports an error.
+type failingBulk struct {
+	*memory.ScopedStore[sep2.DERStatus]
+}
+
+func (f failingBulk) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
+	n, _ := f.ScopedStore.DeleteParent(ctx, parentID)
+	return n, errors.New("late failure")
+}
+
+func TestElementSince_BulkDeleteErrorStillClearsDeleted(t *testing.T) {
+	clk := newClock()
+	st := memory.NewDERStatusSinceStore(failingBulk{memory.NewScopedStore[sep2.DERStatus]()}, clk.Now)
+	put(t, st, "1/1", socStatus(8000, 1, 1))
+	_, err := st.(interface {
+		DeleteParent(context.Context, string) (uint32, error)
+	}).DeleteParent(context.Background(), "1/1")
+	if err == nil {
+		t.Fatal("want the inner error")
+	}
+	if n := len(st.ElementSince("1/1", "status")); n != 0 {
+		t.Fatalf("deleted resource keeps %d times", n)
 	}
 }

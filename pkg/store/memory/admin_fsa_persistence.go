@@ -31,6 +31,10 @@ type adminFSARecord struct {
 	// ordinary FSA, which is also what a snapshot written before device-only
 	// FSAs existed holds.
 	DeviceOnly string `json:"deviceOnly,omitempty"`
+	// Fleet names the aggregator whose server-managed fleet FSA this is;
+	// absent for an operator-made FSA, which is also what a snapshot written
+	// before fleet FSAs existed holds.
+	Fleet string `json:"fleet,omitempty"`
 	// Controls are the FSA's control records (#972); absent from snapshots
 	// written before they existed.
 	Controls []FSAControl `json:"controls,omitempty"`
@@ -83,6 +87,17 @@ func (s *AdminFSAStore) loadFromFile(path string) error {
 				return fmt.Errorf("FSA %q is bound to device %q but lists other devices", r.ID, r.DeviceOnly)
 			}
 			s.deviceOnly[r.ID] = r.DeviceOnly
+		}
+		if r.Fleet != "" {
+			if r.DeviceOnly != "" {
+				return fmt.Errorf("FSA %q is both device-only and a fleet", r.ID)
+			}
+			for _, owner := range s.fleet {
+				if owner == r.Fleet {
+					return fmt.Errorf("FSA %q: aggregator %q already has a fleet FSA", r.ID, r.Fleet)
+				}
+			}
+			s.fleet[r.ID] = r.Fleet
 		}
 		s.fsas[r.ID] = r.FSA.Copy()
 		s.keys = append(s.keys, r.ID)
@@ -140,6 +155,7 @@ func (s *AdminFSAStore) snapshotRecords() []adminFSARecord {
 			ID:         k,
 			FSA:        s.fsas[k].Copy(),
 			DeviceOnly: s.deviceOnly[k],
+			Fleet:      s.fleet[k],
 		}
 		if hrefs := s.programLinks[k]; len(hrefs) > 0 {
 			rec.Programs = append([]string(nil), hrefs...)

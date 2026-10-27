@@ -178,6 +178,9 @@ func (h *AdminFSAHandler) notifyEdited(ctx context.Context, deviceID, fsaID, id 
 func (h *AdminFSAHandler) HandleDeleteProgramTemplate() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fsaID, id := r.PathValue("id"), r.PathValue("derpId")
+		if h.serverManagedRefused(w, fsaID) {
+			return
+		}
 		if !h.storesWired(w, r, h.Copies != nil && h.Retirer != nil) {
 			return
 		}

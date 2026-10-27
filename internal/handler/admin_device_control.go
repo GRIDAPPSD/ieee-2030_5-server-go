@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -464,16 +462,11 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 
 	var fsa sep2.FunctionSetAssignments
 	if fsaID == "" {
-		id, err := mrid.New(rand.Read, h.PEN)
+		id, minted, err := h.newBoundFSA("device-only", deviceID)
 		if err != nil {
 			return fail("mint", err)
 		}
-		fsaID = id
-		desc := "device-only " + deviceID
-		if len(desc) > maxDescriptionOctets {
-			desc = desc[:maxDescriptionOctets]
-		}
-		fsa = newAdminFSA(id, desc)
+		fsaID, fsa = id, minted
 		if err := h.AdminFSAs.CreateDeviceOnly(ctx, id, fsa, deviceID); err != nil {
 			return fail("fsa_create", err)
 		}

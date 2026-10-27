@@ -10,16 +10,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -82,6 +79,10 @@ type AdminFSAHandler struct {
 	// Curves holds the curves a program's default control may name. Nil
 	// holds none, so every curve value is refused as unknown.
 	Curves dercontrol.CurveReader
+	// Managers and FleetDevices feed FleetFSA. Nil leaves FleetFSA answering
+	// ErrFleetUnwired.
+	Managers     store.EndDeviceManagementReader
+	FleetDevices FleetDeviceLookup
 
 	// programMu serializes every program write with assignments, so a device
 	// assigned while a template is created gets exactly one copy of it.
@@ -225,6 +226,10 @@ func (h *AdminFSAHandler) HandleDeleteAdminFSA() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "id required")
 			return
 		}
+		if aggregator := h.AdminFSAs.FleetAggregator(id); aggregator != "" {
+			h.deleteFleet(w, r, id, aggregator)
+			return
+		}
 		err := h.AdminFSAs.Delete(r.Context(), id)
 		switch {
 		case err == nil:
@@ -232,7 +237,7 @@ func (h *AdminFSAHandler) HandleDeleteAdminFSA() http.HandlerFunc {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "fsa not found")
 		case errors.Is(err, memory.ErrAdminFSAInUse):
-			writeError(w, http.StatusConflict, "fsa still has programs or devices attached")
+			writeError(w, http.StatusConflict, fsaInUseMessage)
 		default:
 			writeError(w, http.StatusInternalServerError, "delete fsa: "+err.Error())
 		}
@@ -369,73 +374,17 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
+		if h.serverManagedRefused(w, fsaID) {
+			return
+		}
+
 		h.programMu.Lock()
 		defer h.programMu.Unlock()
 
-		// Every template copy is checked before anything is written, so a
-		// conflict refuses the assignment with nothing to undo.
-		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
-		if !h.storesWired(w, r, len(tmpls) == 0 || h.Copies != nil) {
+		if fault := h.assignLocked(r, deviceID, fsaID, fsa, fsaprogram.RefuseIfAssigned); fault != nil {
+			fault.answer(w)
 			return
 		}
-		for _, t := range tmpls {
-			if _, err := h.Copies.Check(r.Context(), deviceID, fsaID, t); err != nil {
-				if errors.Is(err, fsaprogram.ErrCopyConflict) {
-					writeError(w, http.StatusConflict, "device already holds a program with the id or mRID of one of this fsa's templates")
-					return
-				}
-				h.templateFailed(w, r, "copy_check", err)
-				return
-			}
-		}
-
-		// The assignment is undone last, so a write whose undo fails still
-		// has its assignment, and the boot rebuild completes it. The scoped
-		// href differs from the admin href: the spec surface lives under
-		// the device's edev tree.
-		assigned, err := fsaprogram.Assign(r.Context(), h.AdminFSAs, h.DeviceFSAs, deviceID, fsaID, fsa, fsaprogram.RefuseIfAssigned)
-		steps := rollbackSteps(deviceID, assigned)
-		if err != nil {
-			var ae *fsaprogram.AssignError
-			if errors.As(err, &ae) && ae.Stage == fsaprogram.StageAssign {
-				switch {
-				case errors.Is(err, memory.ErrAdminFSADeviceOnly):
-					h.deviceOnlyRefused(w, fsaID)
-				case errors.Is(err, store.ErrAlreadyExists):
-					writeError(w, http.StatusConflict, "device already assigned to this FSA")
-				default:
-					writeError(w, http.StatusInternalServerError, "assign: "+ae.Err.Error())
-				}
-				return
-			}
-			if !h.rolledBack(r, err, steps, nil) {
-				h.assignIncomplete(w, deviceID, fsaID)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "scope materialize: "+errors.Unwrap(err).Error())
-			return
-		}
-		for _, t := range tmpls {
-			undo, err := h.Copies.Ensure(r.Context(), deviceID, fsaID, t)
-			if err == nil {
-				steps = append(steps, rollbackStep{device: deviceID, template: t.ID, part: "copy", undo: undo})
-				continue
-			}
-			if !h.rolledBack(r, err, steps, nil) {
-				h.assignIncomplete(w, deviceID, fsaID)
-				return
-			}
-			h.copyRefused(w, r, err)
-			return
-		}
-		// Last, so nothing after it can need the replicas undone.
-		if !h.replicateControls(w, r, deviceID, fsaID, steps) {
-			return
-		}
-
-		h.notify(r.Context(), "/edev/"+deviceID+"/fsa")
-		h.notify(r.Context(), programListHref(deviceID, fsaID))
-
 		writeJSON(w, http.StatusOK, map[string]string{
 			"device":  deviceID,
 			"fsaHref": req.FSAHref,
@@ -458,157 +407,19 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
+		if h.serverManagedRefused(w, fsaID) {
+			return
+		}
+
 		h.programMu.Lock()
 		defer h.programMu.Unlock()
 
-		if !slices.Contains(h.AdminFSAs.Devices(r.Context(), fsaID), deviceID) {
-			writeError(w, http.StatusNotFound, "assignment not found")
+		if fault := h.unassignLocked(r, deviceID, fsaID); fault != nil {
+			fault.answer(w)
 			return
 		}
-
-		// A device program is the operator's own, so unlike a template copy
-		// it is never removed on the operator's behalf (#921).
-		if h.Copies != nil {
-			held, err := h.Copies.DevicePrograms(r.Context(), deviceID, fsaID)
-			if err != nil {
-				h.templateFailed(w, r, "device_programs", err)
-				return
-			}
-			if len(held) > 0 {
-				writeJSON(w, http.StatusConflict, deviceProgramsPresent{
-					Error:    "device programs sit under this fsa and must be deleted before the device is unassigned: " + strings.Join(held, ", "),
-					Code:     "device_programs_present",
-					Programs: held,
-				})
-				return
-			}
-		}
-
-		// Copies go before the assignment, so a removal that fails leaves
-		// the device assigned and the boot rebuild restores its copies.
-		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
-		if !h.storesWired(w, r, len(tmpls) == 0 || (h.Copies != nil && h.Retirer != nil)) {
-			return
-		}
-		var removed []string
-		notifyRemoved := func() {
-			for _, href := range removed {
-				h.notifyStatus(r.Context(), href, sep2.NotificationStatusCanceledDeleted)
-			}
-			if len(removed) > 0 {
-				h.notify(r.Context(), programListHref(deviceID, fsaID))
-			}
-		}
-		// Removing a copy takes its controls off the device without
-		// cancelling them, so a copy holding a live one refuses the unassign
-		// (#972); Retire also keeps a control from landing meanwhile.
-		scopes := make([]dercontrol.Scope, 0, len(tmpls))
-		for _, t := range tmpls {
-			scopes = append(scopes, dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID})
-		}
-		copyFailed := false
-		removeAll := func(ctx context.Context) error {
-			for _, t := range tmpls {
-				ok, err := h.Copies.Remove(ctx, deviceID, fsaID, t)
-				if err != nil {
-					var part *fsaprogram.PartError
-					if errors.As(err, &part) {
-						h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
-					} else {
-						h.logUndoFailed(r, deviceID, t.ID, "copy", err)
-					}
-					copyFailed = true
-					return err
-				}
-				if ok {
-					removed = append(removed, der.DERProgramHref(deviceID, fsaID, t.ID))
-				}
-			}
-			return h.AdminFSAs.UnassignDevice(ctx, fsaID, deviceID)
-		}
-		var err error
-		if len(tmpls) == 0 {
-			err = removeAll(r.Context())
-		} else {
-			err = h.Retirer.Retire(r.Context(), scopes, removeAll)
-		}
-		notifyRemoved()
-		var live *dercontrol.LiveControlsError
-		if errors.As(err, &live) {
-			h.audit(r, slog.LevelWarn, "admin: device unassign refused", "der_fsa_unassign_refused",
-				"code", "live_controls", "device", deviceID, "fsa", fsaID, "controls", live.Controls)
-			writeJSON(w, http.StatusConflict, programRefusal{
-				Error:    "cancel these controls, or wait for them to end, before unassigning the device",
-				Code:     "live_controls",
-				Controls: slices.Clone(live.Controls),
-			})
-			return
-		}
-		if copyFailed {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-				"unassign failed; device %s stays assigned to fsa %s, and its template copies are restored at the next restart", deviceID, fsaID))
-			return
-		}
-		switch {
-		case err == nil:
-			if h.DeviceFSAs != nil {
-				if delErr := h.DeviceFSAs.Delete(r.Context(), deviceID, fsaID); delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
-					// The assignment is gone; the in-memory FSA goes at the next restart.
-					h.logged(r).ErrorContext(r.Context(), "admin: device FSA left after unassign", "event", "device_fsa_delete_failed",
-						"device", deviceID, "fsa", fsaID, "error", delErr)
-				}
-			}
-			h.notify(r.Context(), "/edev/"+deviceID+"/fsa")
-			w.WriteHeader(http.StatusNoContent)
-		case errors.Is(err, store.ErrNotFound):
-			writeError(w, http.StatusNotFound, "assignment not found")
-		default:
-			writeError(w, http.StatusInternalServerError, "unassign: "+err.Error())
-		}
+		w.WriteHeader(http.StatusNoContent)
 	}
-}
-
-// replicateControls writes the FSA's live controls to the device's new copies
-// and reports whether the assignment may complete. On failure it undoes
-// steps and answers: 409 for a commitment conflict in the device's fleet,
-// 500 otherwise, and the incomplete answer when a replica may be stored.
-func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Request, deviceID, fsaID string, steps []rollbackStep) bool {
-	if len(liveReplicas(r.Context(), h.AdminFSAs, deviceID, fsaID, sep2time.Now().Unix())) == 0 {
-		return true
-	}
-	err := errors.New("fsa controls cannot be replicated: no replicator wired")
-	if h.Replicas != nil {
-		err = h.Replicas.ReplicateTo(r.Context(), deviceID, fsaID)
-	}
-	if err == nil {
-		return true
-	}
-	var undo *dercontrol.UndoError
-	if errors.As(err, &undo) {
-		// The copies and the assignment stay, so the replica is not orphaned.
-		h.logged(r).ErrorContext(r.Context(), "admin: FSA control replica may be left after a failed assign", "event", "assign_replica_incomplete",
-			"device", deviceID, "fsa", fsaID, "scope", undo.Scope.Key(), "mrid", undo.MRID, "undo_step", string(undo.Step),
-			"control_kept", undo.ControlKept, "lifecycle_kept", undo.LifecycleKept, "error", err)
-		h.assignIncomplete(w, deviceID, fsaID)
-		return false
-	}
-	if !h.rolledBack(r, err, steps, nil) {
-		h.assignIncomplete(w, deviceID, fsaID)
-		return false
-	}
-	var conflict *commitment.ConflictError
-	if errors.As(err, &conflict) {
-		message, ok := conflictMessages[conflict.Code]
-		if !ok {
-			message = "a control of this fsa conflicts with a commitment of the device's fleet"
-		}
-		h.audit(r, slog.LevelWarn, "admin: device assignment refused", "der_fsa_assign_refused",
-			"code", string(conflict.Code), "conflict_mrid", conflict.MRID, "device", deviceID, "fsa", fsaID)
-		writeJSON(w, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
-		return false
-	}
-	h.templateFailed(w, r, "replicate_controls", err)
-	return false
 }
 
 // deviceProgramsPresent is the 409 body of an unassign refused by device
@@ -635,6 +446,21 @@ func newAdminFSA(id, description string) sep2.FunctionSetAssignments {
 		Description:        description,
 		DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
 	}
+}
+
+// newBoundFSA mints the id and admin record of an FSA the server creates for
+// owner (a device or an aggregator). The description is label and owner cut to
+// the 32 octets a description holds.
+func (h *AdminFSAHandler) newBoundFSA(label, owner string) (string, sep2.FunctionSetAssignments, error) {
+	id, err := mrid.New(rand.Read, h.PEN)
+	if err != nil {
+		return "", sep2.FunctionSetAssignments{}, err
+	}
+	desc := label + " " + owner
+	if len(desc) > maxDescriptionOctets {
+		desc = desc[:maxDescriptionOctets]
+	}
+	return id, newAdminFSA(id, desc), nil
 }
 
 // rollbackSteps names the writes fsaprogram.Assign made for deviceID.

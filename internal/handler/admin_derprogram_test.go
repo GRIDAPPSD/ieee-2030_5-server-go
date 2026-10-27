@@ -534,3 +534,50 @@ func TestAssignDeviceFSA_AgainAfterUnassign(t *testing.T) {
 	f.assign(t, "1", "fsa-A")
 	assertDeviceCopy(t, f.copies, "1", "fsa-A", v)
 }
+
+// countingPrograms counts the program writes a create makes.
+type countingPrograms struct {
+	fsaprogram.CopyProgramStore
+	creates []string
+}
+
+func (c *countingPrograms) Create(ctx context.Context, parentID, id string, p sep2.DERProgram) error {
+	c.creates = append(c.creates, parentID+"/"+id)
+	return c.CopyProgramStore.Create(ctx, parentID, id, p)
+}
+
+// The conflict is found by the check pass before any write, so the refused
+// create leaves nothing to undo: no program was written to device 1 and then
+// deleted again. The state alone cannot tell, since a rollback restores it.
+func TestCreateProgramTemplate_ConflictIsFoundBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.assign(t, "1", "fsa-A")
+	f.assign(t, "2", "fsa-A")
+	counting := &countingPrograms{CopyProgramStore: f.copies.Programs}
+	f.h.Copies = &fsaprogram.Copies{Programs: counting, Defaults: f.copies.Defaults, Origins: f.copies.Origins}
+	fixture := sep2.DERProgram{MRID: "0123456789ABCDEF0123456789ABCDEF"}
+	fixture.Href = "/edev/2/fsa/fx/derp/0"
+	if err := f.copies.Programs.Create(context.Background(), "2", "0", fixture); err != nil {
+		t.Fatal(err)
+	}
+
+	w := f.do(http.MethodPost, "/api/fsas/fsa-A/der-programs", `{"description":"d","primacy":1,"mRID":"0123456789abcdef0123456789abcdef","defaultControl":{"type":"connect"}}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d %s, want 409", w.Code, w.Body.String())
+	}
+	if len(counting.creates) != 0 {
+		t.Errorf("program writes before the refusal = %v, want none", counting.creates)
+	}
+	if n := len(f.h.AdminFSAs.Templates(context.Background(), "fsa-A")); n != 0 {
+		t.Errorf("%d templates stored", n)
+	}
+
+	// Control: a create with no conflict does write through the wrapper.
+	if w := f.do(http.MethodPost, "/api/fsas/fsa-A/der-programs", voltSupportBody); w.Code != http.StatusCreated {
+		t.Fatalf("control create: %d %s", w.Code, w.Body.String())
+	}
+	if len(counting.creates) != 2 {
+		t.Errorf("program writes of a clean create = %v, want one per device", counting.creates)
+	}
+}

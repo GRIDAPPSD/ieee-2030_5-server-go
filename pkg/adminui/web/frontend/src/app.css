@@ -6,16 +6,130 @@
    dashboard has always used, so the page looks the same served from the
    SPA as it did served as a string constant. */
 
+/* Design tokens. Dark is the default and equals the palette the dashboard
+   has always shown. A token that shares a name with a legacy variable
+   (--accent, --text, --border) keeps today's dark value until the contrast
+   slice changes it. */
 :root {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --border: #334155;
+  --surface-page: #0f172a;
+  --surface-card: #1e293b;
+  --surface-raised: #273449;
+  --surface-input: var(--surface-page);
+
   --text: #e2e8f0;
-  --text-h: #e2e8f0;
-  --dim: #94a3b8;
+  --text-muted: #94a3b8;
+  --text-on-solid: #ffffff;
+
+  --border: #334155;
+  --border-strong: #64748b;
+
   --accent: #3b82f6;
-  --green: #22c55e;
-  --red: #ef4444;
+  --focus-ring: #93c5fd;
+  --accent-solid: #2563eb;
+  --accent-solid-hover: #1d4ed8;
+  --danger-solid: #dc2626;
+  --danger-solid-hover: #b91c1c;
+
+  --status-ok: #22c55e;
+  --status-ok-bg: rgba(34, 197, 94, 0.16);
+  --status-warn: #facc15;
+  --status-warn-bg: rgba(250, 204, 21, 0.16);
+  --status-fault: #ef4444;
+  --status-fault-bg: rgba(239, 68, 68, 0.18);
+  --status-stale: #d6b98c;
+  --status-stale-bg: rgba(214, 185, 140, 0.16);
+  --status-unknown: #94a3b8;
+  --status-unknown-bg: rgba(148, 163, 184, 0.16);
+
+  --power-discharge: #fb923c;
+  --power-discharge-fill: rgba(251, 146, 60, 0.45);
+  --power-charge: #c4b5fd;
+  --power-charge-fill: rgba(196, 181, 253, 0.40);
+
+  --chart-1: #60a5fa;
+  --chart-2: #2dd4bf;
+  --chart-3: #f472b6;
+  --chart-4: #a3e635;
+  --chart-5: #cbd5e1;
+  --chart-area: rgba(96, 165, 250, 0.12);
+  --chart-axis: var(--text-muted);
+  --chart-grid: var(--border);
+  --chart-tooltip-bg: var(--surface-raised);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Courier New', monospace;
+
+  --fs-1: 11px;
+  --fs-2: 12px;
+  --fs-3: 13px;
+  --fs-4: 14px;
+  --fs-5: 16px;
+  --fs-display: 36px;
+  --lh-base: 1.45;
+
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  /* Legacy names, kept so every existing rule and component keeps working. */
+  --bg: var(--surface-page);
+  --card: var(--surface-card);
+  --text-h: var(--text);
+  --dim: var(--text-muted);
+  --green: var(--status-ok);
+  --red: var(--status-fault);
+}
+
+/* Nothing sets data-theme yet; the light theme lands with the theme switch. */
+:root[data-theme='light'] {
+  --surface-page: #f8fafc;
+  --surface-card: #ffffff;
+  --surface-raised: #f1f5f9;
+  --surface-input: var(--surface-card);
+
+  --text: #0f172a;
+  --text-muted: #475569;
+
+  --border: #cbd5e1;
+  --border-strong: #8492a6;
+
+  --accent: #1d4ed8;
+  --focus-ring: #1d4ed8;
+  --accent-solid-hover: #1e40af;
+  --danger-solid: #b91c1c;
+  --danger-solid-hover: #991b1b;
+
+  --status-ok: #166534;
+  --status-ok-bg: rgba(22, 101, 52, 0.12);
+  --status-warn: #854d0e;
+  --status-warn-bg: rgba(133, 77, 14, 0.12);
+  --status-fault: #b91c1c;
+  --status-fault-bg: rgba(185, 28, 28, 0.12);
+  --status-stale: #7c5e3c;
+  --status-stale-bg: rgba(124, 94, 60, 0.12);
+  --status-unknown: #556377;
+  --status-unknown-bg: rgba(85, 99, 119, 0.12);
+
+  --power-discharge: #9a3412;
+  --power-discharge-fill: rgba(194, 65, 12, 0.3);
+  --power-charge: #6d28d9;
+  --power-charge-fill: rgba(109, 40, 217, 0.25);
+
+  --chart-1: #2563eb;
+  --chart-2: #0f766e;
+  --chart-3: #be185d;
+  --chart-4: #4d7c0f;
+  --chart-5: #475569;
+  --chart-area: rgba(37, 99, 235, 0.1);
+  --chart-tooltip-bg: var(--surface-card);
 }
 
 * {

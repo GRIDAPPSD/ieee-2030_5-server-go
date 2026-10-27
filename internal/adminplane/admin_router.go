@@ -317,14 +317,22 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		// control writes are on, since they may predate the setting.
 		if fsaCtlH := newAdminFSAControlHandler(fsaH, derH); fsaCtlH != nil {
 			authed.HandleFunc("GET /api/fsas/{id}/der-programs/{derpId}/controls", fsaCtlH.HandleList())
+			gridH := newAdminGridRequestHandler(stores, fsaCtlH)
+			// #1157: the block view reads whether or not control writes are on,
+			// since the blocks may predate the setting.
+			if gridH != nil {
+				authed.HandleFunc("GET /api/derms/grid-requests", gridH.HandleList())
+			}
 			if controlWrites {
 				mountWrite("POST /api/fsas/{id}/der-programs/{derpId}/controls", fsaCtlH.HandleCreate())
 				mountWrite("POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel", fsaCtlH.HandleCancel())
-				// #1156: a batch of grid requests split across the
-				// aggregators' fleet FSAs. Off nonSensitiveAdminWrites like
-				// every control write.
-				if gridH := newAdminGridRequestHandler(stores, fsaCtlH); gridH != nil {
+				// #1156, #1157: a batch of grid requests split across the
+				// aggregators' fleet FSAs, and the cancel of a batch or one
+				// block. Off nonSensitiveAdminWrites like every control write.
+				if gridH != nil {
 					mountWrite("POST /api/derms/grid-requests", gridH.HandleCreate())
+					mountWrite("POST /api/derms/grid-requests/{batch}/cancel", gridH.HandleCancelBatch())
+					mountWrite("POST /api/derms/grid-requests/{batch}/rows/{row}/cancel", gridH.HandleCancelRow())
 				}
 			}
 		}

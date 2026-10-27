@@ -403,17 +403,8 @@ func (h *AdminFSAControlHandler) HandleCancel() http.HandlerFunc {
 			return
 		}
 		ch, fh := h.Controls, h.FSAs
-		var body derControlCancelBody
-		if ref, ok := decodeDERControlBody(w, r, &body, true); !ok {
-			ch.refuse(w, r, "fsa_cancel", ref, &logged)
-			return
-		}
-		reason := ""
-		if body.Reason != nil {
-			reason = *body.Reason
-		}
-		if !validString(reason, maxCancelReasonOctets) {
-			ch.refuse(w, r, "fsa_cancel", refuseReason, &logged)
+		reason, ok := h.cancelReason(w, r, "fsa_cancel", &logged)
+		if !ok {
 			return
 		}
 
@@ -437,56 +428,131 @@ func (h *AdminFSAControlHandler) HandleCancel() http.HandlerFunc {
 		}
 		logged.add("mrid", rec.MRID)
 		now := sep2time.Now().Unix()
-		switch {
-		case rec.CancelledAt != nil:
-			ch.refuse(w, r, "fsa_cancel", refuseAlreadyCancelled, &logged)
-			return
-		case rec.Ended(now):
-			ch.refuse(w, r, "fsa_cancel", refuseEnded, &logged)
+		if ref, refused := cancelRefusal(rec, now); refused {
+			ch.refuse(w, r, "fsa_cancel", ref, &logged)
 			return
 		}
-
-		devices := fh.AdminFSAs.Devices(ctx, fsaID)
-		var cancelled []dercontrol.Scope
-		for _, dev := range devices {
-			scope := dercontrol.Scope{EndDeviceID: dev, FSAID: fsaID, DERProgramID: t.ID}
-			_, err := ch.cancelInFleet(ctx, scope, rec.ID, rec.MRID, reason)
-			var refusal *dercontrol.RefusalError
-			if errors.As(err, &refusal) {
-				switch refusal.Code {
-				case dercontrol.RefusalAlreadyCancelled, dercontrol.RefusalAlreadySuperseded, dercontrol.RefusalEnded, dercontrol.RefusalControlNotFound:
-					continue
-				}
-			}
-			if err != nil {
-				for _, s := range cancelled {
-					ch.notify(ctx, s)
-				}
-				h.cancelStopped(w, r, err, dev, rec, &logged)
-				return
-			}
-			cancelled = append(cancelled, scope)
-		}
-		for _, s := range cancelled {
-			ch.notify(ctx, s)
-		}
-
-		at := now
-		rec.CancelledAt, rec.CancelReason = &at, reason
-		if err := fh.AdminFSAs.UpdateFSAControl(ctx, fsaID, rec); err != nil {
-			// Every copy is cancelled, so no device assigned later may get it
-			// as live while the record says otherwise.
-			fh.AdminFSAs.HoldFSAControl(fsaID, t.ID, rec.ID)
-			logged.add("cause", "record_cancel_failed")
-			logRefusal(ch.logger(), r, refusedEvent("fsa_cancel"), refuseInternal, &logged)
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-				"every copy of control %s is cancelled, but its record could not be written; it is not sent to devices assigned meanwhile, so retry the cancel", rec.MRID))
+		res, err := h.cancelControl(ctx, fsaID, rec, reason)
+		if err != nil {
+			h.cancelFailed(w, r, err, rec, &logged)
 			return
 		}
 		ch.log(r, slog.LevelInfo, "admin: FSA DER control cancelled", "der_fsa_control_cancelled", []any{
-			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", len(cancelled)})
-		writeJSON(w, http.StatusOK, h.view(ctx, fsaID, rec, devices, sep2time.Now().Unix()))
+			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", res.copies})
+		writeJSON(w, http.StatusOK, h.view(ctx, fsaID, res.rec, res.devices, sep2time.Now().Unix()))
 	}
+}
+
+// cancelReason decodes the optional cancel body and returns its reason,
+// answering a refusal under op when the body or the reason is invalid.
+func (h *AdminFSAControlHandler) cancelReason(w http.ResponseWriter, r *http.Request, op string, logged *derControlLog) (string, bool) {
+	var body derControlCancelBody
+	if ref, ok := decodeDERControlBody(w, r, &body, true); !ok {
+		h.Controls.refuse(w, r, op, ref, logged)
+		return "", false
+	}
+	reason := ""
+	if body.Reason != nil {
+		reason = *body.Reason
+	}
+	if !validString(reason, maxCancelReasonOctets) {
+		h.Controls.refuse(w, r, op, refuseReason, logged)
+		return "", false
+	}
+	return reason, true
+}
+
+// cancelRefusal is the refusal for a record that can no longer be cancelled:
+// already cancelled, or ended at now.
+func cancelRefusal(rec memory.FSAControl, now int64) (derControlRefusal, bool) {
+	switch {
+	case rec.CancelledAt != nil:
+		return refuseAlreadyCancelled, true
+	case rec.Ended(now):
+		return refuseEnded, true
+	}
+	return derControlRefusal{}, false
+}
+
+// cancelStopError is a cancel that stopped at one device's copy.
+type cancelStopError struct {
+	device string
+	err    error
+}
+
+func (e *cancelStopError) Error() string {
+	return "cancel stopped at device " + e.device + ": " + e.err.Error()
+}
+func (e *cancelStopError) Unwrap() error { return e.err }
+
+// recordCancelError is a cancel whose copies are all cancelled but whose
+// record could not be written.
+type recordCancelError struct{ err error }
+
+func (e *recordCancelError) Error() string { return "record cancel failed: " + e.err.Error() }
+func (e *recordCancelError) Unwrap() error { return e.err }
+
+// cancelResult is a cancelled record, the devices whose copies it reached and
+// how many copies this cancel changed.
+type cancelResult struct {
+	rec     memory.FSAControl
+	devices []string
+	copies  int
+}
+
+// cancelControl is the one cancel of an FSA control: every copy is cancelled
+// before the record, so a cancel that stops partway leaves the record live and
+// a retry finishes it. The caller holds programMu and has checked rec with
+// cancelRefusal. Its errors are *cancelStopError and *recordCancelError.
+func (h *AdminFSAControlHandler) cancelControl(ctx context.Context, fsaID string, rec memory.FSAControl, reason string) (cancelResult, error) {
+	ch, fh := h.Controls, h.FSAs
+	devices := fh.AdminFSAs.Devices(ctx, fsaID)
+	var cancelled []dercontrol.Scope
+	for _, dev := range devices {
+		scope := dercontrol.Scope{EndDeviceID: dev, FSAID: fsaID, DERProgramID: rec.TemplateID}
+		_, err := ch.cancelInFleet(ctx, scope, rec.ID, rec.MRID, reason)
+		var refusal *dercontrol.RefusalError
+		if errors.As(err, &refusal) {
+			switch refusal.Code {
+			case dercontrol.RefusalAlreadyCancelled, dercontrol.RefusalAlreadySuperseded, dercontrol.RefusalEnded, dercontrol.RefusalControlNotFound:
+				continue
+			}
+		}
+		if err != nil {
+			for _, s := range cancelled {
+				ch.notify(ctx, s)
+			}
+			return cancelResult{}, &cancelStopError{device: dev, err: err}
+		}
+		cancelled = append(cancelled, scope)
+	}
+	for _, s := range cancelled {
+		ch.notify(ctx, s)
+	}
+
+	at := sep2time.Now().Unix()
+	rec.CancelledAt, rec.CancelReason = &at, reason
+	if err := fh.AdminFSAs.UpdateFSAControl(ctx, fsaID, rec); err != nil {
+		// Every copy is cancelled, so no device assigned later may get it
+		// as live while the record says otherwise.
+		fh.AdminFSAs.HoldFSAControl(fsaID, rec.TemplateID, rec.ID)
+		return cancelResult{}, &recordCancelError{err: err}
+	}
+	return cancelResult{rec: rec, devices: devices, copies: len(cancelled)}, nil
+}
+
+// cancelFailed answers an error of cancelControl.
+func (h *AdminFSAControlHandler) cancelFailed(w http.ResponseWriter, r *http.Request, err error, rec memory.FSAControl, logged *derControlLog) {
+	var stop *cancelStopError
+	if errors.As(err, &stop) {
+		h.cancelStopped(w, r, stop.err, stop.device, rec, logged)
+		return
+	}
+	ch := h.Controls
+	logged.add("cause", "record_cancel_failed")
+	logRefusal(ch.logger(), r, refusedEvent("fsa_cancel"), refuseInternal, logged)
+	writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+		"every copy of control %s is cancelled, but its record could not be written; it is not sent to devices assigned meanwhile, so retry the cancel", rec.MRID))
 }
 
 // recordKept answers a fan-out that failed and removed every copy but not its

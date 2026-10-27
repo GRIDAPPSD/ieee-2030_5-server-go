@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -31,7 +33,18 @@ const (
 	wireDevB = "B100000000000000000000000000000000000001"
 )
 
-func TestGridRequestReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
+// gridWire is a grid request handler over real stores, and the protocol
+// router serving the devices' copies from the same stores.
+type gridWire struct {
+	gridH   *handler.AdminGridRequestHandler
+	wire    *httptest.Server
+	created handler.GridRequestCreated
+}
+
+// newGridWire issues one 20 kW discharge row over aggregators A (30 kW
+// nameplate) and B (10 kW), so the shares are 15 and 5 kW.
+func newGridWire(t *testing.T) *gridWire {
+	t.Helper()
 	ctx := context.Background()
 	stores := testStores()
 	controls, lifecycles := memory.NewDERControlStore(), dercontrol.NewLifecycleStore()
@@ -90,11 +103,42 @@ func TestGridRequestReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	shares := created.Rows[0].Shares
 
 	router, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil)
 	wire := httptest.NewServer(router)
 	t.Cleanup(wire.Close)
+	return &gridWire{gridH: gridH, wire: wire, created: created}
+}
+
+// served reads the DERControlList dev is served on the share's program as its
+// aggregator agg, with the raw XML.
+func (w *gridWire) served(t *testing.T, dev, agg string, s handler.GridShareView) (sep2.DERControlList, []byte) {
+	t.Helper()
+	path := "/edev/" + dev + "/fsa/" + s.FSA + "/derp/" + s.Program + "/derc"
+	req, err := http.NewRequest(http.MethodGet, w.wire.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(gateIdentityHeader, agg)
+	resp, err := w.wire.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s as its aggregator = %d %s %v", path, resp.StatusCode, raw, err)
+	}
+	var list sep2.DERControlList
+	if err := xml.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	return list, raw
+}
+
+func TestGridRequestReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
+	w := newGridWire(t)
+	shares := w.created.Rows[0].Shares
 	for n, want := range []struct {
 		dev, agg string
 		value    int16
@@ -103,25 +147,7 @@ func TestGridRequestReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
 		if s.AggregatorLFDI != want.agg {
 			t.Fatalf("share %d is %s's, want %s's", n, s.AggregatorLFDI, want.agg)
 		}
-		path := "/edev/" + want.dev + "/fsa/" + s.FSA + "/derp/" + s.Program + "/derc"
-		req, err := http.NewRequest(http.MethodGet, wire.URL+path, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set(gateIdentityHeader, want.agg)
-		resp, err := wire.Client().Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil || resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s as its aggregator = %d %s %v", path, resp.StatusCode, raw, err)
-		}
-		var list sep2.DERControlList
-		if err := xml.Unmarshal(raw, &list); err != nil {
-			t.Fatal(err)
-		}
+		list, raw := w.served(t, want.dev, want.agg, s)
 		if len(list.DERControl) != 1 {
 			t.Fatalf("%s serves %d controls, want the one share", want.dev, len(list.DERControl))
 		}
@@ -135,6 +161,54 @@ func TestGridRequestReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
 			if !bytes.Contains(raw, []byte(frag)) {
 				t.Errorf("%s served XML lacks %s:\n%s", want.dev, frag, raw)
 			}
+		}
+	}
+}
+
+// #1157: cancelling one block through the route ends its shares on the wire:
+// a device of each aggregator is served the copy with eventStatus cancelled,
+// and the other block of the batch is still served as scheduled.
+func TestGridBlockCancelReachesEachAggregatorsDevicesOnTheWire(t *testing.T) {
+	w := newGridWire(t)
+	// A second block, so a cancel of block 1 has a neighbour to leave alone.
+	start := sep2time.Now().Unix() + 7200
+	rec := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"rows":[{"direction":"charge","x":10,"y":3,"start":%d,"durationSeconds":600}]}`, start)
+	w.gridH.HandleCreate()(rec, httptest.NewRequest(http.MethodPost, "/api/derms/grid-requests", strings.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("second request = %d %s", rec.Code, rec.Body.String())
+	}
+	var second handler.GridRequestCreated
+	if err := json.Unmarshal(rec.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/derms/grid-requests/{batch}/rows/{row}/cancel", w.gridH.HandleCancelRow())
+	creq := httptest.NewRequest(http.MethodPost, "/api/derms/grid-requests/"+w.created.Batch+"/rows/1/cancel", strings.NewReader(`{}`))
+	creq.Header.Set("Content-Type", "application/json")
+	crec := httptest.NewRecorder()
+	mux.ServeHTTP(crec, creq)
+	if crec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s", crec.Code, crec.Body.String())
+	}
+
+	// Both blocks sit on each fleet's one program, so one served list holds both.
+	for n, want := range []struct{ dev, agg string }{{"da", wireAggA}, {"db", wireAggB}} {
+		list, _ := w.served(t, want.dev, want.agg, w.created.Rows[0].Shares[n])
+		status := map[string]*sep2.EventStatus{}
+		for _, c := range list.DERControl {
+			status[c.MRID] = c.EventStatus
+		}
+		first, next := w.created.Rows[0].Shares[n].Control.MRID, second.Rows[0].Shares[n].Control.MRID
+		if len(list.DERControl) != 2 || status[first] == nil || status[next] == nil {
+			t.Fatalf("%s serves %d controls, want blocks 1 and 2 (%s, %s)", want.dev, len(list.DERControl), first, next)
+		}
+		if status[first].CurrentStatus != sep2.EventStatusCancelled {
+			t.Errorf("%s serves block 1's control with status %d, want cancelled", want.dev, status[first].CurrentStatus)
+		}
+		if status[next].CurrentStatus != sep2.EventStatusScheduled {
+			t.Errorf("%s serves block 2's control with status %d, want scheduled", want.dev, status[next].CurrentStatus)
 		}
 	}
 }

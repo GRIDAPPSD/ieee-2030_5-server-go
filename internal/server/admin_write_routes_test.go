@@ -33,6 +33,8 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel",
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise",
 	"POST /api/derms/grid-requests",
+	"POST /api/derms/grid-requests/{batch}/cancel",
+	"POST /api/derms/grid-requests/{batch}/rows/{row}/cancel",
 	"POST /api/devices",
 	"POST /api/devices/{id}/controls",
 	"POST /api/devices/{id}/fsa-assignment",
@@ -92,6 +94,8 @@ var wantAdminBodyTypes = map[string][]string{
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise": {"application/json"},
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel": {"application/json"},
 	"POST /api/derms/grid-requests":                             {"application/json"},
+	"POST /api/derms/grid-requests/{batch}/cancel":              {"application/json"},
+	"POST /api/derms/grid-requests/{batch}/rows/{row}/cancel":   {"application/json"},
 }
 
 // TestEveryAdminWriteRouteIsCovered walks the routes BuildAdminRouter reports

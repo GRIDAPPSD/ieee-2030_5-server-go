@@ -327,11 +327,20 @@ func (b *controlEventBuilder) fsaGroups(ctx context.Context, fsaID string, devic
 	return groups, err
 }
 
-// copyLifecycle is the lifecycle one group's copies of rec give it: the
+// copyLifecycle is fsaCopyLifecycle over the builder's lifecycle store.
+func (b *controlEventBuilder) copyLifecycle(ctx context.Context, fsaID string, rec memory.FSAControl, devices []string) (dercontrol.LifecycleRecord, error) {
+	lc, err := fsaCopyLifecycle(ctx, b.h.Lifecycles, fsaID, rec, devices)
+	if err != nil {
+		return lc, fmt.Errorf("%w: %w", errControlEventsRead, err)
+	}
+	return lc, nil
+}
+
+// fsaCopyLifecycle is the lifecycle one group's copies of rec give it: the
 // earliest supersede or cancel among its devices' copies, with the record's
 // own cancel folded in. A group no copy exists for reads by the record's
 // cancel alone, so a copy another group holds never decides this group.
-func (b *controlEventBuilder) copyLifecycle(ctx context.Context, fsaID string, rec memory.FSAControl, devices []string) (dercontrol.LifecycleRecord, error) {
+func fsaCopyLifecycle(ctx context.Context, lifecycles DERControlLifecycleReader, fsaID string, rec memory.FSAControl, devices []string) (dercontrol.LifecycleRecord, error) {
 	var lc dercontrol.LifecycleRecord
 	earliest := func(cur **int64, at *int64) {
 		if at != nil && (*cur == nil || *at < **cur) {
@@ -342,16 +351,27 @@ func (b *controlEventBuilder) copyLifecycle(ctx context.Context, fsaID string, r
 	earliest(&lc.CancelledAt, rec.CancelledAt)
 	for _, dev := range devices {
 		scope := dercontrol.Scope{EndDeviceID: dev, FSAID: fsaID, DERProgramID: rec.TemplateID}
-		got, err := b.h.Lifecycles.Get(ctx, scope.Key(), rec.ID)
+		got, err := lifecycles.Get(ctx, scope.Key(), rec.ID)
 		switch {
 		case err == nil:
 			earliest(&lc.CancelledAt, got.CancelledAt)
 			earliest(&lc.SupersededAt, got.SupersededAt)
 		case !errors.Is(err, store.ErrNotFound):
-			return lc, fmt.Errorf("%w: %w", errControlEventsRead, err)
+			return lc, err
 		}
 	}
 	return lc, nil
+}
+
+// controlStatusName is the status the control list, the timeline and the
+// grid block view all report for ctrl read by lc at now: DeriveStatus's name,
+// or "completed" for an Active control that ControlState has retired.
+func controlStatusName(ctrl sep2.DERControl, lc dercontrol.LifecycleRecord, now int64) string {
+	st := dercontrol.DeriveStatus(now, ctrl.CreationTime, ctrl.Interval.Start, lc)
+	if st.CurrentStatus == sep2.EventStatusActive && dercontrol.ControlState(ctrl, lc, true, now) == dercontrol.Retired {
+		return "completed"
+	}
+	return eventStatusName(st.CurrentStatus)
 }
 
 // eventsOf is one event per group in reaches, each read by its own lifecycle,
@@ -377,12 +397,8 @@ func (b *controlEventBuilder) eventsOf(ctrl sep2.DERControl, origin, scope, fsaI
 		if end <= start {
 			continue
 		}
-		st := dercontrol.DeriveStatus(b.now, ctrl.CreationTime, start, r.lc)
 		e := base
-		e.Status = eventStatusName(st.CurrentStatus)
-		if st.CurrentStatus == sep2.EventStatusActive && dercontrol.ControlState(ctrl, r.lc, true, b.now) == dercontrol.Retired {
-			e.Status = "completed"
-		}
+		e.Status = controlStatusName(ctrl, r.lc, b.now)
 		e.Start, e.End = start, end
 		e.Group, e.DeviceIDs = g, append([]string{}, r.devices...)
 		slices.Sort(e.DeviceIDs)

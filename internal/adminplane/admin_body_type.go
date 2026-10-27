@@ -45,6 +45,8 @@ var adminBodyTypes = map[string][]string{
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise": {"application/json"},
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel": {"application/json"},
 	"POST /api/derms/grid-requests":                             {"application/json"},
+	"POST /api/derms/grid-requests/{batch}/cancel":              {"application/json"},
+	"POST /api/derms/grid-requests/{batch}/rows/{row}/cancel":   {"application/json"},
 
 	"POST /api/ui/panels/{id}/actions/{action}": {"application/json"},
 }

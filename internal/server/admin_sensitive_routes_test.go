@@ -162,6 +162,8 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/derms/power", method: http.MethodGet, path: "/api/derms/power", wantReachedStatus: http.StatusBadRequest},
 		// #1190: the control timeline names every control and the device it reached.
 		{name: "GET /api/derms/control-events", method: http.MethodGet, path: "/api/derms/control-events", wantReachedStatus: http.StatusBadRequest},
+		// #1157: the block view names every aggregator, device and delivered figure.
+		{name: "GET /api/derms/grid-requests", method: http.MethodGet, path: "/api/derms/grid-requests", wantReachedStatus: http.StatusOK},
 		{name: "GET /api/derms/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/derms/audit", wantReachedStatus: http.StatusNotFound},
 	}
 

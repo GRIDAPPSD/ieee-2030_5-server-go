@@ -48,7 +48,7 @@ describe('PowerCard', () => {
       ['Charged', 'bar'],
     ])
     expect(screen.getByTestId('power-energy-totals')).toHaveTextContent(
-      'This window: discharged 0.5000 kWh, charged -0.2500 kWh',
+      'This window: discharged 0.500 kWh, charged 0.250 kWh',
     )
     expect(screen.queryByTestId('power-stale')).toBeNull()
     expect(screen.queryByTestId('power-error')).toBeNull()

@@ -171,7 +171,7 @@
     <div class="power-foot">
       {#if totals !== null}
         <span class="hint" class:visually-hidden={!hasEnergy} data-testid="power-energy-totals">
-          This window: discharged {formatKwh(totals.discharged)}, charged {formatKwh(totals.charged)}
+          This window: discharged {formatKwh(totals.discharged)}, charged {formatKwh(Math.abs(totals.charged))}
         </span>
       {/if}
       {#if answer.notReporting.length > 0}

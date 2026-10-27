@@ -203,7 +203,9 @@ export function energyBars(chart: DescriptorChartBody): DrawnChartBody {
   }
 }
 
-export const formatKwh = (kwh: number): string => `${kwh.toFixed(4)} kWh`
+// Three decimals, so a few watt-hours still read. The sign is the caller's:
+// the totals line names the direction in words, so it prints magnitudes.
+export const formatKwh = (kwh: number): string => `${kwh.toFixed(3)} kWh`
 
 // The time span every chart on the card shows: the chosen window ending when
 // the shown answer arrived. The charts read this one range so they line up.

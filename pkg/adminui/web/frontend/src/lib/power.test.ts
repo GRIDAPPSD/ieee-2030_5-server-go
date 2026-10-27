@@ -114,7 +114,9 @@ describe('energyTotals', () => {
       }),
     )!
     expect(energyTotals(a.energyChart)).toEqual({ discharged: 0.75, charged: -0.125 })
-    expect(formatKwh(0.75)).toBe('0.7500 kWh')
+    expect(formatKwh(0.75)).toBe('0.750 kWh')
+    expect(formatKwh(0.168)).toBe('0.168 kWh')
+    expect(formatKwh(0.0004)).toBe('0.000 kWh')
   })
 
   it('reads a missing series as zero', () => {

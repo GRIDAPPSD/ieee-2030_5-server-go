@@ -172,6 +172,11 @@ func (i *Issuer) validate(req CreateRequest, now int64) (*sep2.DERControlBase, e
 }
 
 func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Result, error) {
+	// Only IssueAcross records a derms origin; dropping it here would store
+	// a DERMS control that reads as an operator's.
+	if o, err := StoredOrigin(req.Origin); err != nil || o != "" {
+		return Result{}, ErrInvalidOrigin
+	}
 	now := sep2time.Now().Unix()
 	base, err := i.validate(req, now)
 	if err != nil {

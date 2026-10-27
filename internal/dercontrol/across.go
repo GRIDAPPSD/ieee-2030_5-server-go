@@ -61,7 +61,11 @@ func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []T
 	if req.ExecutesGrant != "" {
 		return AcrossResult{}, ErrAcrossGrant
 	}
-	targets, err := sortTargets(targets)
+	origin, err := StoredOrigin(req.Origin)
+	if err != nil {
+		return AcrossResult{}, err
+	}
+	targets, err = sortTargets(targets)
 	if err != nil {
 		return AcrossResult{}, err
 	}
@@ -106,6 +110,7 @@ func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []T
 		if err != nil {
 			return AcrossResult{}, err
 		}
+		plans[n].link.Origin = origin
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -133,6 +138,8 @@ type Replica struct {
 	Target  Target
 	ID      string
 	Control sep2.DERControl
+	// Origin is the record's stored origin, kept on the copy (#1155).
+	Origin string
 }
 
 // Replicate writes each replica that its scope does not already hold, in
@@ -216,7 +223,7 @@ func (i *Issuer) planReplica(ctx context.Context, r Replica) (copyPlan, bool, er
 	if err != nil {
 		return copyPlan{}, false, err
 	}
-	link := LifecycleRecord{FleetKey: r.Target.Fleet.Key, Reach: r.Target.Fleet.Reach}
+	link := LifecycleRecord{FleetKey: r.Target.Fleet.Key, Reach: r.Target.Fleet.Reach, Origin: r.Origin}
 	if err := i.supersededByNewer(ctx, scopeKey, newer, ctrl, &link); err != nil {
 		return copyPlan{}, false, err
 	}

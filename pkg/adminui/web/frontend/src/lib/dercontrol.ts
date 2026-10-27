@@ -32,6 +32,30 @@ export interface DERControlView {
   interval: { start: number; duration: number }
   eventStatus: { currentStatus: number; status: string; dateTime: number }
   executesGrant?: string | null
+  // Where the control came from; absent reads as admin.
+  origin?: ControlOrigin
+}
+
+export type ControlOrigin = 'admin' | 'derms'
+
+// targetDirection names the sign of an opModTargetW function, which is
+// discharge positive on the wire. A control with no target, or a target of
+// zero, has no direction.
+export function targetDirection(functions: Record<string, unknown> | null | undefined): 'discharge' | 'charge' | null {
+  const t = functions?.opModTargetW as { value?: unknown } | undefined
+  const v = typeof t?.value === 'number' ? t.value : 0
+  if (v > 0) return 'discharge'
+  if (v < 0) return 'charge'
+  return null
+}
+
+// originMarker is the text shown beside a control that DERMS asked for:
+// "from DERMS", then the direction word when the control sets a power target.
+// An operator's control gets no marker.
+export function originMarker(origin: ControlOrigin | undefined, functions: Record<string, unknown> | null | undefined): string {
+  if (origin !== 'derms') return ''
+  const dir = targetDirection(functions)
+  return dir ? `from DERMS, ${dir}` : 'from DERMS'
 }
 
 // The 201 body of POST /api/devices/{id}/controls: exactly one of control

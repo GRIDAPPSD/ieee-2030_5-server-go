@@ -14,7 +14,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
@@ -767,39 +766,11 @@ func (h *AdminGridRequestHandler) checkEvents(ctx context.Context, now int64, fl
 }
 
 // liveEvents counts the controls stored under device dev, in any program and
-// of any origin, that are neither ended nor cancelled at now.
+// of any origin, that are live at now by dercontrol's one rule: scheduled or
+// in force, so neither ended, cancelled nor superseded.
 func (h *AdminGridRequestHandler) liveEvents(ctx context.Context, dev string, now int64) (int, error) {
 	ch := h.Controls.Controls
-	parents, err := ch.Controls.Parents(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("control scopes: %w", err)
-	}
-	n := 0
-	for _, scope := range parents {
-		if !strings.HasPrefix(scope, dev+"/") {
-			continue
-		}
-		list, err := ch.Controls.List(ctx, scope, store.ListOptions{Unbounded: true})
-		if err != nil {
-			return 0, fmt.Errorf("controls of %s: %w", scope, err)
-		}
-		for _, c := range list.Items {
-			if c.Interval == nil || dercontrol.IntervalEnded(c.Interval, now) {
-				continue
-			}
-			if id, ok := derhref.ControlID(c.Href); ok {
-				lc, err := ch.Lifecycles.Get(ctx, scope, id)
-				switch {
-				case err == nil && lc.CancelledAt != nil:
-					continue
-				case err != nil && !errors.Is(err, store.ErrNotFound):
-					return 0, fmt.Errorf("lifecycle of %s/%s: %w", scope, id, err)
-				}
-			}
-			n++
-		}
-	}
-	return n, nil
+	return dercontrol.LiveCount(ctx, ch.Controls, ch.Lifecycles, dev, now)
 }
 
 func firstOverlap(w commitment.Window, earlier []int, windows map[int]commitment.Window) (int, bool) {

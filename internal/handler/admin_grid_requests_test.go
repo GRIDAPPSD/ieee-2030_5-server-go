@@ -36,6 +36,8 @@ type gridFixture struct {
 	ders *memory.ScopedStore[sep2.DER]
 	caps *memory.ScopedStore[sep2.DERCapability]
 	mux  *http.ServeMux
+	// handler is the route's handler, so a test can change its bounds.
+	handler *handler.AdminGridRequestHandler
 }
 
 // newGridFixture: aggregator A manages a1 (10 kW nameplate) and a2 (none),
@@ -64,6 +66,7 @@ func newGridFixture(t *testing.T) *gridFixture {
 	g.nameplate(t, "a1", &sep2.ActivePower{Value: 10, Multiplier: 3})
 	g.nameplate(t, "b1", &sep2.ActivePower{Value: 5000})
 	gh := &handler.AdminGridRequestHandler{Controls: x.h, Aggregators: x.dc.managers, DERs: g.ders, Capabilities: g.caps, MaxDeviceW: dercontrol.DefaultMaxNameplateW}
+	g.handler = gh
 	g.mux = http.NewServeMux()
 	g.mux.HandleFunc("POST /api/derms/grid-requests", gh.HandleCreate())
 	return g
@@ -456,11 +459,12 @@ func TestGridRequest_GrantedWindowRefusesTheRow(t *testing.T) {
 }
 
 // Two overlapping batches raced: exactly one is written whole and the other
-// refused, with nothing half-written.
+// refused, with nothing half-written. Each round has its own fixture, so the
+// rounds' live controls never add up to the 24-event limit.
 func TestGridRequest_ConcurrentOverlappingBatches(t *testing.T) {
-	g := newGridFixture(t)
 	for round := range 20 {
-		start := sep2time.Now().Unix() + 3600 + int64(round)*10000
+		g := newGridFixture(t)
+		start := sep2time.Now().Unix() + 3600
 		bodies := []string{
 			gridBody(gridRow("discharge", 40, 3, start, 600), gridRow("discharge", 40, 3, start+600, 600)),
 			gridBody(gridRow("charge", 20, 3, start+900, 600)),

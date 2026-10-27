@@ -83,10 +83,47 @@ func stateOf(ctx context.Context, lifecycles lifecycleReader, scopeKey string, c
 // control in force at now. A control sent to an FSA is stored as one copy per
 // device under that device's own scope key, so it counts here with no FSA
 // handling. A read error is returned, never reported as false.
-func InForceScopes(ctx context.Context, controls store.ScopedReader[sep2.DERControl], lifecycles lifecycleReader, edevID string, now int64) (bool, error) {
+func InForceScopes(ctx context.Context, controls controlLister, lifecycles lifecycleReader, edevID string, now int64) (bool, error) {
+	found := false
+	err := eachDeviceState(ctx, controls, lifecycles, edevID, now, func(st State) bool {
+		found = st == InForce
+		return !found
+	})
+	if err != nil {
+		return false, err
+	}
+	return found, nil
+}
+
+// LiveCount counts the controls in every scope of end device edevID that are
+// not Retired at now: scheduled or in force, so neither ended, cancelled nor
+// superseded. A read error is returned, never a partial count.
+func LiveCount(ctx context.Context, controls controlLister, lifecycles lifecycleReader, edevID string, now int64) (int, error) {
+	n := 0
+	err := eachDeviceState(ctx, controls, lifecycles, edevID, now, func(st State) bool {
+		if st != Retired {
+			n++
+		}
+		return true
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// controlLister is the part of a control store the device walks read.
+type controlLister interface {
+	Parents(ctx context.Context) ([]string, error)
+	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERControl], error)
+}
+
+// eachDeviceState calls fn with the state of every control in every scope of
+// edevID, stopping when fn returns false.
+func eachDeviceState(ctx context.Context, controls controlLister, lifecycles lifecycleReader, edevID string, now int64, fn func(State) bool) error {
 	keys, err := controls.Parents(ctx)
 	if err != nil {
-		return false, fmt.Errorf("dercontrol: list control scopes: %w", err)
+		return fmt.Errorf("dercontrol: list control scopes: %w", err)
 	}
 	for _, key := range keys {
 		edev, _, _, ok := derhref.SplitScopeKey(key)
@@ -95,17 +132,17 @@ func InForceScopes(ctx context.Context, controls store.ScopedReader[sep2.DERCont
 		}
 		list, err := controls.List(ctx, key, store.ListOptions{Unbounded: true})
 		if err != nil {
-			return false, fmt.Errorf("dercontrol: list scope %s: %w", key, err)
+			return fmt.Errorf("dercontrol: list scope %s: %w", key, err)
 		}
 		for _, c := range list.Items {
 			st, err := stateOf(ctx, lifecycles, key, c, now)
 			if err != nil {
-				return false, err
+				return err
 			}
-			if st == InForce {
-				return true, nil
+			if !fn(st) {
+				return nil
 			}
 		}
 	}
-	return false, nil
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -225,5 +226,42 @@ func TestEndedControl_NeverReadsItsLifecycle(t *testing.T) {
 				t.Errorf("liveControls = %v, %v; want none, nil", live, err)
 			}
 		})
+	}
+}
+
+// LiveCount counts scheduled and in-force controls of every scope of one
+// device, and not ended, cancelled or superseded ones, by ControlState.
+func TestLiveCount(t *testing.T) {
+	ctx := context.Background()
+	controls := memory.NewScopedStore[sep2.DERControl]()
+	lifecycles := memory.NewScopedStore[LifecycleRecord]()
+	now := stateNow
+	past := now - 10
+	add := func(key, id string, start int64, lc *LifecycleRecord) {
+		t.Helper()
+		c := sep2.DERControl{}
+		c.MRID, c.CreationTime = id, now-100
+		edev, fsa, derp, _ := derhref.SplitScopeKey(key)
+		c.Href = controlListHref(edev, fsa, derp) + "/" + id
+		c.Interval = &sep2.DateTimeInterval{Start: start, Duration: 600}
+		if err := controls.Create(ctx, key, id, c); err != nil {
+			t.Fatal(err)
+		}
+		if lc != nil {
+			if err := lifecycles.Create(ctx, key, id, *lc); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	add("d1/f/p", "scheduled", now+1000, &LifecycleRecord{})
+	add("d1/g/q", "inforce", now-100, &LifecycleRecord{})
+	add("d1/f/p", "noRecord", now+2000, nil)
+	add("d1/f/p", "ended", now-5000, &LifecycleRecord{})
+	add("d1/f/p", "cancelled", now+3000, &LifecycleRecord{CancelledAt: &past})
+	add("d1/f/p", "superseded", now-200, &LifecycleRecord{SupersededAt: &past, SupersededBy: "X"})
+	add("d2/f/p", "otherDevice", now+1000, &LifecycleRecord{})
+	n, err := LiveCount(ctx, controls, lifecycles, "d1", now)
+	if err != nil || n != 3 {
+		t.Errorf("LiveCount = %d, %v; want 3: scheduled, in force and one with no record", n, err)
 	}
 }

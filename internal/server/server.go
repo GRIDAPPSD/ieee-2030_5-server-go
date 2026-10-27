@@ -243,6 +243,15 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("FlowReservationAnswer persistence: %w", err)
 	}
+	// #1205: mirror usage points persist, so a client that mirrored before a
+	// restart can keep posting readings to the same href. The meter readings
+	// stay in memory: POST /mup/{id}/mr only needs the mirror to resolve.
+	mirrorUsagePoints, err := memory.NewPersistentStore[sep2.MirrorUsagePoint](
+		cfg.EffectiveStorePath("mirrorusagepoints", ""), "MirrorUsagePoint",
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("MirrorUsagePoint persistence: %w", err)
+	}
 	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
 		cfg.EffectiveStorePath("enddevicemanagement", ""),
 	)
@@ -282,7 +291,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		// fixture that follows) has run; see the comment there.
 		Registrations:            registrations,
 		RegistrationPolicy:       memory.RegistrationPolicy{}, // fail-closed: no self-registration pIN resolver wired yet
-		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
+		MirrorUsagePoints:        mirrorUsagePoints,
 		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
 		DERs:                     memory.NewScopedStore[sep2.DER](),
 		DERCapabilities:          memory.NewScopedStore[sep2.DERCapability](),

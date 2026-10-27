@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mirror usage points now persist in `mirrorusagepoints.json` in the data dir, so a
+  client that mirrored before a restart can still `POST /mup/{id}/mr` at the same
+  href instead of getting 404 (#1205). The mirror meter readings stay in memory.
 - Every EndDevice now advertises `DERListLink`, and the server seeds one DER
   at `/edev/{id}/der/1` for each EndDevice, on `POST /edev` and at boot. A
   device that registered itself was served no `DERListLink` and had no DER, so

@@ -12,7 +12,14 @@
 
   echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-  let { body, empty }: { body: DrawnChartBody; empty: string } = $props()
+  // frame draws the axes even with no points, with the empty message inside the
+  // frame; range, in epoch milliseconds, is the time span the empty frame shows.
+  let {
+    body,
+    empty,
+    frame = false,
+    range = null,
+  }: { body: DrawnChartBody; empty: string; frame?: boolean; range?: [number, number] | null } = $props()
 
   let container: HTMLDivElement | null = $state(null)
   let chart: echarts.ECharts | null = $state.raw(null)
@@ -55,6 +62,7 @@
         xAxis: {
           type: 'time',
           splitNumber: 4,
+          ...(frame && !hasPoints && range !== null ? { min: range[0], max: range[1] } : {}),
           axisLabel: { color: textColor, formatter: '{HH}:{mm}:{ss}', hideOverlap: true },
         },
         yAxis: {
@@ -74,8 +82,13 @@
   })
 </script>
 
-{#if hasPoints}
-  <div class="chart-container chart-tall" data-testid="descriptor-chart" bind:this={container}></div>
+{#if hasPoints || frame}
+  <div class:chart-frame={frame}>
+    <div class="chart-container chart-tall" data-testid="descriptor-chart" bind:this={container}></div>
+    {#if !hasPoints}
+      <p class="chart-empty" data-testid="descriptor-chart-empty">{empty || 'No data points.'}</p>
+    {/if}
+  </div>
   {#if initError}
     <div class="result err" data-testid="descriptor-chart-error">Chart unavailable: {initError}</div>
   {/if}

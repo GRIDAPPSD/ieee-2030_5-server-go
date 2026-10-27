@@ -259,6 +259,23 @@ describe('DescriptorChart', () => {
     expect(screen.getByTestId('descriptor-chart-empty')).toHaveTextContent('No samples yet.')
     expect(screen.queryByTestId('descriptor-chart')).toBeNull()
   })
+
+  it('with frame, draws the axes over the given range and keeps the empty message beside the chart', async () => {
+    const { unmount } = render(DescriptorChart, {
+      props: { body: { unit: 'kWh', series: [] }, empty: 'No samples yet.', frame: true, range: [1_000_000, 1_900_000] },
+    })
+    const el = (await screen.findByTestId('descriptor-chart')) as HTMLElement
+    await waitFor(() => expect(echarts.getInstanceByDom(el)).toBeDefined())
+    const option = echarts.getInstanceByDom(el)!.getOption() as {
+      xAxis: { type: string; min: number; max: number }[]
+      yAxis: { name: string }[]
+    }
+    expect(option.xAxis[0].type).toBe('time')
+    expect([option.xAxis[0].min, option.xAxis[0].max]).toEqual([1_000_000, 1_900_000])
+    expect(option.yAxis[0].name).toBe('kWh')
+    expect(screen.getByTestId('descriptor-chart-empty')).toHaveTextContent('No samples yet.')
+    unmount()
+  })
 })
 
 describe('DescriptorPanel with a chart section', () => {

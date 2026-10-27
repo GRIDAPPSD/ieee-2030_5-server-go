@@ -53,6 +53,13 @@
 
   const time = (ms: number) => new Date(ms).toLocaleTimeString()
 
+  // The empty chart frame still shows the window it covers, ending when the
+  // shown answer arrived.
+  const range = $derived.by((): [number, number] => {
+    const end = answerAt ?? Date.now()
+    return [end - windowSeconds * 1000, end]
+  })
+
   $effect(() => {
     const sc = scope
     const win = windowSeconds
@@ -88,8 +95,6 @@
 
   const totals = $derived(answer === null ? null : energyTotals(answer.energyChart))
 
-  const names = (lfdis: string[]) => lfdis.map((l) => deviceLabel(l)).join(', ')
-
   const flagged = $derived(
     (answer?.devices ?? [])
       .filter((d) => d.directionUnknown || d.concurrentMirrors || d.nonDERWatts)
@@ -99,27 +104,44 @@
           d.concurrentMirrors ? 'concurrent mirrors' : '',
           d.nonDERWatts ? 'watts on a non-DER mirror' : '',
         ].filter((s) => s !== '')
-        return `${deviceLabel(d.lfdi)} (${why.join(', ')})`
+        return { lfdi: d.lfdi, why: why.join(', ') }
       }),
   )
 </script>
 
-<div class="card full-width" data-testid="power-card">
-  <h2>Power</h2>
-  <div class="form-row">
-    <label for="powerScope">Devices</label>
-    <select id="powerScope" bind:value={scope}>
-      <option value={ALL_SCOPE}>All devices</option>
-      {#each aggregators as lfdi (lfdi)}
-        <option value={lfdi}>Aggregator {deviceLabel(lfdi)}</option>
-      {/each}
-    </select>
-    <label for="powerWindow">Window</label>
-    <select id="powerWindow" bind:value={windowSeconds}>
-      {#each POWER_WINDOWS as w (w.seconds)}
-        <option value={w.seconds}>{w.label}</option>
-      {/each}
-    </select>
+<!-- A device shows by name; its LFDI is the hover text. -->
+{#snippet nameList(lfdis: string[])}{#each lfdis as lfdi, i (i)}{i > 0 ? ', ' : ''}<span title={lfdi}>{deviceLabel(lfdi)}</span>{/each}{/snippet}
+
+<div class="card full-width power-card" data-testid="power-card">
+  <div class="power-head">
+    <h2>Power</h2>
+    <div class="power-pickers">
+      <label for="powerScope">Devices</label>
+      <select id="powerScope" bind:value={scope}>
+        <option value={ALL_SCOPE}>All devices</option>
+        {#each aggregators as lfdi (lfdi)}
+          <option value={lfdi} title={lfdi}>Aggregator {deviceLabel(lfdi)}</option>
+        {/each}
+      </select>
+      <label for="powerWindow">Window</label>
+      <select id="powerWindow" bind:value={windowSeconds}>
+        {#each POWER_WINDOWS as w (w.seconds)}
+          <option value={w.seconds}>{w.label}</option>
+        {/each}
+      </select>
+    </div>
+    {#if answer !== null && answerAt !== null}
+      <div class="power-now">
+        <span class="stat-label">Power now</span>
+        {#if answer.latestW !== null}
+          <span class="big-number" data-testid="power-now">{formatKw(answer.latestW)}</span>
+        {:else if answer.latestMissing.length > 0}
+          <span data-testid="power-now-missing">Unavailable, no recent reading from {@render nameList(answer.latestMissing)}</span>
+        {:else}
+          <span data-testid="power-now-none">No reading yet</span>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if error}
@@ -127,32 +149,25 @@
   {/if}
 
   {#if answer !== null && answerAt !== null}
-    <div class="stat-row">
-      <span class="stat-label">Power now</span>
-      {#if answer.latestW !== null}
-        <span class="big-number" data-testid="power-now">{formatKw(answer.latestW)}</span>
-      {:else if answer.latestMissing.length > 0}
-        <span data-testid="power-now-missing">Unavailable, no recent reading from {names(answer.latestMissing)}</span>
-      {:else}
-        <span data-testid="power-now-none">No reading yet</span>
-      {/if}
-    </div>
     {#if !fresh}
       <p class="hint" data-testid="power-stale">Showing the answer from {time(answerAt)}.</p>
     {/if}
-    <p class="hint">Energy per bucket in kWh: discharge above zero, charge below.</p>
-    <DescriptorChart body={energyBars(answer.energyChart)} empty="No energy readings in this window yet." />
-    {#if totals !== null}
-      <p class="hint" data-testid="power-energy-totals">
-        This window: discharged {formatKwh(totals.discharged)}, charged {formatKwh(totals.charged)}
-      </p>
-    {/if}
-    {#if answer.notReporting.length > 0}
-      <p class="hint" data-testid="power-not-reporting">Not reporting: {names(answer.notReporting)}</p>
-    {/if}
-    {#if flagged.length > 0}
-      <p class="hint" data-testid="power-flagged">Flagged: {flagged.join('; ')}</p>
-    {/if}
+    <div class="power-chart" title="Energy per bucket in kWh: discharge above zero, charge below.">
+      <DescriptorChart body={energyBars(answer.energyChart)} empty="No energy readings in this window yet." frame {range} />
+    </div>
+    <div class="power-foot">
+      {#if totals !== null}
+        <span class="hint" data-testid="power-energy-totals">
+          This window: discharged {formatKwh(totals.discharged)}, charged {formatKwh(totals.charged)}
+        </span>
+      {/if}
+      {#if answer.notReporting.length > 0}
+        <span class="hint" data-testid="power-not-reporting">Not reporting: {@render nameList(answer.notReporting)}</span>
+      {/if}
+      {#if flagged.length > 0}
+        <span class="hint" data-testid="power-flagged">Flagged: {#each flagged as f, i (i)}{i > 0 ? '; ' : ''}<span title={f.lfdi}>{deviceLabel(f.lfdi)}</span> ({f.why}){/each}</span>
+      {/if}
+    </div>
   {:else if !error}
     <p class="hint" data-testid="power-loading">Loading...</p>
   {/if}

@@ -55,6 +55,35 @@ describe('PowerCard', () => {
     unmount()
   })
 
+  it('draws the chart frame with an empty message when the window holds no energy', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({
+      ok: true,
+      data: wireAnswer({ latestW: null, latestAt: null, energyChart: { unit: 'kWh', series: [] } }),
+    })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    const el = screen.getByTestId('descriptor-chart') as HTMLElement
+    const option = echarts.getInstanceByDom(el)!.getOption() as { xAxis: { type: string; min: number; max: number }[]; yAxis: { name: string }[] }
+    expect(option.xAxis[0].type).toBe('time')
+    expect(option.xAxis[0].max - option.xAxis[0].min).toBe(POWER_WINDOWS[0].seconds * 1000)
+    expect(option.yAxis[0].name).toBe('kWh')
+    expect(screen.getByTestId('descriptor-chart-empty')).toHaveTextContent('No energy readings in this window yet.')
+    expect(screen.getByTestId('power-now-none')).toHaveTextContent('No reading yet')
+    unmount()
+  })
+
+  it('shows a device by name with its LFDI as the hover text', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wireAnswer({ notReporting: ['D4'] }) })
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+
+    const name = screen.getByTestId('power-not-reporting').querySelector('span')!
+    expect(name).toHaveAttribute('title', 'D4')
+    expect(name).toHaveTextContent('D4...')
+    unmount()
+  })
+
   it('names the missing devices when the kW is null, and shows no number', async () => {
     vi.spyOn(api, 'fetchJSON').mockResolvedValue({
       ok: true,

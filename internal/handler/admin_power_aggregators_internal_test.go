@@ -150,8 +150,8 @@ func TestPower_AggregatorEnergySumsToTheTotal(t *testing.T) {
 	}
 }
 
-// A device with no reading in a bucket makes that group's bucket null, and
-// the other groups keep theirs.
+// A device with no reading in a bucket makes the total's bucket a gap, so every
+// group's bucket is null there too.
 func TestPower_AggregatorEnergyIsNullWhereAGroupHasAGap(t *testing.T) {
 	p := newPowerHarness(t)
 	p.manage(powerD1, powerD2)
@@ -163,14 +163,17 @@ func TestPower_AggregatorEnergyIsNullWhereAGroupHasAGap(t *testing.T) {
 	}
 	p.post(powerD3, roleFlagIsDER, 50, rev, readings(powerNow-historyHour, powerNow, constWatts(700))...)
 
-	a, _ := aggRoute(t, p.withHistory(nil), "scope=all&window=900")
+	a, _ := aggRoute(t, p.withHistory(nil), "scope=all&window=3600")
 	e1, e2 := a.entry(t, powerAgg), a.entry(t, powerAgg2)
 	last := len(e1.Discharged) - 1
 	if e1.Discharged[last][1] != nil {
 		t.Errorf("first aggregator, newest bucket = %v, want null: D2 is silent there", *e1.Discharged[last][1])
 	}
-	if e2.Discharged[last][1] == nil || math.Abs(*e2.Discharged[last][1]-700*5/3.6e6) > 1e-12 {
-		t.Errorf("second aggregator, newest bucket = %v, want 700 W for 5 s", e2.Discharged[last][1])
+	if e2.Discharged[last][1] != nil {
+		t.Errorf("second aggregator, newest bucket = %v, want null: the total is a gap there", *e2.Discharged[last][1])
+	}
+	if got := e2.Discharged[0][1]; got == nil || math.Abs(*got-700*5/3.6e6) > 1e-12 {
+		t.Errorf("second aggregator, first bucket = %v, want D3 at 700 W for 5 s", got)
 	}
 	if e1.LatestW != nil || len(e1.LatestMissing) != 1 || e1.LatestMissing[0] != powerD2 {
 		t.Errorf("first aggregator latestW = %v missing %v, want null and [D2]", e1.LatestW, e1.LatestMissing)
@@ -240,5 +243,141 @@ func TestPower_AggregatorEnergyEmptyForFleetScopeAndNoDirect(t *testing.T) {
 	a, _ := aggRoute(t, p.withHistory(nil), "scope=all&window=900")
 	if len(a.AggregatorEnergy) != 1 || a.AggregatorEnergy[0].Key != powerAgg {
 		t.Errorf("entries = %+v, want only the aggregator", a.AggregatorEnergy)
+	}
+}
+
+// assertStack checks, bucket by bucket, that the groups stack to the energy
+// chart: where the total has a point the groups sum to it in both series, and
+// where it has none every group is null.
+func assertStack(t *testing.T, a aggAnswer) (withPoint int) {
+	t.Helper()
+	dis, chg := a.energy("Discharged"), a.energy("Charged")
+	if dis == nil || chg == nil {
+		t.Fatalf("energy series = %+v", a.EnergyChart.Series)
+	}
+	at := map[int64]int{}
+	for i, pt := range dis.Points {
+		at[int64(pt[0])/1000] = i
+	}
+	for _, e := range a.AggregatorEnergy {
+		for i := range e.Discharged {
+			start := int64(*e.Discharged[i][0])
+			if _, ok := at[start]; ok {
+				continue
+			}
+			if e.Discharged[i][1] != nil || e.Charged[i][1] != nil {
+				t.Fatalf("%s at %d draws %v/%v where the total has no point", e.Key, start, e.Discharged[i][1], e.Charged[i][1])
+			}
+		}
+	}
+	for start, i := range at {
+		var sd, sc float64
+		for _, e := range a.AggregatorEnergy {
+			j := int((start - a.WindowStart) / a.BucketSeconds)
+			if int64(*e.Discharged[j][0]) != start {
+				t.Fatalf("%s bucket %d starts at %v, want %d", e.Key, j, *e.Discharged[j][0], start)
+			}
+			if e.Discharged[j][1] != nil {
+				sd += *e.Discharged[j][1]
+			}
+			if e.Charged[j][1] != nil {
+				sc += *e.Charged[j][1]
+			}
+		}
+		if math.Abs(sd-dis.Points[i][1]) > 1e-9 || math.Abs(sc-chg.Points[i][1]) > 1e-9 {
+			t.Fatalf("bucket %d: groups stack to %v and %v kWh, energyChart has %v and %v", start, sd, sc, dis.Points[i][1], chg.Points[i][1])
+		}
+		withPoint++
+	}
+	return withPoint
+}
+
+// A device that reports from 100 s ago only: in the 30 s bucket it starts in,
+// its group has fewer covered parts than the total, and must still stack to it.
+func lateDeviceFleet(t *testing.T, p *powerHarness) {
+	t.Helper()
+	p.manage(powerD1)
+	if err := p.mgr.Assign(context.Background(), powerAgg2, powerD2); err != nil {
+		t.Fatal(err)
+	}
+	const rev = sep2.FlowDirectionReverse
+	p.post(powerD1, roleFlagIsDER, 50, rev, readings(powerNow-historyHour, powerNow, constWatts(2000))...)
+	p.post(powerD2, roleFlagIsDER, 50, rev, readings(powerNow-100, powerNow, constWatts(1000))...)
+}
+
+func TestPower_AggregatorEnergyStacksToTheTotalForALateDevice(t *testing.T) {
+	p := newPowerHarness(t)
+	lateDeviceFleet(t, p)
+	a, _ := aggRoute(t, p.withHistory(nil), "scope=all&window=21600")
+	if a.BucketSeconds != 30 {
+		t.Fatalf("bucketSeconds = %d, want 30", a.BucketSeconds)
+	}
+	if n := assertStack(t, a); n < 100 {
+		t.Fatalf("only %d buckets had a total point", n)
+	}
+}
+
+// holeStart is a 120 s bucket boundary before the final edge.
+const holeStart = powerNow - 2160
+
+// Two devices whose holes are opposite halves of one 120 s bucket: no 5 s part
+// is covered by both, so the total has a gap there and no group draws a bar.
+func oppositeHalvesFleet(t *testing.T, p *powerHarness) {
+	t.Helper()
+	p.manage(powerD1)
+	if err := p.mgr.Assign(context.Background(), powerAgg2, powerD2); err != nil {
+		t.Fatal(err)
+	}
+	const rev = sep2.FlowDirectionReverse
+	d1 := append(readings(holeStart-1500, holeStart, constWatts(2000)), readings(holeStart+60, powerNow, constWatts(2000))...)
+	d2 := append(readings(holeStart-1500, holeStart+1, constWatts(1000)), readings(holeStart+120, powerNow, constWatts(1000))...)
+	p.post(powerD1, roleFlagIsDER, 50, rev, d1...)
+	p.post(powerD2, roleFlagIsDER, 50, rev, d2...)
+}
+
+func TestPower_AggregatorEnergyOppositeHalvesIsAGapInEverySeries(t *testing.T) {
+	p := newPowerHarness(t)
+	oppositeHalvesFleet(t, p)
+	a, _ := aggRoute(t, p.withHistory(nil), "scope=all&window=86400")
+	if n := assertStack(t, a); n < 20 {
+		t.Fatalf("only %d buckets had a total point", n)
+	}
+	dis := a.energy("Discharged")
+	if _, ok := seriesAt(dis, holeStart); ok {
+		t.Fatalf("the total draws a point at %d, want the gap this test builds", holeStart)
+	}
+	if got := a.entry(t, powerAgg).Discharged[int((holeStart-a.WindowStart)/a.BucketSeconds)][1]; got != nil {
+		t.Errorf("group draws %v at the total's gap", *got)
+	}
+}
+
+// The same stack holds when the buckets are served from the record.
+func TestPower_AggregatorEnergyStacksWhenServedFromTheRecord(t *testing.T) {
+	for name, build := range map[string]func(*testing.T, *powerHarness){"late": lateDeviceFleet, "opposite": oppositeHalvesFleet} {
+		t.Run(name, func(t *testing.T) {
+			p := newPowerHarness(t)
+			build(t, p)
+			dir := t.TempDir()
+			hist := openHistory(t, dir, 48*time.Hour, powerNow)
+			if err := hist.Record(context.Background(), p.withHistory(hist), powerNow); err != nil {
+				t.Fatal(err)
+			}
+			live, _ := aggRoute(t, p.withHistory(nil), "scope=all&window=86400")
+			served, _ := aggRoute(t, p.withHistory(hist), "scope=all&window=86400")
+			if n := assertStack(t, served); n < 20 {
+				t.Fatalf("only %d buckets had a total point", n)
+			}
+			for _, e := range live.AggregatorEnergy {
+				s := served.entry(t, e.Key)
+				for i := range e.Discharged {
+					if int64(*e.Discharged[i][0])+120 > historyFinal {
+						continue
+					}
+					if (e.Discharged[i][1] == nil) != (s.Discharged[i][1] == nil) || (e.Discharged[i][1] != nil && (!near(e.Discharged[i][1], s.Discharged[i][1]) || !near(e.Charged[i][1], s.Charged[i][1]))) {
+						t.Fatalf("%s bucket %d: served %v/%v, live %v/%v", e.Key, i, s.Discharged[i][1], s.Charged[i][1], e.Discharged[i][1], e.Charged[i][1])
+					}
+				}
+			}
+		})
 	}
 }

@@ -208,8 +208,9 @@ func (p energyPoint) MarshalJSON() ([]byte, error) { return json.Marshal([2]any{
 
 // AggregatorEnergy is one aggregator's (or the Direct group's) share of
 // EnergyChart. Discharged and Charged hold one point per route bucket of the
-// window, each folded by the rule the total uses. Name is the LFDI: no display
-// name is stored for an aggregator.
+// window, null wherever EnergyChart has no point; elsewhere the groups' values
+// sum to EnergyChart's (maskParts). Name is the LFDI: no display name is stored
+// for an aggregator.
 type AggregatorEnergy struct {
 	Key           string        `json:"key"`
 	Name          string        `json:"name"`
@@ -377,7 +378,8 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	if fleetScope {
 		historyScope = resp.AggregatorLFDI
 	}
-	live := fineSource(fineTotals(fine, len(grid)-1), ws)
+	totals := fineTotals(fine, len(grid)-1)
+	live := fineSource(totals, ws)
 	if err := fillPowerFrom(&resp, devices, bounds, live, h.PowerHistory.view(historyScope, now)); err != nil {
 		log.Printf("admin power: encode chart: %s", logsafe.Err(err))
 		return PowerResponse{}, errPowerChart
@@ -388,7 +390,7 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 		if err != nil {
 			return PowerResponse{}, errPowerRead
 		}
-		resp.AggregatorEnergy = aggregatorEnergyOf(h, groups, powerSlices{fine: fine, latest: latest, reported: reported}, grid, bounds, latestBounds, now)
+		resp.AggregatorEnergy = aggregatorEnergyOf(h, groups, powerSlices{fine: fine, latest: latest, reported: reported, totals: totals}, grid, bounds, latestBounds, now)
 	}
 	return resp, nil
 }
@@ -432,13 +434,42 @@ func energyGroupsOf(ctx context.Context, h *AdminFleetHandler, aggregators []str
 }
 
 // powerSlices are every device integrated for the three reads of one answer.
-type powerSlices struct{ fine, latest, reported []devicePower }
+type powerSlices struct {
+	fine, latest, reported []devicePower
+	totals                 []bucketTotal // fineTotals of every device in fine
+}
 
-func (g energyGroup) pick(in []devicePower) []devicePower {
+// filterDevices is the devices whose canonical LFDI has accepts: the one
+// filter of devices by group, for the route and the recorder.
+func filterDevices(in []devicePower, has func(canonical string) bool) []devicePower {
 	var out []devicePower
 	for _, d := range in {
-		if g.has(canonicalLFDI(d.lfdi)) {
+		if has(canonicalLFDI(d.lfdi)) {
 			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (g energyGroup) pick(in []devicePower) []devicePower { return filterDevices(in, g.has) }
+
+// maskParts is a group's 5 s parts counted exactly as the total counts them: a
+// part the total has no reporting device for is absent, one it has but did not
+// cover stays uncovered, and one it covered takes the group's own sums, zero
+// when the group had nothing reporting. Folding the result scales by the
+// total's covered parts, so the groups sum to the total.
+func maskParts(all, group []part) []part {
+	out := make([]part, len(all))
+	for k, a := range all {
+		switch {
+		case a.reporting == 0:
+		case !a.covered:
+			out[k] = part{reporting: a.reporting}
+		default:
+			out[k] = part{reporting: a.reporting, covered: true}
+			if g := group[k]; g.covered {
+				out[k].exportWs, out[k].importWs = g.exportWs, g.importWs
+			}
 		}
 	}
 	return out
@@ -457,15 +488,26 @@ func aggregatorEnergyOf(h *AdminFleetHandler, groups []energyGroup, all powerSli
 		if g.members == nil && len(fine) == 0 && !h.PowerHistory.holds(g.key) {
 			continue
 		}
-		live := fineSource(fineTotals(fine, len(grid)-1), bounds[0])
-		history := h.PowerHistory.view(g.key, now)
+		allLive, groupLive := liveParts(all.totals, bounds[0]), liveParts(fineTotals(fine, len(grid)-1), bounds[0])
+		allHist, groupHist := h.PowerHistory.partsView(powerHistoryAllScope, now), h.PowerHistory.partsView(g.key, now)
 		e := AggregatorEnergy{Key: g.key, Name: g.key, Discharged: []energyPoint{}, Charged: []energyPoint{}}
 		if g.members == nil {
 			e.Name = powerDirectName
 		}
 		for k := 0; k+1 < len(bounds); k++ {
-			t, state := answerBucket(live, history, bounds[k], bounds[k+1])
-			dis, chg := energyPoint{at: bounds[k]}, energyPoint{at: bounds[k]}
+			start, end := bounds[k], bounds[k+1]
+			// The total decides which source answers the bucket; the group
+			// follows it, so a gap is a gap in every series.
+			ap, gp := allLive(start, end), groupLive(start, end)
+			if allHist != nil {
+				if hp := allHist(start, end); hp != nil {
+					if _, hs := foldParts(hp); hs != historyNone {
+						ap, gp = hp, groupHist(start, end)
+					}
+				}
+			}
+			t, state := foldParts(maskParts(ap, gp))
+			dis, chg := energyPoint{at: start}, energyPoint{at: start}
 			if state == historyCovered {
 				d, c := t.exportWs/wattSecondsPerKWh, t.importWs/wattSecondsPerKWh
 				dis.kWh, chg.kWh = &d, &c

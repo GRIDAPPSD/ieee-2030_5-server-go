@@ -97,6 +97,37 @@ func TestManagerOf(t *testing.T) {
 	}
 }
 
+func TestCurrentManagerOwnsLFDI(t *testing.T) {
+	t.Parallel()
+	const manager, child = "AA00000000000000000000000000000000000001", "C100000000000000000000000000000000000001"
+	ctx := context.Background()
+	managers := memory.NewEndDeviceManagementStore()
+	if err := managers.Assign(ctx, manager, child); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	cases := []struct {
+		name, device, caller string
+		want                 bool
+	}{
+		{"canonical", child, manager, true},
+		{"lower-case device", strings.ToLower(child), manager, true},
+		{"lower-case caller and padded device", " " + child + "\n", strings.ToLower(manager), true},
+		{"device not 40 hex", child[:38], manager, false},
+		{"caller not 40 hex", child, "manager", false},
+		{"empty device", "", manager, false},
+		{"not the manager", child, child, false},
+	}
+	for _, tc := range cases {
+		got, err := coreedev.CurrentManagerOwnsLFDI(ctx, managers, tc.device, tc.caller)
+		if got != tc.want || err != nil {
+			t.Errorf("%s: CurrentManagerOwnsLFDI = %v, %v; want %v, nil", tc.name, got, err, tc.want)
+		}
+	}
+	if owns, err := coreedev.CurrentManagerOwnsLFDI(ctx, failingManagerOf{managers}, child, manager); owns || err == nil {
+		t.Errorf("store failing: CurrentManagerOwnsLFDI = %v, %v; want false and the error", owns, err)
+	}
+}
+
 func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 	t.Parallel()
 	const caller = "CALLER"

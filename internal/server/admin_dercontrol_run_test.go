@@ -173,7 +173,7 @@ der_programs:
 		t.Fatalf("post response: status %d", resp.StatusCode)
 	}
 	status, body = adminDo(http.MethodGet, "/api/der/controls?device=0", "")
-	if status != http.StatusOK || !strings.Contains(string(body), `"responses":{"total":1,"byStatus":{"1":1}}`) {
+	if status != http.StatusOK || !strings.Contains(string(body), `"responses":{"total":1,"byStatus":{"1":1},"byDevice":[{"endDeviceLFDI":"`+strings.ToUpper(device.lfdi)+`","total":1,"byStatus":{"1":1}}]}`) {
 		t.Fatalf("list: status %d body %s, want the device's one response counted", status, body)
 	}
 }

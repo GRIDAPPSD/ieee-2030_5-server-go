@@ -1703,7 +1703,7 @@ func responseSenderAuthorizer(identity identity.Func, managers store.EndDeviceMa
 		if managersAbsent {
 			return false, caller, nil
 		}
-		allowed, err := coreedev.CurrentManagerOwns(r.Context(), managers, lfdi, caller)
+		allowed, err := coreedev.CurrentManagerOwnsLFDI(r.Context(), managers, lfdi, caller)
 		return allowed, caller, err
 	}
 }

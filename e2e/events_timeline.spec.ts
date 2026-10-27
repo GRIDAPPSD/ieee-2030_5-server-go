@@ -47,9 +47,10 @@ function events(now: number) {
   return {
     windowStart: s - WINDOW,
     windowEnd: s,
+    aheadEnd: s + WINDOW,
     events: [
       { ...common, group: LFDI_A, groupKind: 'aggregator', mrid: 'E1', origin: 'derms', direction: 'discharge', targetW: 5000, status: 'active', start: s - 600, end: s - 120 },
-      { ...common, group: LFDI_B, groupKind: 'aggregator', mrid: 'E2', origin: 'admin', direction: 'charge', targetW: -3000, status: 'scheduled', start: s - 300, end: s - 30 },
+      { ...common, group: LFDI_B, groupKind: 'aggregator', mrid: 'E2', origin: 'admin', direction: 'charge', targetW: -3000, status: 'scheduled', start: s + 150, end: s + 600 },
       { ...common, group: 'direct', groupKind: 'direct', mrid: 'E3', origin: 'admin', direction: 'discharge', targetW: 2000, status: 'cancelled', start: s - 840, end: s - 540 },
     ],
   };
@@ -96,6 +97,10 @@ test('the Overview draws a lane per aggregator and Direct with each event as a l
   await expect(timeline.getByTestId('events-lane').nth(2)).toContainText('discharge 2.0 kW');
   await expect(timeline.getByTestId('events-derms')).toHaveCount(1);
   await expect(bars.nth(1)).toHaveAttribute('data-status', 'scheduled');
+  await expect(page.getByTestId('chart-now')).toBeVisible();
+  const nowLine = await timeline.locator('.ev-now').first().boundingBox();
+  const future = await bars.nth(1).boundingBox();
+  expect(future!.x).toBeGreaterThan(nowLine!.x);
   await expect(bars.nth(2)).toHaveAttribute('data-status', 'cancelled');
 
   const dir = process.env.SCREENSHOT_DIR;

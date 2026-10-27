@@ -208,8 +208,13 @@ export function energyBars(chart: DescriptorChartBody): DrawnChartBody {
 export const formatKwh = (kwh: number): string => `${kwh.toFixed(3)} kWh`
 
 // The time span every chart on the card shows: the chosen window ending when
-// the shown answer arrived. The charts read this one range so they line up.
-export const windowRange = (endMs: number, windowSeconds: number): [number, number] => [endMs - windowSeconds * 1000, endMs]
+// the shown answer arrived, plus any look-ahead. The charts read this one range so they line up.
+// aheadSeconds extends the end past the answer for the look-ahead the events
+// timeline reads; the power bars end at the answer, so that part stays empty.
+export const windowRange = (endMs: number, windowSeconds: number, aheadSeconds = 0): [number, number] => [
+  endMs - windowSeconds * 1000,
+  endMs + aheadSeconds * 1000,
+]
 
 // The label of each aggregator, in order: its device label, or "Direct". The
 // server sends the LFDI as the name, so the label comes from the device

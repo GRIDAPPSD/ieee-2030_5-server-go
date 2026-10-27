@@ -9,7 +9,7 @@
   import {
     barsFor,
     controlEventsPath,
-    eventLabel,
+    eventLabelParts,
     eventTitle,
     lanesFor,
     nowPercent,
@@ -20,19 +20,26 @@
   import { powerBucketMs, type PowerAnswer } from '../lib/power'
   import { startPoll } from '../lib/poll'
 
-  let { answer, windowSeconds, range }: { answer: PowerAnswer; windowSeconds: number; range: [number, number] } = $props()
+  // ahead is how far past now the shown events reach, in seconds; the card
+  // reads it to extend the range of every chart. nowMs is the card's "now".
+  let {
+    answer,
+    windowSeconds,
+    range,
+    nowMs,
+    ahead = $bindable(0),
+  }: { answer: PowerAnswer; windowSeconds: number; range: [number, number]; nowMs: number; ahead?: number } = $props()
 
   let events = $state<ControlEventsAnswer | null>(null)
   // True once an older server answered 404: the route is absent, so the
   // timeline draws nothing and stops asking.
   let absent = $state(false)
   let error = $state('')
-  // Browser clock when the shown events arrived.
-  let readAt = $state(Date.now())
 
   $effect(() => {
     const win = windowSeconds
     events = null
+    ahead = 0
     absent = false
     error = ''
     return startPoll(async (signal) => {
@@ -40,12 +47,13 @@
       if (signal.aborted) return undefined
       if (!res.ok && res.status === 404) {
         absent = true
+        ahead = 0
         return undefined
       }
       const parsed = res.ok ? parseControlEvents(res.data) : null
       if (parsed !== null) {
         events = parsed
-        readAt = Date.now()
+        ahead = parsed.aheadSeconds ?? 0
         error = ''
       } else {
         error = res.ok ? 'The server sent a scheduled events reply that could not be read.' : `Could not load scheduled events: ${res.error}`
@@ -65,7 +73,7 @@
       ),
     })),
   )
-  const now = $derived(nowPercent(readAt, range[0], range[1]))
+  const now = $derived(nowPercent(nowMs, range[0], range[1]))
   const empty = $derived(events !== null && events.events.length === 0)
 </script>
 
@@ -88,10 +96,13 @@
               aria-label={eventTitle(bar.event)}
             >
               {#if bar.event.origin === 'derms'}<span class="ev-derms" data-testid="events-derms">DERMS</span>{/if}
-              <span class="ev-text">{eventLabel(bar.event)}</span>
+              <span class="ev-text">{eventLabelParts(bar.event)[0]}<span class="ev-detail">{eventLabelParts(bar.event)[1]}</span></span>
             </li>
           {/each}
-          {#if now !== null}<li class="ev-now" aria-hidden="true" style:left="{now}%"></li>{/if}
+          {#if now !== null}
+            <li class="ev-future" aria-hidden="true" style:left="{now}%"></li>
+            <li class="ev-now" aria-hidden="true" style:left="{now}%"></li>
+          {/if}
         </ul>
       </div>
     {/each}

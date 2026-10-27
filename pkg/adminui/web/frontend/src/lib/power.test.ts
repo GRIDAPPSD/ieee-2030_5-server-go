@@ -15,6 +15,7 @@ import {
   powerBucketMs,
   powerPath,
   rememberPowerChoice,
+  windowRange,
 } from './power'
 import { wireAnswer } from './power.fixture'
 
@@ -191,5 +192,12 @@ describe('parsePower per-aggregator energy', () => {
     expect(parsePower(wireAnswer({ aggregatorEnergy: [{ key: 'A' }] }))).toBeNull()
     const ok = { key: 'A', name: 'N', latestW: null, latestMissing: [], discharged: [[1, null]], charged: [] }
     expect(parsePower(wireAnswer({ aggregatorEnergy: [ok] }))?.aggregatorEnergy).toEqual([ok])
+  })
+})
+
+describe('windowRange', () => {
+  it('ends at the answer without a look-ahead and that many seconds later with one', () => {
+    expect(windowRange(10_000_000, 900)).toEqual([9_100_000, 10_000_000])
+    expect(windowRange(10_000_000, 900, 900)).toEqual([9_100_000, 10_900_000])
   })
 })

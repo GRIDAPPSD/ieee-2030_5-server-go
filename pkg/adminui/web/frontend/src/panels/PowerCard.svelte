@@ -29,6 +29,7 @@
   import { startPoll } from '../lib/poll'
   import DescriptorChart from './DescriptorChart.svelte'
   import EventsTimeline from './EventsTimeline.svelte'
+  import { nowPercent } from '../lib/controlEvents'
 
   // Every aggregator and the DERs without one are drawn together, so the
   // card always asks for the whole fleet.
@@ -57,7 +58,11 @@
 
   // The one time range and window every chart on the card shares. A second
   // chart under the energy chart takes this same range, so the two axes match.
-  const range = $derived(windowRange(answerAt ?? Date.now(), windowSeconds))
+  // The events timeline reports how far ahead of now it reaches, and every
+  // chart then ends there; 0 on a server with no look-ahead.
+  let aheadSeconds = $state(0)
+  const range = $derived(windowRange(answerAt ?? Date.now(), windowSeconds, aheadSeconds))
+  const nowAt = $derived(nowPercent(answerAt ?? Date.now(), range[0], range[1]))
 
   // The per-aggregator bars when the server sends them, else the total.
   const bars = $derived.by(() => {
@@ -168,8 +173,15 @@
     <div class="power-charts">
       <div class="power-chart" title="Energy per bucket in kWh: discharge above zero, charge below.">
         <DescriptorChart body={bars ?? energyBars(answer.energyChart)} empty="No energy readings in this window yet." frame {range} />
+        {#if aheadSeconds > 0 && nowAt !== null}
+          <!-- The plot area's margins match DescriptorChart's grid. -->
+          <div class="chart-ahead" aria-hidden="true" data-testid="chart-ahead">
+            <div class="chart-future" style:left="{nowAt}%"></div>
+            <div class="chart-now" data-testid="chart-now" style:left="{nowAt}%"></div>
+          </div>
+        {/if}
       </div>
-      <EventsTimeline {answer} {range} {windowSeconds} />
+      <EventsTimeline {answer} {range} {windowSeconds} nowMs={answerAt ?? Date.now()} bind:ahead={aheadSeconds} />
     </div>
     <div class="power-foot">
       {#if totals !== null}

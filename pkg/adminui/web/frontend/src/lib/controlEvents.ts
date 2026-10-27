@@ -28,6 +28,9 @@ export interface ControlEvent {
 export interface ControlEventsAnswer {
   windowStart: number
   windowEnd: number
+  // How far past windowEnd the events reach, in seconds; null on a server that
+  // predates the look-ahead, which then ends the chart at now.
+  aheadSeconds: number | null
   events: ControlEvent[]
 }
 
@@ -66,19 +69,24 @@ export function parseControlEvents(value: unknown): ControlEventsAnswer | null {
   const v = value as Record<string, unknown>
   if (typeof v.windowStart !== 'number' || typeof v.windowEnd !== 'number' || !Array.isArray(v.events)) return null
   if (!v.events.every(isEvent)) return null
-  return { windowStart: v.windowStart, windowEnd: v.windowEnd, events: v.events }
+  if (v.aheadEnd !== undefined && (typeof v.aheadEnd !== 'number' || v.aheadEnd < v.windowEnd)) return null
+  const aheadSeconds = typeof v.aheadEnd === 'number' ? v.aheadEnd - v.windowEnd : null
+  return { windowStart: v.windowStart, windowEnd: v.windowEnd, aheadSeconds, events: v.events }
 }
 
-// The bar text, in words: the direction and target ("discharge 5.0 kW"), or
+// The bar text in words, split so a narrow bar can drop the second part and
+// keep the first: the direction, then the target ("discharge", " 5.0 kW"), or
 // the mode names when the control has no target.
-export function eventLabel(e: ControlEvent): string {
+export function eventLabelParts(e: ControlEvent): [string, string] {
   if (e.targetW !== null) {
     const kw = formatKw(Math.abs(e.targetW))
-    return e.direction === null ? kw : `${e.direction} ${kw}`
+    return e.direction === null ? [kw, ''] : [e.direction, ` ${kw}`]
   }
-  if (e.modes.length > 0) return e.modes.join(', ')
-  return e.direction ?? 'control'
+  if (e.modes.length > 0) return [e.modes.join(', '), '']
+  return [e.direction ?? 'control', '']
 }
+
+export const eventLabel = (e: ControlEvent): string => eventLabelParts(e).join('')
 
 const time = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString()
 
@@ -145,8 +153,8 @@ export function barsFor(events: ControlEvent[], rangeStartMs: number, rangeEndMs
   })
 }
 
-// Where "now" falls on the range, in percent, or null before it starts. The
-// range ends when the power answer arrived, so a later "now" sits at the end.
+// Where "now" falls on the range, in percent, or null before it starts. A
+// "now" past the end sits at the end.
 export function nowPercent(nowMs: number, rangeStartMs: number, rangeEndMs: number): number | null {
   const span = rangeEndMs - rangeStartMs
   if (span <= 0 || nowMs < rangeStartMs) return null

@@ -6,6 +6,7 @@ import EventsTimeline from './EventsTimeline.svelte'
 import * as api from '../lib/api'
 import { END, wireEvent, wireEvents } from '../lib/controlEvents.fixture'
 import { parsePower, windowRange, type PowerAnswer } from '../lib/power'
+import { css } from '../test-tokens'
 import { wireAnswer } from '../lib/power.fixture'
 import { useAppCss } from '../test-tokens'
 
@@ -28,7 +29,10 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const mount = () => render(EventsTimeline, { props: { answer: answer(), windowSeconds: 3600, range: windowRange(END * 1000, 3600) } })
+// The card's range reaches an hour past now once the events answer says so;
+// the fixture's default look-ahead is that hour.
+const mount = (ahead = 3600) =>
+  render(EventsTimeline, { props: { answer: answer(), windowSeconds: 3600, range: windowRange(END * 1000, 3600, ahead), nowMs: END * 1000 } })
 const reply = (data: unknown) => vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data })
 
 describe('EventsTimeline', () => {
@@ -47,7 +51,7 @@ describe('EventsTimeline', () => {
         wireEvent({ group: 'direct', groupKind: 'direct', mrid: 'b', direction: 'charge', targetW: -3000, start: END - 3600, end: END - 1800 }),
       ]),
     )
-    const { unmount } = mount()
+    const { unmount } = mount(0)
     await vi.advanceTimersByTimeAsync(0)
     const lanes = screen.getAllByTestId('events-lane')
     const a = within(lanes[0]).getByTestId('events-bar')
@@ -146,13 +150,44 @@ describe('EventsTimeline', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
-  it('draws the now line at the end of the range', async () => {
+  it('draws the now line at half the range with an hour of look-ahead, and at the end without', async () => {
     reply(wireEvents([]))
+    const a = mount()
+    await vi.advanceTimersByTimeAsync(0)
+    const lines = a.container.querySelectorAll<HTMLElement>('.ev-now')
+    expect(lines).toHaveLength(3)
+    expect(lines[0].style.left).toBe('50%')
+    expect(a.container.querySelector<HTMLElement>('.ev-future')!.style.left).toBe('50%')
+    a.unmount()
+
+    const b = mount(0)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(b.container.querySelector<HTMLElement>('.ev-now')!.style.left).toBe('100%')
+    b.unmount()
+  })
+
+  it('draws a scheduled bar that starts after now to the right of the now line', async () => {
+    reply(wireEvents([wireEvent({ status: 'scheduled', direction: 'charge', targetW: -3000, start: END + 600, end: END + 1800 })]))
     const { unmount, container } = mount()
     await vi.advanceTimersByTimeAsync(0)
-    const lines = container.querySelectorAll<HTMLElement>('.ev-now')
-    expect(lines).toHaveLength(3)
-    expect(lines[0].style.left).toBe('100%')
+    const bar = screen.getByTestId('events-bar')
+    const nowLeft = parseFloat(container.querySelector<HTMLElement>('.ev-now')!.style.left)
+    expect(bar.dataset.status).toBe('scheduled')
+    expect(parseFloat(bar.style.left)).toBeGreaterThan(nowLeft)
+    expect(bar.style.left).toBe('58.333333333333336%')
+    expect(bar.style.width).toBe('16.666666666666664%')
+    unmount()
+  })
+
+  it('splits each label so a narrow bar can drop the target, and the stylesheet drops it under a width', async () => {
+    reply(wireEvents([wireEvent()]))
+    const { unmount } = mount()
+    await vi.advanceTimersByTimeAsync(0)
+    const bar = screen.getByTestId('events-bar')
+    expect(bar.querySelector('.ev-detail')).toHaveTextContent('5.0 kW')
+    expect(bar.querySelector('.ev-text')!.firstChild!.textContent).toBe('discharge')
+    expect(bar).toHaveTextContent('discharge 5.0 kW')
+    expect(css).toMatch(/@container \(max-width: 140px\)\s*\{\s*\.ev-detail\s*\{\s*display: none;/)
     unmount()
   })
 })

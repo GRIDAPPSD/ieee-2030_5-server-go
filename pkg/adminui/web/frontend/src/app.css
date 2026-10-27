@@ -463,6 +463,14 @@ td {
   border: 2px solid var(--border-strong);
   background: var(--surface-card);
   border-radius: var(--radius-sm);
+  container-type: inline-size;
+}
+
+/* A bar narrower than this drops its target and keeps the direction word. */
+@container (max-width: 140px) {
+  .ev-detail {
+    display: none;
+  }
 }
 
 .ev-bar.ev-dir-discharge {
@@ -507,6 +515,15 @@ td {
   text-decoration: none;
 }
 
+.ev-future {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  background: var(--chart-area);
+  pointer-events: none;
+}
+
 .ev-now {
   position: absolute;
   top: 0;
@@ -535,6 +552,37 @@ td {
 
 .ev-empty {
   margin: 0 30px 0 60px;
+}
+
+/* Over the energy chart's plot area (grid left 60, right 30, top 56, bottom
+   30): the look-ahead region shaded, and the now line. */
+.power-chart {
+  position: relative;
+}
+
+.chart-ahead {
+  position: absolute;
+  left: 60px;
+  right: 30px;
+  top: 56px;
+  bottom: 30px;
+  pointer-events: none;
+}
+
+.chart-future {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  background: var(--chart-area);
+}
+
+.chart-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--text);
 }
 
 .power-chart .chart-container.chart-tall {

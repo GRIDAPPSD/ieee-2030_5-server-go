@@ -1,7 +1,7 @@
 // The events timeline's narrowing and layout. Every assertion is on a value
 // the chart draws: the parsed fields, the lane order, the bar percentages.
 import { describe, expect, it } from 'vitest'
-import { barsFor, controlEventsPath, eventLabel, eventTitle, lanesFor, nowPercent, parseControlEvents } from './controlEvents'
+import { barsFor, controlEventsPath, eventLabel, eventLabelParts, eventTitle, lanesFor, nowPercent, parseControlEvents } from './controlEvents'
 import { END, wireEvent, wireEvents } from './controlEvents.fixture'
 import { parsePower } from './power'
 import { wireAnswer } from './power.fixture'
@@ -14,6 +14,13 @@ describe('parseControlEvents', () => {
     const got = parseControlEvents(wireEvents([wireEvent({ origin: 'derms', fsaID: 'F1', scope: 'fsa' })]))
     expect(got?.windowStart).toBe(END - 3600)
     expect(got?.events[0]).toMatchObject({ group: 'AGG1', origin: 'derms', fsaID: 'F1', scope: 'fsa', targetW: 5000, status: 'active' })
+  })
+
+  it('reads the look-ahead as seconds past the window end, and null when absent', () => {
+    expect(parseControlEvents(wireEvents([], END + 3600))?.aheadSeconds).toBe(3600)
+    expect(parseControlEvents(wireEvents([], null))?.aheadSeconds).toBeNull()
+    expect(parseControlEvents(wireEvents([], END - 1))).toBeNull()
+    expect(parseControlEvents({ ...wireEvents([]), aheadEnd: 'x' })).toBeNull()
   })
 
   it('refuses the whole reply when one event has an unknown status or a missing field', () => {
@@ -35,6 +42,11 @@ describe('eventLabel', () => {
     expect(eventLabel(wireEvent({ targetW: -3000, direction: 'charge' }))).toBe('charge 3.0 kW')
     expect(eventLabel(wireEvent({ targetW: null, direction: null, modes: ['opModConnect', 'opModEnergize'] }))).toBe('opModConnect, opModEnergize')
     expect(eventLabel(wireEvent({ targetW: null, direction: null, modes: [] }))).toBe('control')
+  })
+
+  it('splits the direction word from the target so a narrow bar keeps the word', () => {
+    expect(eventLabelParts(wireEvent({ targetW: -3000, direction: 'charge' }))).toEqual(['charge', ' 3.0 kW'])
+    expect(eventLabelParts(wireEvent({ targetW: null, direction: null, modes: ['opModConnect'] }))).toEqual(['opModConnect', ''])
   })
 
   it('puts the status in the hover text', () => {

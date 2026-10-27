@@ -380,4 +380,53 @@ describe('PowerCard', () => {
     expect(screen.getByTestId('power-energy-totals')).not.toHaveClass('visually-hidden')
     unmount()
   })
+
+  describe('look-ahead', () => {
+    const answerAtNow = () => {
+      const t = Date.now() - 60000
+      return wireAnswer({
+        energyChart: { unit: 'kWh', series: [{ name: 'Discharged', points: [[t, 0.5]] }, { name: 'Charged', points: [] }] },
+      })
+    }
+    const serve = (events: Record<string, unknown>) =>
+      vi.spyOn(api, 'fetchJSON').mockImplementation(async (path) =>
+        String(path).startsWith('/api/derms/control-events')
+          ? { ok: true, data: events }
+          : { ok: true, data: answerAtNow() },
+      )
+    const axis = () => {
+      const el = screen.getByTestId('descriptor-chart') as HTMLElement
+      const o = echarts.getInstanceByDom(el)!.getOption() as { xAxis: { min: number; max: number }[] }
+      return o.xAxis[0]
+    }
+
+    it('extends both charts to the look-ahead end, marks now on both, and stops the power bars at now', async () => {
+      const win = POWER_WINDOWS[0].seconds
+      serve({ windowStart: 0, windowEnd: win, aheadEnd: win * 2, events: [] })
+      const { unmount, container } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const x = axis()
+      expect(x.max - x.min).toBe(win * 2 * 1000)
+      const now = x.min + win * 1000
+      expect(Date.now()).toBe(now)
+      expect(screen.getByTestId('chart-now').style.left).toBe('50%')
+      expect(container.querySelector<HTMLElement>('.ev-now')!.style.left).toBe('50%')
+      const lastBar = Math.max(...chartOption().series.flatMap((s) => s.data.map((p) => p[0])))
+      expect(lastBar).toBeLessThanOrEqual(now)
+      unmount()
+    })
+
+    it('ends at now when the server sends no aheadEnd', async () => {
+      const win = POWER_WINDOWS[0].seconds
+      serve({ windowStart: 0, windowEnd: win, events: [] })
+      const { unmount } = render(PowerCard)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const x = axis()
+      expect(x.max - x.min).toBe(win * 1000)
+      expect(screen.queryByTestId('chart-ahead')).toBeNull()
+      unmount()
+    })
+  })
 })

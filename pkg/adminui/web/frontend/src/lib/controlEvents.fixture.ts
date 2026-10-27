@@ -20,4 +20,11 @@ export const wireEvent = (over: Partial<ControlEvent> = {}): ControlEvent => ({
   ...over,
 })
 
-export const wireEvents = (events: ControlEvent[]) => ({ windowStart: END - 3600, windowEnd: END, events })
+// aheadEnd is the look-ahead end the route sends; null leaves it out, as an
+// older server does.
+export const wireEvents = (events: ControlEvent[], aheadEnd: number | null = END + 3600) => ({
+  windowStart: END - 3600,
+  windowEnd: END,
+  ...(aheadEnd === null ? {} : { aheadEnd }),
+  events,
+})

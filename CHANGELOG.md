@@ -33,9 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Fleet DERAvailability staleness uses `derstatus.Assess`, the dashboard's
-  rule (1860 s at the 900 s pollRate), in place of a fixed 15 minutes, so a
-  fleet row and a device view agree on the same reading. A reading dated more
+- Fleet DERAvailability staleness uses `derstatus.Assess`, the rule DERStatus
+  already uses (1860 s at the 900 s pollRate), in place of a fixed 15 minutes. A reading dated more
   than one pollRate ahead is now stale. Mirror readings keep 15 minutes
   (#1211).
 

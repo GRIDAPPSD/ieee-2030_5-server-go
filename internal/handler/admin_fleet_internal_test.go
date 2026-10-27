@@ -1080,7 +1080,7 @@ func TestAccumulateRollup_StatusDatedYear2100IsStaleNotConnected(t *testing.T) {
 
 // TestMeasurementStale_Boundary pins measurementStale's own ">" boundary
 // directly: TestStaleness_BothSidesOfBoundary above pins the SAME boundary
-// shape for the unrelated clientClockStale/deviceStale path, and a ">="
+// shape for the unrelated readingStale/deviceStale path, and a ">="
 // mutant in measurementStale specifically survives unless this function is
 // exercised in isolation.
 func TestMeasurementStale_Boundary(t *testing.T) {

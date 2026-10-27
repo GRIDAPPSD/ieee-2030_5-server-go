@@ -119,8 +119,8 @@ type FleetSum struct {
 	Sum        float64 `json:"sum"`
 	Unreported int     `json:"unreported"`
 	// Stale counts a device whose latest known status has gone stale
-	// (mirrorReadingStaleSeconds). Its value, if any, is excluded from Sum and from
-	// Unreported: it is neither summed as current nor treated as never
+	// (mirrorReadingStaleSeconds). Its value, if any, is excluded from Sum
+	// and from Unreported: it is neither summed as current nor treated as never
 	// reported, since both would misstate what the fleet is actually
 	// delivering right now.
 	Stale int `json:"stale"`
@@ -674,7 +674,7 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	// not counted in any of connected/alarmed/stale, and its sums land in
 	// Unreported below, the same as any other missing value. The same rule
 	// applies to availabilityStale below for DERAvailability.
-	deviceStale := dev.Status != nil && derstatus.Assess(dev.Status.ReadingTime, now, derstatus.DefaultPollRateSeconds).Stale
+	deviceStale := dev.Status != nil && readingStale(dev.Status.ReadingTime, now)
 
 	switch {
 	case dev.Status == nil:
@@ -690,7 +690,7 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	}
 
 	var statW, statVar *float64
-	availabilityStale := dev.Availability != nil && derstatus.Assess(dev.Availability.ReadingTime, now, derstatus.DefaultPollRateSeconds).Stale
+	availabilityStale := dev.Availability != nil && readingStale(dev.Availability.ReadingTime, now)
 	if dev.Availability != nil {
 		statW, statVar = dev.Availability.StatWAvail, dev.Availability.StatVarAvail
 	}
@@ -698,6 +698,12 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), measurementStale(dev.Measurements.Q, now), measurementUndirected(dev.Measurements.Q))
 	addToSum(&rollup.StatWAvail, statW, availabilityStale, false)
 	addToSum(&rollup.StatVarAvail, statVar, availabilityStale, false)
+}
+
+// readingStale judges a client-set readingTime (DERStatus or DERAvailability)
+// by derstatus.Assess at the served pollRate, so a pollRate change is one line.
+func readingStale(readingTime, now int64) bool {
+	return derstatus.Assess(readingTime, now, derstatus.DefaultPollRateSeconds).Stale
 }
 
 // measurementStale reports whether m's own server-stamped reading time is

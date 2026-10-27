@@ -361,10 +361,30 @@ func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error 
 // Notify looks up all subscriptions for the given resource and enqueues
 // notification tasks for each subscriber. Non-blocking: drops if queue full.
 func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8) {
+	m.notifyRecipients(m.recipients(ctx, resourceHref), resourceHref, status, m.subscriberCheck.Load() != nil)
+}
+
+// PrepareNotify decides now who a Notify of resourceHref reaches, applying the
+// subscriber check to each subscription, and returns a func that delivers a
+// notification of the given status to exactly that set. It is for a resource
+// whose subscribers stop passing the check once the change being announced
+// has happened, such as an EndDevice that is deleted: prepare while it is
+// readable, deliver after the delete succeeded. Delivery does not re-run the
+// check at send time, since it would refuse that same set; the decision made
+// here, pairing withholds included, stands. Delivering nothing costs
+// nothing, so a failed change just drops the func.
+func (m *Manager) PrepareNotify(ctx context.Context, resourceHref string) func(status uint8) {
+	recs := m.recipients(ctx, resourceHref)
+	return func(status uint8) { m.notifyRecipients(recs, resourceHref, status, false) }
+}
+
+// recipients returns the subscriptions on resourceHref that pass the
+// subscriber check.
+func (m *Manager) recipients(ctx context.Context, resourceHref string) []memory.SubscriptionRecord {
 	records, err := m.store.ListByResource(ctx, resourceHref)
 	if err != nil {
 		log.Printf("notification: list subscriptions for %s: %v", resourceHref, err)
-		return
+		return nil
 	}
 
 	check := m.subscriberCheck.Load()
@@ -374,6 +394,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 		})
 	}
 
+	admitted := records[:0:0]
 	for _, rec := range records {
 		sub := rec.Subscription
 		if check != nil {
@@ -382,6 +403,16 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 				continue
 			}
 		}
+		admitted = append(admitted, rec)
+	}
+	return admitted
+}
+
+// notifyRecipients enqueues one notification per record. recheck asks the
+// worker to run the subscriber check again at send time.
+func (m *Manager) notifyRecipients(records []memory.SubscriptionRecord, resourceHref string, status uint8, recheck bool) {
+	for _, rec := range records {
+		sub := rec.Subscription
 		notification := sep2.Notification{
 			Resource:           sep2.Resource{Href: resourceHref},
 			SubscribedResource: sub.SubscribedResource,
@@ -400,7 +431,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			notificationURI: sub.NotificationURI,
 			payload:         payload,
 		}
-		if check != nil {
+		if recheck {
 			task.recheck = &sub
 		}
 

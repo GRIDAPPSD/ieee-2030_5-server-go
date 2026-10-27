@@ -163,6 +163,7 @@ func handleEdevDeleteOOB(stores *Stores, notifier handler.ResourceNotifier) http
 			http.Error(w, "bad request: end_device_id required", http.StatusBadRequest)
 			return
 		}
+		sendDeleted := coreedev.PrepareDeleted(r.Context(), notifier, req.EndDeviceID)
 		if err := edevs.Delete(r.Context(), req.EndDeviceID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "end device not found", http.StatusNotFound)
@@ -171,7 +172,7 @@ func handleEdevDeleteOOB(stores *Stores, notifier handler.ResourceNotifier) http
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		coreedev.NotifyDeleted(r.Context(), notifier, req.EndDeviceID)
+		sendDeleted()
 		if cleanup != nil {
 			if err := cleanup(r.Context(), req.EndDeviceID); err != nil {
 				http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)

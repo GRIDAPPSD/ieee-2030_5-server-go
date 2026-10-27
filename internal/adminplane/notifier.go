@@ -60,6 +60,22 @@ func (a *notifierAdapter) NotifyRemoved(ctx context.Context, sub sep2.Subscripti
 	return nil
 }
 
+type recipientPreparer interface {
+	PrepareNotify(ctx context.Context, resourceHref string) func(status uint8)
+}
+
+var _ recipientPreparer = (*coresub.Manager)(nil)
+
+// PrepareNotify forwards to the inner notifier so a notice whose recipients
+// must be decided before the change it announces (the EndDevice deleted
+// notice) keeps its checked set. An inner without it notifies at send time.
+func (a *notifierAdapter) PrepareNotify(ctx context.Context, resourceHref string) func(status uint8) {
+	if p, ok := a.inner.(recipientPreparer); ok {
+		return p.PrepareNotify(ctx, resourceHref)
+	}
+	return func(status uint8) { a.inner.Notify(ctx, resourceHref, status) }
+}
+
 type notificationURIValidator interface {
 	ValidateNotificationURI(ctx context.Context, uri string) error
 }

@@ -708,6 +708,19 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	})
 }
 
+// derLinkedEndDevices returns the EndDevice store the /edev routes must use so
+// every served EndDevice advertises its DERList and every created one has a
+// DER to report against.
+//
+// THE GATE IS THE MOUNT GATE, as for [logEventLinkedEndDevices]: it decorates
+// exactly when Stores.DERs is non-nil, the condition registerDERRoutes uses to
+// mount GET /edev/{id}/der and the instance routes beneath it.
+func derLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
+	return linkedEndDevices(devs, !store.IsAbsent(stores.DERs), func(devs store.EndDeviceStore) *memory.DERLinkedEndDeviceStore {
+		return memory.NewDERLinkedEndDeviceStore(devs, stores.DERs)
+	})
+}
+
 // linkedEndDevices is the one wiring for an EndDevice link decorator whose
 // function set is served only when its backing store is wired: it decorates
 // devs exactly when mounted is true, and declines to decorate twice. An
@@ -843,13 +856,14 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev
 // routes and the read handle serve from: registration-bound,
-// LogEventList-linked, device-keyed-cascade-wrapped, flow-reservation-linked,
-// and refusing rather than panicking when unwired. registerEndDeviceRoutes
-// and NewReaderStores both call it, so the five-decorator chain is typed out
+// LogEventList-linked, DERList-linked, device-keyed-cascade-wrapped,
+// flow-reservation-linked, and refusing rather than panicking when unwired.
+// registerEndDeviceRoutes and NewReaderStores both call it, so the
+// six-decorator chain is typed out
 // in this one function rather than twice, and the two callers cannot drift
 // apart.
 //
-// Order among the LogEvent, device-keyed-cascade and flow reservation
+// Order among the LogEvent, DER, device-keyed-cascade and flow reservation
 // decorators does not matter: each owns a disjoint set of fields on the
 // served EndDevice, or (device-keyed-cascade) advertises no field at all,
 // and none reads what another writes.
@@ -860,7 +874,7 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 // RegistrationLink, LogEventListLink and flow reservation link derivations
 // make no difference to it.
 func ownedEndDevices(stores *Stores) store.EndDeviceStore {
-	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores))
+	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(derLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores), stores))
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck, inBandManagementOff bool, refusals func(r *http.Request, caller, reason string)) {

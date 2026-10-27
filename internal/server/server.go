@@ -130,6 +130,12 @@ func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
 		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
 	}
 
+	// The DER stores are memory-only, so every device loaded from disk or the
+	// fixture starts with no DER; seed the one a client reports against.
+	if err := memory.SeedDefaultDERs(ctx, stores.EndDevices, stores.DERs); err != nil {
+		return err
+	}
+
 	if err := fsaprogram.Reconcile(ctx, stores.AdminFSAs, stores.FSAs); err != nil {
 		return err
 	}

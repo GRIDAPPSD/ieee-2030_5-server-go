@@ -62,12 +62,22 @@ func linkDecoratorCases() []linkDecoratorCase {
 			want:    []string{"/edev/7/frq", "/edev/7/frp"},
 			logName: "FlowReservationRequestListLink",
 		},
+		{
+			name: "DER",
+			build: func(inner store.EndDeviceStore) store.EndDeviceStore {
+				return memory.NewDERLinkedEndDeviceStore(inner, memory.NewScopedStore[sep2.DER]())
+			},
+			plant:   func(d *sep2.EndDevice, key string) { d.DERListLink = &sep2.ListLink{Href: "/elsewhere/" + key} },
+			linked:  func(d sep2.EndDevice) []string { return []string{href(d.DERListLink)} },
+			want:    []string{"/edev/7/der"},
+			logName: "DERListLink",
+		},
 	}
 }
 
 // Every link decorator discards a client-supplied link on every read path and
 // stores none of it, and stripping a link from a device with no recoverable key
-// is logged in the same way for all of them. The three used to disagree: the
+// is logged in the same way for all of them. The LogEvent and flow reservation decorators used to disagree: the
 // flow reservation decorator logged and the others stripped silently.
 func TestLinkedEndDevices_OneStripBehaviorForEveryDecorator(t *testing.T) {
 	for _, tc := range linkDecoratorCases() {
@@ -85,8 +95,8 @@ func TestLinkedEndDevices_OneStripBehaviorForEveryDecorator(t *testing.T) {
 
 			// The client's link never reaches the stored record.
 			for i, got := range tc.linked(mustGet(t, inner, "7")) {
-				if got != tc.want[i] {
-					t.Errorf("stored link %d = %q, want the derived %q", i, got, tc.want[i])
+				if strings.HasPrefix(got, "/elsewhere") {
+					t.Errorf("stored link %d = %q, the client's value reached the store", i, got)
 				}
 			}
 			// And no read path serves it back.

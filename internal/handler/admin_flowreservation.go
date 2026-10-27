@@ -610,9 +610,29 @@ func directionOf(e *sep2.SignedRealEnergy) *string {
 	if e == nil || e.Value == 0 {
 		return nil
 	}
-	word := "charge"
-	if commitment.DirectionOf(commitment.Grant{Energy: e}) > 0 {
+	return directionWord(commitment.DirectionOf(commitment.Grant{Energy: e}))
+}
+
+// targetDirectionOf names the flow of an opModTargetW, which is
+// discharge positive on the wire. Absent or zero has no direction.
+func targetDirectionOf(p *sep2.ActivePower) *string {
+	if p == nil {
+		return nil
+	}
+	return directionWord(cmp.Compare(p.Value, 0))
+}
+
+// directionWord is the one place a discharge-positive sign becomes the word
+// every view reports: positive discharges, negative charges, zero is nil.
+func directionWord(dischargeSign int) *string {
+	var word string
+	switch {
+	case dischargeSign > 0:
 		word = "discharge"
+	case dischargeSign < 0:
+		word = "charge"
+	default:
+		return nil
 	}
 	return &word
 }

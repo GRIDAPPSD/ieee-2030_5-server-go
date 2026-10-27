@@ -336,9 +336,8 @@ describe('DerControl, FSA target: pending and active controls', () => {
 
 describe('DerControl, FSA target: where a control came from (#1155)', () => {
   it('marks a DERMS control "from DERMS" with its direction word', async () => {
-    const target = (value: number) => ({ opModTargetW: { value, multiplier: 3 } })
-    const fromDerms = fsaControl({ id: 'd', mRID: 'DERMS', origin: 'derms', functions: target(-50) })
-    const mine = fsaControl({ id: 'a', mRID: 'MINE', origin: 'admin', functions: target(50) })
+    const fromDerms = fsaControl({ id: 'd', mRID: 'DERMS', origin: 'derms', direction: 'charge' })
+    const mine = fsaControl({ id: 'a', mRID: 'MINE', origin: 'admin', direction: 'discharge' })
     const { container } = await mountFsa({ templates: [template()], controls: [fromDerms, mine] })
     await pickProgram(container)
     await waitFor(() => expect(screen.getAllByTestId('fsa-control-row')).toHaveLength(2))

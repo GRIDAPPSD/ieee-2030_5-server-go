@@ -930,15 +930,14 @@ describe('DerControl: the start picker defaults to now', () => {
 
 describe('DerControl: where a control came from (#1155)', () => {
   const now = Math.floor(Date.now() / 1000)
-  const target = (value: number) => ({ opModTargetW: { value, multiplier: 3 } })
   const rows = {
     device: '0',
     controls: [
-      item('FROMDERMS', 'scheduled', now + 3600, 600, { origin: 'derms', functions: target(50) }),
-      item('CHARGING', 'scheduled', now + 7200, 600, { origin: 'derms', functions: target(-50) }),
-      item('NOTARGET', 'scheduled', now + 9000, 600, { origin: 'derms', functions: { fnLevel: 1 } }),
-      item('MINE', 'scheduled', now + 10800, 600, { origin: 'admin', functions: target(50) }),
-      item('OLDER', 'scheduled', now + 12600, 600, { functions: target(50) }),
+      item('FROMDERMS', 'scheduled', now + 3600, 600, { origin: 'derms', direction: 'discharge' }),
+      item('CHARGING', 'scheduled', now + 7200, 600, { origin: 'derms', direction: 'charge' }),
+      item('NOTARGET', 'scheduled', now + 9000, 600, { origin: 'derms', direction: null }),
+      item('MINE', 'scheduled', now + 10800, 600, { origin: 'admin', direction: 'discharge' }),
+      item('OLDER', 'scheduled', now + 12600, 600, { direction: 'discharge' }),
     ],
   } satisfies DERControlListResponse
 

@@ -10,6 +10,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": null,
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -54,6 +55,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": null,
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -94,6 +96,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -131,6 +134,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": null,
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -179,6 +183,7 @@
       "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
       "derProgramHref": "/edev/0/fsa/0/derp/0",
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "eventStatus": {
         "currentStatus": 0,
@@ -775,6 +780,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": null,
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -827,6 +833,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": null,
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -875,6 +882,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": "discharge",
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -920,6 +928,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": null,
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -976,6 +985,7 @@
         "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
         "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
         "description": "",
+        "direction": "discharge",
         "ended": false,
         "eventStatus": {
           "currentStatus": 0,
@@ -1061,6 +1071,7 @@
         "opModEnergize": true
       },
       "description": "",
+      "direction": null,
       "ended": false,
       "functions": {
         "opModConnect": true,
@@ -1109,6 +1120,7 @@
         }
       },
       "description": "",
+      "direction": null,
       "ended": false,
       "functions": {
         "opModFixedPFInjectW": {
@@ -1153,6 +1165,7 @@
         }
       },
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "functions": {
         "opModMaxLimW": 5000,
@@ -1194,6 +1207,7 @@
         "opModMaxLimW": 4000
       },
       "description": "",
+      "direction": null,
       "ended": false,
       "functions": {
         "opModMaxLimW": 4000
@@ -1246,6 +1260,7 @@
         }
       },
       "description": "",
+      "direction": "discharge",
       "ended": false,
       "functions": {
         "opModTargetW": {

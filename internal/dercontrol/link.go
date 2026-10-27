@@ -138,3 +138,13 @@ func (i *Issuer) CancelLive(ctx context.Context, scope Scope, id, reason string)
 	}
 	return err == nil, err
 }
+
+// TargetOf is the control base's active power target, discharge positive, or
+// nil for a base without one. It is the one read of that element outside the
+// catalog, for callers that name the flow it implies.
+func TargetOf(b *sep2.DERControlBase) *sep2.ActivePower {
+	if b == nil {
+		return nil
+	}
+	return b.OpModTargetW
+}

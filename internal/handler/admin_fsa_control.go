@@ -88,7 +88,9 @@ type FSAControlView struct {
 	Interval       IntervalView       `json:"interval"`
 	Ended          bool               `json:"ended"`
 	// Origin is "admin" or "derms"; a record saved before the field reads admin.
-	Origin       string               `json:"origin"`
+	Origin string `json:"origin"`
+	// Direction is "discharge" or "charge" from the sign of opModTargetW, or null.
+	Direction    *string              `json:"direction"`
 	Cancelled    bool                 `json:"cancelled"`
 	CancelledAt  *int64               `json:"cancelledAt"`
 	CancelReason string               `json:"cancelReason,omitempty"`
@@ -212,17 +214,16 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 }
 
 // recorder is the RecordWriter for a control on fsaID's template tmplID: it
-// stores the FSA's record carrying origin (empty or dercontrol.OriginDERMS,
-// as IssueAcross validates it) and returns how to remove it.
+// stores the FSA's record, marked derms when origin is dercontrol.OriginDERMS,
+// and returns how to remove it. IssueAcross owns the origin check and runs it
+// before it calls the writer, so a value it refused never reaches here.
 func (h *AdminFSAControlHandler) recorder(fsaID, tmplID, origin string) dercontrol.RecordWriter {
 	fh := h.FSAs
 	return func(ctx context.Context, id string, ctrl sep2.DERControl) (func(context.Context) error, error) {
-		stored, err := dercontrol.StoredOrigin(origin)
-		if err != nil {
-			return nil, err
-		}
 		rec := recordOf(tmplID, id, ctrl)
-		rec.Origin = stored
+		if origin == dercontrol.OriginDERMS {
+			rec.Origin = origin
+		}
 		if err := fh.AdminFSAs.CreateFSAControl(ctx, fsaID, rec); err != nil {
 			return nil, err
 		}
@@ -451,6 +452,7 @@ func (h *AdminFSAControlHandler) view(ctx context.Context, fsaID string, rec mem
 		Interval:       IntervalView{Start: rec.Start, Duration: rec.Duration},
 		Ended:          rec.Ended(now),
 		Origin:         dercontrol.OriginOf(rec.Origin),
+		Direction:      targetDirectionOf(dercontrol.TargetOf(&rec.Base)),
 		Cancelled:      rec.CancelledAt != nil,
 		CancelledAt:    rec.CancelledAt,
 		CancelReason:   rec.CancelReason,

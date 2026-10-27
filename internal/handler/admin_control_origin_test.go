@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -216,5 +217,61 @@ func TestControlOrigin_OldRecordsReadAdmin(t *testing.T) {
 	out, _ = json.Marshal(rec)
 	if !strings.Contains(string(out), `"origin":"derms"`) {
 		t.Errorf("derms FSA record = %s, want origin derms", out)
+	}
+}
+
+// The views name the flow of a power target: positive discharges, negative
+// charges, and a control with no target has none. The device list and the FSA
+// list agree.
+func TestControlDirection_ListsNameTheFlow(t *testing.T) {
+	x := newFSAControlFixture(t)
+	x.f.assign(t, dcDevice, "fsa-A")
+	ctx := context.Background()
+	up := originRequest(dercontrol.OriginDERMS)
+	up.Type, up.MaxLimW = dercontrol.TargetW, nil
+	up.TargetW = &sep2.ActivePower{Value: 5000}
+	if _, err := x.h.IssueAcrossForTest(ctx, up, []string{dcDevice}, "fsa-A", x.tid); err != nil {
+		t.Fatal(err)
+	}
+	down := `{"type":"targetW","targetW":{"value":-3000},"durationSeconds":600}`
+	if w := x.f.do(http.MethodPost, x.path(), down); w.Code != http.StatusCreated {
+		t.Fatalf("charge create = %d %s", w.Code, w.Body.String())
+	}
+	if w := x.f.do(http.MethodPost, x.path(), `{"type":"targetW","targetW":{"value":0},"durationSeconds":600}`); w.Code != http.StatusCreated {
+		t.Fatalf("zero create = %d %s", w.Code, w.Body.String())
+	}
+	if w := x.f.do(http.MethodPost, x.path(), fsaControlBody()); w.Code != http.StatusCreated {
+		t.Fatalf("maxLimW create = %d %s", w.Code, w.Body.String())
+	}
+	word := func(p *string) string {
+		if p == nil {
+			return "none"
+		}
+		return *p
+	}
+	fsa := map[string]string{}
+	for _, c := range x.listFSA(t).Controls {
+		fsa[c.MRID] = word(c.Direction)
+	}
+	counts := map[string]int{}
+	for _, c := range x.listDevice(t).Controls {
+		d := word(c.Direction)
+		if fsa[c.MRID] != d {
+			t.Errorf("control %s: device list direction %q, fsa list %q", c.MRID, d, fsa[c.MRID])
+		}
+		counts[d]++
+	}
+	if counts["discharge"] != 1 || counts["charge"] != 1 || counts["none"] != 2 || len(fsa) != 4 {
+		t.Errorf("directions = %v over %d controls, want 1 discharge, 1 charge, 2 none over 4", counts, len(fsa))
+	}
+}
+
+// A stored origin this build does not know reads as admin and is never served
+// verbatim.
+func TestOriginOf_UnknownReadsAdmin(t *testing.T) {
+	for stored, want := range map[string]string{"": "admin", "admin": "admin", "derms": "derms", "bogus": "admin", "DERMS": "admin"} {
+		if got := dercontrol.OriginOf(stored); got != want {
+			t.Errorf("OriginOf(%q) = %q, want %q", stored, got, want)
+		}
 	}
 }

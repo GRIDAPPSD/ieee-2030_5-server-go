@@ -804,7 +804,7 @@
               <td>{ctrl.type}</td>
               <td>
                 {functionsText(ctrl.functions)}
-                {@render originCell(originMarker(ctrl.origin, ctrl.functions))}
+                {@render originCell(originMarker(ctrl.origin, ctrl.direction))}
               </td>
               <td>{ctrl.derProgramHref} ({primacyOf(ctrl.derProgramHref)})</td>
               <td>{fmtTime(ctrl.interval.start)}</td>
@@ -867,7 +867,7 @@
               <td>{ctrl.type}</td>
               <td>
                 {functionsText(ctrl.functions)}
-                {@render originCell(originMarker(ctrl.origin, ctrl.functions))}
+                {@render originCell(originMarker(ctrl.origin, ctrl.direction))}
               </td>
               <td>{fmtTime(ctrl.interval.start)}</td>
               <td>{fmtTime(ctrl.interval.start + ctrl.interval.duration)}</td>

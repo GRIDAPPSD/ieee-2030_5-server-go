@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -149,10 +148,16 @@ func (g *ownershipGate) checkSubscribe(r *http.Request, resource string) error {
 // stored subscription is kept and resumes when the pair is removed.
 func (g *ownershipGate) checkSubscriber(ctx context.Context, sub sep2.Subscription) error {
 	lfdi, lerr := g.subscriberLFDI(ctx, sub.Href)
-	if lerr == nil {
+	switch {
+	case lerr == nil:
 		if err := g.withholdPaired(ctx, sub, lfdi); err != nil {
 			return err
 		}
+	case !errors.Is(lerr, coresub.ErrSubscribedResourceRefused):
+		// Without the subscriber's LFDI the pair cannot be read, and a route
+		// the gate does not decide (GET /edev) would otherwise admit it.
+		g.denials.record(deliveryRequest(sub.Href), ownershipVerdict{caller: sub.Href, reason: reasonSubscriberUnread, path: sub.Href})
+		return fmt.Errorf("%w: %w", coresub.ErrWithholdRecorded, lerr)
 	}
 	return g.canRead(ctx, sub.SubscribedResource, func() (string, error) { return lfdi, lerr })
 }
@@ -164,17 +169,14 @@ func (g *ownershipGate) withholdPaired(ctx context.Context, sub sep2.Subscriptio
 	if g.managersAbsent {
 		return nil
 	}
-	_, managed, err := coreedev.ManagerOf(ctx, g.managers, lfdi)
-	v := ownershipVerdict{caller: lfdi, path: sub.Href}
-	switch {
-	case err != nil:
-		v.reason = reasonManagementFailed
+	v, outcome, err := g.pairOutcome(ctx, lfdi, sub.Href, reasonManagedSubscriber)
+	switch outcome {
+	case pairFailed:
 		g.denials.record(deliveryRequest(sub.Href), v)
-		return fmt.Errorf("subscriber check could not read the management pair: %w", err)
-	case managed:
-		v.reason = reasonManagedSubscriber
+		return fmt.Errorf("%w: subscriber check could not read the management pair: %w", coresub.ErrWithholdRecorded, err)
+	case pairManaged:
 		g.denials.record(deliveryRequest(sub.Href), v)
-		return refused("%s", reasonManagedSubscriber)
+		return fmt.Errorf("%w: %w", coresub.ErrWithholdRecorded, refused("%s", reasonManagedSubscriber))
 	}
 	return nil
 }

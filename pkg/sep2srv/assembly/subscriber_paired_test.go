@@ -10,6 +10,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
@@ -115,5 +116,92 @@ func TestSubscriberCheck_ManagementStoreErrorWithholds(t *testing.T) {
 	}
 	if !lineWith(buf.String(), denialLogMarker, `caller="`+unmanagedLFDI+`"`, "reason=management-store-error") {
 		t.Errorf("no budgeted line for the store failure; log=%q", buf.String())
+	}
+}
+
+// faultyDevices fails Get while fault is armed.
+type faultyDevices struct {
+	store.EndDeviceStore
+	fault *storetest.Fault
+}
+
+func (f faultyDevices) Get(ctx context.Context, id string) (sep2.EndDevice, error) {
+	if err := f.fault.Err(); err != nil {
+		return sep2.EndDevice{}, err
+	}
+	return f.EndDeviceStore.Get(ctx, id)
+}
+
+// GET /edev is a route the gate does not decide, so the pair is the only
+// thing that can withhold a delivery for it; a device read that fails must not
+// let a paired DER's subscription through.
+func TestSubscriberCheck_DeviceReadErrorWithholdsEvenOnAnUngatedRoute(t *testing.T) {
+	fleet := newManagementFleet(t)
+	buf := captureLog(t)
+	fault := &storetest.Fault{}
+	fleet.stores.EndDevices = faultyDevices{EndDeviceStore: fleet.stores.EndDevices, fault: fault}
+	check := subscriberCheckFor(t, fleet)
+	sub := sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/" + victimID + "/sub/s1"}},
+		SubscribedResource:   "/edev",
+	}
+
+	if err := check(context.Background(), sub); !errors.Is(err, coresub.ErrSubscribedResourceRefused) {
+		t.Fatalf("control: readable paired record on /edev: err = %v, want the pair to withhold", err)
+	}
+	if err := fleet.managers.Unassign(context.Background(), victimLFDI); err != nil {
+		t.Fatalf("unassign: %v", err)
+	}
+	if err := check(context.Background(), sub); err != nil {
+		t.Fatalf("control: unpaired on /edev: err = %v, want admitted", err)
+	}
+	if err := fleet.managers.Assign(context.Background(), managerLFDI, victimLFDI); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+
+	fault.Arm(storetest.ErrBackendUnavailable)
+	err := check(context.Background(), sub)
+	if !errors.Is(err, storetest.ErrBackendUnavailable) {
+		t.Fatalf("err = %v, want the device read failure to withhold", err)
+	}
+	if !lineWith(buf.String(), denialLogMarker, "reason=subscriber-unread", `"/edev/`+victimID+`/sub/s1"`) {
+		t.Errorf("no budgeted line for the unread subscriber; log=%q", buf.String())
+	}
+}
+
+// A standing pair or an outage is logged within the denial budget only: the
+// manager adds no line of its own per notification.
+func TestSubscriberCheck_StandingWithholdLogsWithinBudgetOnly(t *testing.T) {
+	fleet := newManagementFleet(t)
+	buf := captureLog(t)
+	mgr := coresub.NewManager(fleet.stores.Subscriptions, 1, 8, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
+	mgr.SetSubscriberCheck(subscriberCheckFor(t, fleet))
+	rcv := newNotificationReceiver(t)
+	for _, c := range []struct{ id, href string }{{victimID, "/edev/" + victimID + "/sub/s1"}, {unmanagedID, "/edev/" + unmanagedID + "/sub/s1"}} {
+		if err := fleet.stores.Subscriptions.Create(context.Background(), "sub-"+c.id, sep2.Subscription{
+			SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: c.href}},
+			SubscribedResource:   "/edev/" + c.id + "/der",
+			NotificationURI:      rcv.srv.URL,
+			Limit:                10,
+		}); err != nil {
+			t.Fatalf("create subscription: %v", err)
+		}
+	}
+	// The unmanaged device's resource is gated and readable by its owner, so
+	// the manager line count below comes from the paired subscription alone.
+	for range 20 {
+		mgr.Notify(context.Background(), "/edev/"+victimID+"/der", sep2.NotificationStatusDefault)
+	}
+	if n := strings.Count(buf.String(), "not notifying subscription"); n != 0 {
+		t.Errorf("manager wrote %d unbudgeted lines for a recorded withhold, want 0", n)
+	}
+	n := 0
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if lineWith(line, denialLogMarker, "reason=managed-subscriber") {
+			n++
+		}
+	}
+	if n < 1 || n > 5 {
+		t.Errorf("budgeted lines after 20 notifications = %d, want 1 to 5", n)
 	}
 }

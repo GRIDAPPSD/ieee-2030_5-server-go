@@ -46,8 +46,11 @@ after it was paired, is not delivered to while the pair stands. It is withheld,
 not deleted, and delivery resumes when the pair is removed. The aggregator's
 own subscriptions are unchanged. A withheld delivery logs `reason=managed-subscriber`
 in the denial log, within its budget, with method `NOTIFY` and the
-subscription href as the path. If the management store fails, the delivery is
-withheld (`reason=management-store-error`) rather than sent.
+subscription href as the path. If the management store fails
+(`reason=management-store-error`) or the subscriber's EndDevice cannot be read
+(`reason=subscriber-unread`), the delivery is withheld rather than sent. The
+check runs again just before each send, so a pair made while a notification
+was queued still withholds it.
 
 ## What a manager can and cannot do
 

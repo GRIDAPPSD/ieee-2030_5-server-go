@@ -62,7 +62,7 @@ async function renderOnPath(path: string) {
 // name "FSA Tree"; the assertion below matches the rendered DOM text, so
 // that mismatch does not make the FSAs case a false failure.
 const TAB_HEADINGS: Record<string, string[]> = {
-  overview: ['Registered devices', 'Server Info', 'Device Activity'],
+  overview: ['Registered devices', 'Power', 'Server Info', 'Device Activity'],
   devices: ['End Devices', 'Add End Device', 'Lookup Device by LFDI', 'Management Pairs'],
   fsas: ['Create FSA Template', 'FSA Templates', 'FSA Tree (SY -> FD -> SP -> DEV)'],
   control: ['Send DER Control'],

@@ -63,12 +63,12 @@ describe('AdminShell', () => {
     expect(container.querySelector('#uptime')).toHaveTextContent('3m21s')
     expect(connect).toHaveBeenCalledTimes(1)
     // Issue 561 scopes the grid to the active tab; the default path ("/")
-    // is the overview tab, so its three cards are what renders here, not
+    // is the overview tab, so its four cards are what renders here, not
     // all eleven. The device table's sfdi cell (formerly asserted in this
     // test) is on the devices tab, and is covered there, alongside the
     // other eight cards' headings, by AdminShell.tabs.svelte.test.ts.
     const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
-    expect(headings).toEqual(['Registered devices', 'Server Info', 'Device Activity'])
+    expect(headings).toEqual(['Registered devices', 'Power', 'Server Info', 'Device Activity'])
   })
 
   it('closes the stream when the shell is unmounted', async () => {

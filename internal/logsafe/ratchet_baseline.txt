@@ -66,6 +66,6 @@ pkg/sep2srv/handlers/subscription/handler.go 23
 pkg/sep2srv/handlers/subscription/manager.go 23
 pkg/sep2srv/srverr/srverr.go 4
 pkg/store/memory/enddevice.go 2
-pkg/store/memory/flowreservationbinding.go 4
+pkg/store/memory/flowreservationbinding.go 3
 pkg/store/memory/persistent_scoped.go 4
 pkg/store/memory/registrationbinding.go 4

@@ -66,9 +66,28 @@ func LogEventListHref(key string) string { return "/edev/" + key + "/lel" }
 // link states where THIS server serves the list; it is not a field a client
 // gets to assert.
 type LogEventLinkedEndDeviceStore struct {
-	devs   store.EndDeviceStore
+	linkedEndDevices
 	events store.ScopedStore[sep2.LogEvent]
 }
+
+// logEventLinks is the LogEventListLink half of the shared decorator.
+type logEventLinks struct{}
+
+func (logEventLinks) derive(_ context.Context, d *sep2.EndDevice, key string) {
+	d.LogEventListLink = &sep2.ListLink{Href: LogEventListHref(key)}
+}
+
+func (l logEventLinks) forWrite(ctx context.Context, d *sep2.EndDevice, key string) {
+	l.derive(ctx, d, key)
+}
+
+func (logEventLinks) strip(d *sep2.EndDevice) bool {
+	had := d.LogEventListLink != nil
+	d.LogEventListLink = nil
+	return had
+}
+
+func (logEventLinks) linkNames() string { return "LogEventListLink" }
 
 // compile-time proof the decorator is substitutable for what it decorates,
 // and that it can be probed as part of a Delete chain (deleteProber).
@@ -104,21 +123,7 @@ func NewLogEventLinkedEndDeviceStore(devs store.EndDeviceStore, events store.Sco
 	if store.IsAbsent(events) {
 		panic("memory: NewLogEventLinkedEndDeviceStore: events (ScopedStore) must not be nil")
 	}
-	return &LogEventLinkedEndDeviceStore{devs: devs, events: events}
-}
-
-// Create stores the device with its LogEventListLink derived from the key it is
-// stored under, discarding whatever the caller supplied.
-func (s *LogEventLinkedEndDeviceStore) Create(ctx context.Context, id string, device sep2.EndDevice) error {
-	device.LogEventListLink = &sep2.ListLink{Href: LogEventListHref(id)}
-	return s.devs.Create(ctx, id, device)
-}
-
-// Update replaces the stored device, re-deriving the link from id. A client's
-// PUT body cannot install a link of its own choosing.
-func (s *LogEventLinkedEndDeviceStore) Update(ctx context.Context, id string, device sep2.EndDevice) error {
-	device.LogEventListLink = &sep2.ListLink{Href: LogEventListHref(id)}
-	return s.devs.Update(ctx, id, device)
+	return &LogEventLinkedEndDeviceStore{linkedEndDevices: linkedEndDevices{devs: devs, fields: logEventLinks{}}, events: events}
 }
 
 // probeDelete checks whether Delete(ctx, id) looks likely to succeed,
@@ -153,69 +158,4 @@ func (s *LogEventLinkedEndDeviceStore) Delete(ctx context.Context, id string) er
 		return fmt.Errorf("cascading log events for %q: %w", id, err)
 	}
 	return s.devs.Delete(ctx, id)
-}
-
-// Get returns the device stored under id with its link derived from id.
-func (s *LogEventLinkedEndDeviceStore) Get(ctx context.Context, id string) (sep2.EndDevice, error) {
-	device, err := s.devs.Get(ctx, id)
-	if err != nil {
-		return sep2.EndDevice{}, err
-	}
-	device.LogEventListLink = &sep2.ListLink{Href: LogEventListHref(id)}
-	return device, nil
-}
-
-// GetBySFDI returns the device with the given SFDI, link-derived.
-func (s *LogEventLinkedEndDeviceStore) GetBySFDI(ctx context.Context, sfdi string) (sep2.EndDevice, error) {
-	device, err := s.devs.GetBySFDI(ctx, sfdi)
-	if err != nil {
-		return sep2.EndDevice{}, err
-	}
-	return s.deriveByHref(device), nil
-}
-
-// GetByLFDI returns the device with the given LFDI, link-derived.
-func (s *LogEventLinkedEndDeviceStore) GetByLFDI(ctx context.Context, lfdi string) (sep2.EndDevice, error) {
-	device, err := s.devs.GetByLFDI(ctx, lfdi)
-	if err != nil {
-		return sep2.EndDevice{}, err
-	}
-	return s.deriveByHref(device), nil
-}
-
-// List returns a page of devices, each link-derived.
-func (s *LogEventLinkedEndDeviceStore) List(ctx context.Context, opts store.ListOptions) (store.ListResult[sep2.EndDevice], error) {
-	result, err := s.devs.List(ctx, opts)
-	if err != nil {
-		return store.ListResult[sep2.EndDevice]{}, err
-	}
-	for i := range result.Items {
-		result.Items[i] = s.deriveByHref(result.Items[i])
-	}
-	return result, nil
-}
-
-// Count delegates: the link changes what a device advertises, not how many
-// devices exist.
-func (s *LogEventLinkedEndDeviceStore) Count(ctx context.Context) (uint32, error) {
-	return s.devs.Count(ctx)
-}
-
-// deriveByHref applies the derivation on the read paths that hand back a device
-// without its store key, recovering the key from the device's own Href with the
-// same helper [RegisteredEndDeviceStore] uses.
-//
-// A key that cannot be recovered STRIPS the link rather than guessing one. That
-// is the fail-closed direction: an unadvertised list is recoverable by a client
-// re-reading the device under its canonical href, while a link derived from a
-// malformed href would point at a list this server does not serve, which is the
-// defect the whole card is closing.
-func (s *LogEventLinkedEndDeviceStore) deriveByHref(device sep2.EndDevice) sep2.EndDevice {
-	key, ok := keyFromEndDeviceHref(device.Href)
-	if !ok {
-		device.LogEventListLink = nil
-		return device
-	}
-	device.LogEventListLink = &sep2.ListLink{Href: LogEventListHref(key)}
-	return device
 }

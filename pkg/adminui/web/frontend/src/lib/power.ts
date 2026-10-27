@@ -4,7 +4,7 @@
 // unmounts the card when the viewer leaves the Overview and the answer must
 // still be here when they come back.
 import { isChartBody } from './chart'
-import type { DescriptorChartBody } from './descriptor'
+import type { DescriptorChartBody, DrawnChartBody } from './descriptor'
 
 export interface PowerWindow {
   seconds: number
@@ -151,6 +151,15 @@ export interface EnergyTotals {
 export function energyTotals(chart: DescriptorChartBody): EnergyTotals {
   const sum = (name: string) => chart.series.find((s) => s.name === name)?.points.reduce((acc, p) => acc + p[1], 0) ?? 0
   return { discharged: sum('Discharged'), charged: sum('Charged') }
+}
+
+// The energy chart drawn as bars: Discharged above zero, Charged below, each
+// with its direction palette.
+export function energyBars(chart: DescriptorChartBody): DrawnChartBody {
+  return {
+    ...chart,
+    series: chart.series.map((s) => ({ ...s, type: 'bar', direction: s.name === 'Charged' ? 'charge' : 'discharge' })),
+  }
 }
 
 export const formatKwh = (kwh: number): string => `${kwh.toFixed(4)} kWh`

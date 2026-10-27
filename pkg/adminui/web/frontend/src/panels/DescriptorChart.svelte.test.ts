@@ -7,8 +7,9 @@ import { render, screen, waitFor } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import DescriptorChart from './DescriptorChart.svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
+import { DIRECTION_COLORS } from '../lib/chart'
 import { installCanvasStub } from '../test-canvas-stub'
-import type { Descriptor, DescriptorChartBody } from '../lib/descriptor'
+import type { Descriptor, DescriptorChartBody, DrawnChartBody } from '../lib/descriptor'
 
 installCanvasStub()
 
@@ -30,7 +31,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function mounted(over: Partial<DescriptorChartBody> = {}) {
+async function mounted(over: Partial<DrawnChartBody> = {}) {
   const view = render(DescriptorChart, { props: { body: { ...body, ...over }, empty: 'No samples yet.' } })
   const el = (await screen.findByTestId('descriptor-chart')) as HTMLElement
   await waitFor(() => expect(echarts.getInstanceByDom(el)).toBeDefined())
@@ -52,6 +53,33 @@ describe('DescriptorChart', () => {
     expect(option.xAxis[0].type).toBe('time')
     expect(option.yAxis[0].name).toBe(body.unit)
     expect(option.legend).toHaveLength(1)
+  })
+
+  it('draws a series typed bar as a bar with its direction colors, and the rest as lines', async () => {
+    const pts = [[1759343400000, 0.5]] as [number, number][]
+    const { instance } = await mounted({
+      unit: 'kWh',
+      series: [
+        { name: 'Discharged', points: pts, type: 'bar', direction: 'discharge' },
+        { name: 'Charged', points: [[1759343400000, -0.25]], type: 'bar', direction: 'charge' },
+        { name: 'plain', points: pts },
+      ],
+    })
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(3))
+    const option = instance.getOption() as {
+      series: { name: string; type: string; stack?: string; itemStyle?: { color: string; borderColor: string; decal?: unknown } }[]
+    }
+    expect(option.series.map((s) => [s.name, s.type])).toEqual([
+      ['Discharged', 'bar'],
+      ['Charged', 'bar'],
+      ['plain', 'line'],
+    ])
+    expect(option.series[0].itemStyle?.borderColor).toBe(DIRECTION_COLORS.discharge.edge)
+    expect(option.series[0].itemStyle?.color).toBe(DIRECTION_COLORS.discharge.fill)
+    expect(option.series[0].itemStyle?.decal).toBeUndefined()
+    expect(option.series[1].itemStyle?.borderColor).toBe(DIRECTION_COLORS.charge.edge)
+    expect(option.series[1].itemStyle?.decal).toBeDefined()
+    expect(option.series[0].stack).toBe(option.series[1].stack)
   })
 
   it('draws the tooltip through rich text, not HTML', async () => {

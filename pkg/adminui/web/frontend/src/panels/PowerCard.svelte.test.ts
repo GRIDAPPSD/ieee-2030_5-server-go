@@ -2,11 +2,11 @@
 // The tests drive a mocked fetchJSON under fake timers, stub the canvas, and
 // unmount what they mount.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/svelte'
+import { fireEvent, render, screen } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import PowerCard from './PowerCard.svelte'
 import * as api from '../lib/api'
-import { forgetPower } from '../lib/power'
+import { POWER_WINDOWS, forgetPower } from '../lib/power'
 import { wireAnswer } from '../lib/power.fixture'
 import { installCanvasStub } from '../test-canvas-stub'
 
@@ -22,11 +22,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const chartSeries = () => {
+const chartOption = () => {
   const el = screen.getByTestId('descriptor-chart') as HTMLElement
-  const opt = echarts.getInstanceByDom(el)!.getOption() as { series: { name: string; data: [number, number][] }[] }
-  return opt.series.map((s) => [s.name, s.data.map((p) => p[1])])
+  return echarts.getInstanceByDom(el)!.getOption() as { series: { name: string; type: string; data: [number, number][] }[] }
 }
+const chartSeries = () => chartOption().series.map((s) => [s.name, s.data.map((p) => p[1])])
 
 describe('PowerCard', () => {
   it('draws the energy series, shows the kW and asks for all devices over 15 minutes', async () => {
@@ -39,6 +39,10 @@ describe('PowerCard', () => {
     expect(chartSeries()).toEqual([
       ['Discharged', [0.5]],
       ['Charged', [-0.25]],
+    ])
+    expect(chartOption().series.map((s) => [s.name, s.type])).toEqual([
+      ['Discharged', 'bar'],
+      ['Charged', 'bar'],
     ])
     expect(screen.getByTestId('power-energy-totals')).toHaveTextContent(
       'This window: discharged 0.5000 kWh, charged -0.2500 kWh',
@@ -152,6 +156,24 @@ describe('PowerCard', () => {
     settle({ ok: false, status: 0, error: 'request cancelled' })
     await vi.advanceTimersByTimeAsync(5000 * 6)
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows no cancelled error for the new window when the old read settles as cancelled mid-change', async () => {
+    const settles: ((r: Awaited<ReturnType<typeof api.fetchJSON>>) => void)[] = []
+    vi.spyOn(api, 'fetchJSON').mockImplementation(() => new Promise((resolve) => settles.push(resolve)))
+    const { unmount } = render(PowerCard)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settles).toHaveLength(1)
+
+    await fireEvent.change(screen.getByLabelText('Window'), { target: { value: String(POWER_WINDOWS[1].seconds) } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(settles).toHaveLength(2)
+
+    settles[0]({ ok: false, status: 0, error: 'request cancelled' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(screen.queryByTestId('power-error')).toBeNull()
+    expect(screen.getByTestId('power-loading')).toBeInTheDocument()
+    unmount()
   })
 
   it('draws the previous chart at once on return, marked with its time, before the next read lands', async () => {

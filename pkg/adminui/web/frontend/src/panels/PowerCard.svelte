@@ -10,6 +10,7 @@
     ALL_SCOPE,
     POWER_WINDOWS,
     cachedPower,
+    energyBars,
     energyTotals,
     formatKw,
     formatKwh,
@@ -140,7 +141,7 @@
       <p class="hint" data-testid="power-stale">Showing the answer from {time(answerAt)}.</p>
     {/if}
     <p class="hint">Energy per bucket in kWh: discharge above zero, charge below.</p>
-    <DescriptorChart body={answer.energyChart} empty="No energy readings in this window yet." />
+    <DescriptorChart body={energyBars(answer.energyChart)} empty="No energy readings in this window yet." />
     {#if totals !== null}
       <p class="hint" data-testid="power-energy-totals">
         This window: discharged {formatKwh(totals.discharged)}, charged {formatKwh(totals.charged)}

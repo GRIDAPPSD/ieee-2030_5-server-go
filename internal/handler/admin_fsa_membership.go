@@ -13,6 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -140,8 +141,8 @@ func (h *AdminFSAHandler) replicateControls(r *http.Request, deviceID, fsaID str
 	if errors.As(err, &undo) {
 		// The copies and the assignment stay, so the replica is not orphaned.
 		h.logged(r).ErrorContext(r.Context(), "admin: FSA control replica may be left after a failed assign", "event", "assign_replica_incomplete",
-			"device", deviceID, "fsa", fsaID, "scope", undo.Scope.Key(), "mrid", undo.MRID, "undo_step", string(undo.Step),
-			"control_kept", undo.ControlKept, "lifecycle_kept", undo.LifecycleKept, "error", err)
+			"device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "scope", logsafe.Str(undo.Scope.Key()), "mrid", logsafe.Str(undo.MRID),
+			"undo_step", logsafe.Str(string(undo.Step)), "control_kept", undo.ControlKept, "lifecycle_kept", undo.LifecycleKept, "error", logsafe.Err(err))
 		return h.incompleteFault(err, deviceID, fsaID)
 	}
 	if !h.rolledBack(r, err, steps, nil) {
@@ -254,7 +255,7 @@ func (h *AdminFSAHandler) unassignLocked(r *http.Request, deviceID, fsaID string
 			if delErr := h.DeviceFSAs.Delete(ctx, deviceID, fsaID); delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
 				// The assignment is gone; the in-memory FSA goes at the next restart.
 				h.logged(r).ErrorContext(ctx, "admin: device FSA left after unassign", "event", "device_fsa_delete_failed",
-					"device", deviceID, "fsa", fsaID, "error", delErr)
+					"device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "error", logsafe.Err(delErr))
 			}
 		}
 		h.notify(ctx, "/edev/"+deviceID+"/fsa")

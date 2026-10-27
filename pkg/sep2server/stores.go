@@ -18,6 +18,11 @@ import (
 // own set and passes it as [Config.Stores]; this is the baseline that makes
 // the simple case a one-liner.
 //
+// MirrorUsagePoints is in memory here too: this baseline names no data
+// directory, so there is no path to persist to. A consumer that wants mirrors to
+// survive a restart builds that store with memory.NewPersistentStore and passes
+// its own set as [Config.Stores].
+//
 // RegistrationPolicy is deliberately left at its zero value. That is
 // fail-closed rather than degraded: with no PIN resolver wired, a device gets
 // no Registration and no RegistrationLink at all, rather than one carrying a

@@ -324,7 +324,8 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	}
 
 	latestBounds := latestGrid(now)
-	reportedBounds := []int64{latestBounds[len(latestBounds)-1] - latestReportedSeconds, latestBounds[len(latestBounds)-1]}
+	latestEnd := latestBounds[len(latestBounds)-1]
+	reportedBounds := []int64{reportedLead(latestEnd), latestEnd}
 	grid := fineGrid(ws, we)
 	devices := make([]devicePower, 0, len(byDevice))
 	fine := make([]devicePower, 0, len(byDevice))
@@ -359,6 +360,9 @@ const latestSpanSeconds = maxHoldSeconds
 // to count as reporting for the total, whatever the chart window: a device
 // in that span with no value in the last latestSpanSeconds is missing.
 const latestReportedSeconds = 3600
+
+// reportedLead is where the latestReportedSeconds before end begin.
+func reportedLead(end int64) int64 { return end - latestReportedSeconds }
 
 // latestGrid is the 5 s grid over the latestSpanSeconds before now, ending
 // on the last closed 5 s boundary. It does not depend on the chart window,
@@ -444,13 +448,10 @@ func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error
 	reporting, _ := reportingOf(devices)
 	live := func(start, end int64) (bucketTotal, historyState) {
 		t := totalBucket(reporting, slices.Index(bounds, start), float64(end-start))
-		switch {
-		case t.full():
-			return t, historyCovered
-		case t.covering > 0:
-			return bucketTotal{}, historyGap
+		if state := t.state(); state != historyCovered {
+			return bucketTotal{}, state
 		}
-		return bucketTotal{}, historyNone
+		return t, historyCovered
 	}
 	return fillPowerFrom(resp, devices, bounds, live, nil)
 }

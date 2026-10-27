@@ -273,47 +273,70 @@ func (p *PowerHistory) rewrite(scope string) error {
 	return nil
 }
 
+// state is the bucket's standing under the every-reporting-device rule: none
+// without a reporting device, covered when every one covered it, else gap. It
+// is the one place that rule maps to a state.
+func (t bucketTotal) state() historyState {
+	switch {
+	case t.reporting == 0:
+		return historyNone
+	case t.full():
+		return historyCovered
+	}
+	return historyGap
+}
+
 // part is one 5 s bucket of one scope as the route and the recorder both see
-// it: absent when no reporting device covered it, a gap when a reporting
-// device did not cover all of it, else covered with the fleet's totals.
+// it. Reporting is zero when no device was reporting; covered says every
+// reporting device covered it, and only then are the totals set.
 type part struct {
 	exportWs, importWs float64
 	reporting          int
-	present, covered   bool
+	covered            bool
 }
 
 // partOf is the one conversion from a 5 s total to a part, used to record a
 // bucket and to draw a live one.
 func partOf(t bucketTotal) part {
-	pt := part{reporting: t.reporting, present: t.covering > 0, covered: t.full()}
+	pt := part{reporting: t.reporting, covered: t.state() == historyCovered}
 	if pt.covered {
 		pt.exportWs, pt.importWs = t.exportWs, t.importWs
 	}
 	return pt
 }
 
-// foldParts totals the 5 s parts of one route bucket. It answers
-// historyCovered only when every part is present and covered, historyGap when
-// any present part is not covered, and historyNone otherwise.
+// foldParts totals the 5 s parts of one route bucket from the parts every
+// reporting device covered, scaled by parts over covered parts so a bucket
+// with an uncovered part still draws; the average power is that of the
+// covered parts, so Discharged plus Charged still equals Total times the
+// bucket length. It answers historyGap when parts were reporting but none was
+// covered, and historyNone when no part had a reporting device.
 func foldParts(parts []part) (bucketTotal, historyState) {
 	var t bucketTotal
-	present := 0
+	known, covered := 0, 0
 	for _, pt := range parts {
-		if !pt.present {
+		if pt.reporting == 0 {
 			continue
 		}
+		known++
 		if !pt.covered {
-			return bucketTotal{}, historyGap
+			continue
 		}
-		present++
+		covered++
 		t.exportWs += pt.exportWs
 		t.importWs += pt.importWs
 		t.covering, t.reporting = pt.reporting, pt.reporting
 	}
-	if present == 0 || present != len(parts) {
+	switch {
+	case known == 0:
 		return bucketTotal{}, historyNone
+	case covered == 0:
+		return bucketTotal{}, historyGap
 	}
-	t.w = (t.exportWs + t.importWs) / float64(len(parts)*PowerHistoryStep)
+	t.w = (t.exportWs + t.importWs) / float64(covered*PowerHistoryStep)
+	scale := float64(len(parts)) / float64(covered)
+	t.exportWs *= scale
+	t.importWs *= scale
 	return t, historyCovered
 }
 
@@ -324,7 +347,7 @@ const fineLead = latestReportedSeconds / PowerHistoryStep
 // fineGrid is the 5 s grid from start to end, preceded by the fineLead
 // buckets that decide who is reporting in the first one.
 func fineGrid(start, end int64) []int64 {
-	return boundsFor(start-latestReportedSeconds, end, PowerHistoryStep)
+	return boundsFor(reportedLead(start), end, PowerHistoryStep)
 }
 
 // fineTotals is the totals of every 5 s bucket after the lead of a grid the
@@ -384,7 +407,7 @@ func (p *PowerHistory) lookup(scope string, start, end int64) (bucketTotal, hist
 	i := sort.Search(len(sc.recs), func(i int) bool { return sc.recs[i].At >= start })
 	for ; i < len(sc.recs) && sc.recs[i].At < end; i++ {
 		r := sc.recs[i]
-		parts[(r.At-start)/PowerHistoryStep] = part{exportWs: r.ExportWs, importWs: r.ImportWs, reporting: r.Reporting, present: true, covered: r.Covered}
+		parts[(r.At-start)/PowerHistoryStep] = part{exportWs: r.ExportWs, importWs: r.ImportWs, reporting: r.Reporting, covered: r.Covered}
 	}
 	return foldParts(parts)
 }
@@ -413,8 +436,9 @@ const powerHistoryChunk = 2 * 3600
 
 // Record writes every bucket that became final since each scope's last
 // record, for scope all and for each aggregator's fleet. Who is reporting in a
-// bucket is decided by fineTotals, the rule the route uses. A bucket where no
-// reporting device covered any second is not recorded. A failed write leaves
+// bucket is decided by fineTotals, the rule the route uses. A bucket with no
+// reporting device is not recorded; one with reporting devices that none
+// covered is recorded as a gap. A failed write leaves
 // the scope's cursor where it was, so the next call retries the same buckets.
 func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int64) error {
 	p.writeMu.Lock()
@@ -497,7 +521,7 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 func (p *PowerHistory) appendScope(scope string, from, next int64, parts []part) error {
 	var added []historyRecord
 	for k, pt := range parts {
-		if !pt.present {
+		if pt.reporting == 0 {
 			continue
 		}
 		r := historyRecord{At: from + int64(k)*PowerHistoryStep, ExportWs: pt.exportWs, ImportWs: pt.importWs, Reporting: pt.reporting, Covered: pt.covered}

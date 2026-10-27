@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -317,10 +318,11 @@ func TestPowerHistory_PruneKeepsTheFileWithinTheBound(t *testing.T) {
 	if got[0].At < cutoff {
 		t.Errorf("oldest record %d is older than the bound %d", got[0].At, cutoff)
 	}
-	// The newer first-pass records are all kept, and the readings, which end
-	// at powerNow, make the buckets from historyFinal to powerNow final too.
+	// The newer first-pass records are all kept, and every bucket from
+	// historyFinal to the new final end is recorded: covered while the
+	// readings last, then as a gap while the device is still reporting.
 	kept := len(first) - slices.IndexFunc(first, func(r historyRecord) bool { return r.At >= cutoff })
-	if want := kept + int((powerNow-historyFinal)/5); len(got) != want {
+	if want := kept + int((finalEnd(later)-historyFinal)/5); len(got) != want {
 		t.Errorf("records after prune = %d, want %d (%d kept, the rest new)", len(got), want, kept)
 	}
 	if _, state := hist.lookup(powerHistoryAllScope, first[0].At, first[0].At+5); state != historyNone {
@@ -368,8 +370,10 @@ func TestPowerHistory_DamagedLinesAreDroppedAndTheFileRewritten(t *testing.T) {
 	if got := readFileRecords(t, path); !slices.Equal(got, []historyRecord{good1, good2}) {
 		t.Fatalf("file after open = %+v, want only the two good records", got)
 	}
-	if tot, state := hist.lookup(powerHistoryAllScope, 1000, 1010); state != historyNone || tot.exportWs != 0 {
-		t.Errorf("a bucket with an altered neighbour is served: %+v %v", tot, state)
+	// The altered record is gone, so its part counts as uncovered and the
+	// bucket is drawn from the good part alone, scaled by 2 parts over 1.
+	if tot, state := hist.lookup(powerHistoryAllScope, 1000, 1010); state != historyCovered || tot.exportWs != 200 || tot.importWs != -40 {
+		t.Errorf("bucket over a dropped record = %+v %v, want covered with 200 and -40 Ws", tot, state)
 	}
 	if tot, state := hist.lookup(powerHistoryAllScope, 1010, 1015); state != historyCovered || tot.exportWs != 300 {
 		t.Errorf("good record not served: %+v %v", tot, state)
@@ -538,8 +542,10 @@ func TestPowerHistory_ReportingRuleIsTheSameInTheRouteAndTheRecord(t *testing.T)
 	restarted.manage(powerD1, powerD2)
 	served := routeAnswer(t, restarted.withHistory(openHistory(t, dir, 48*time.Hour, powerNow)), "scope=all&window=86400")
 
-	if live.TotalGapBuckets != 0 {
-		t.Errorf("readings give %d gap buckets, want 0: device 2 is not reporting while device 1 posts", live.TotalGapBuckets)
+	// Device 2 reports for the hour after it was heard and is silent in it
+	// (30 buckets of 120 s); while device 1 posts it is not reporting.
+	if live.TotalGapBuckets != 30 {
+		t.Errorf("readings give %d gap buckets, want 30: only the hour after device 2 was last heard", live.TotalGapBuckets)
 	}
 	if served.TotalGapBuckets != live.TotalGapBuckets {
 		t.Errorf("record-served gaps = %d, readings = %d", served.TotalGapBuckets, live.TotalGapBuckets)
@@ -668,5 +674,86 @@ func TestPowerHistory_AppendAfterALineWithoutNewline(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); len(data) == 0 || data[len(data)-1] != '\n' {
 		t.Error("file does not end with a newline")
+	}
+}
+
+// A device posting 300 s Averages 5 s late each time leaves a wholly
+// uncovered 5 s part in some buckets; those buckets are still drawn, from the
+// parts that are covered, and a record serves the same points.
+func TestPowerHistory_LateAverageDeviceDrawsEveryBucket(t *testing.T) {
+	p := newPowerHarness(t)
+	p.manage(powerD1)
+	// An Average covers the 300 s before its receipt, so a 305 s cadence
+	// leaves 5 s uncovered after each one.
+	postRate, uom, dq, flow := uint32(300), sep2.UomWatts, dataQualifierAverage, sep2.FlowDirectionReverse
+	mup := sep2.MirrorUsagePoint{MRID: "MUPA", DeviceLFDI: powerD1, PostRate: &postRate, RoleFlags: roleFlagIsDER}
+	mup.Href = "/mup/9"
+	if err := p.mups.Create(context.Background(), "9", mup); err != nil {
+		t.Fatal(err)
+	}
+	for i, at := 0, powerNow-6*historyHour; at < powerNow; i, at = i+1, at+305 {
+		v := int64(1000)
+		r := sep2.MirrorMeterReading{
+			MRID:           "WA",
+			LastUpdateTime: at,
+			Reading:        &sep2.Reading{Value: &v},
+			ReadingType:    &sep2.ReadingType{Uom: &uom, DataQualifier: &dq, FlowDirection: &flow},
+		}
+		if err := p.mmrs.Create(context.Background(), "9", fmt.Sprint(i), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := t.TempDir()
+	hist := openHistory(t, dir, 48*time.Hour, powerNow)
+	if err := hist.Record(context.Background(), p.withHistory(hist), powerNow); err != nil {
+		t.Fatal(err)
+	}
+	live := routeAnswer(t, p.withHistory(nil), "scope=all&window=86400")
+	total := live.series("Total")
+	inWindow := 0
+	for _, pt := range total.Points {
+		at := int64(pt[0]) / 1000
+		if at >= powerNow-6*historyHour+305 && at+120 <= historyFinal {
+			inWindow++
+			if pt[1] != 1000 {
+				t.Errorf("bucket %d = %v W, want 1000", at, pt[1])
+			}
+		}
+	}
+	if want := int((6*historyHour - 305 - maxHoldSeconds) / 120); inWindow < want-1 {
+		t.Errorf("final Total points = %d, want about %d: buckets with an uncovered 5 s part must still draw", inWindow, want)
+	}
+	restarted := newPowerHarness(t)
+	restarted.manage(powerD1)
+	served := routeAnswer(t, restarted.withHistory(openHistory(t, dir, 48*time.Hour, powerNow)), "scope=all&window=86400")
+	st := served.series("Total")
+	for _, pt := range total.Points {
+		if at := int64(pt[0]) / 1000; at+120 <= historyFinal {
+			if got, ok := seriesAt(st, at); !ok || math.Abs(got-pt[1]) > 1e-9 {
+				t.Errorf("bucket %d: record-served = %v (present %v), readings = %v", at, got, ok, pt[1])
+			}
+		}
+	}
+}
+
+// The history answers for a bucket only when it ends at or before the final
+// end: the bucket ending on it is served and the next one is not, though a
+// later pass recorded it.
+func TestPowerHistory_ViewBoundaryIsTheFinalEnd(t *testing.T) {
+	p := newPowerHarness(t)
+	twoDeviceHour(p)
+	hist := openHistory(t, t.TempDir(), 48*time.Hour, powerNow)
+	if err := hist.Record(context.Background(), p.withHistory(hist), powerNow+maxHoldSeconds); err != nil {
+		t.Fatal(err)
+	}
+	view := hist.view(powerHistoryAllScope, powerNow)
+	if _, state := view(historyFinal-5, historyFinal); state != historyCovered {
+		t.Errorf("bucket ending at the final end: state %v, want covered", state)
+	}
+	if _, state := hist.lookup(powerHistoryAllScope, historyFinal, historyFinal+5); state != historyCovered {
+		t.Fatalf("setup: the bucket after the final end was not recorded: state %v", state)
+	}
+	if _, state := view(historyFinal, historyFinal+5); state != historyNone {
+		t.Errorf("bucket ending 5 s past the final end: state %v, want none", state)
 	}
 }

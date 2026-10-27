@@ -110,7 +110,8 @@ func TestPower_EnergyKeepsChargeAndDischargeAndMatchesTotal(t *testing.T) {
 // A bucket where a reporting device has no reading has no energy point, the
 // same buckets the Total skips. A device reports once it has covered a second
 // in the hour ending at the bucket, so D1 alone fills the first 5 buckets,
-// both cover the next 5, and the 5 only D2 covers are gaps.
+// both cover the next 5, and the last 10 are gaps: 5 only D2 covers and
+// 5 neither covers.
 func TestPower_EnergyHasNoPointWhereAReportingDeviceIsMissing(t *testing.T) {
 	p := newPowerHarness(t)
 	p.manage(powerD1, powerD2)
@@ -132,8 +133,8 @@ func TestPower_EnergyHasNoPointWhereAReportingDeviceIsMissing(t *testing.T) {
 			t.Fatalf("point %d = discharged %v charged %v, want [%v %v W for 5 s] and 0", i, pt, chg.Points[i], total.Points[i][0], w)
 		}
 	}
-	if a.TotalGapBuckets != 5 {
-		t.Errorf("totalGapBuckets = %d, want 5", a.TotalGapBuckets)
+	if a.TotalGapBuckets != 10 {
+		t.Errorf("totalGapBuckets = %d, want 10: 5 where D1 is silent, 5 where both are", a.TotalGapBuckets)
 	}
 }
 

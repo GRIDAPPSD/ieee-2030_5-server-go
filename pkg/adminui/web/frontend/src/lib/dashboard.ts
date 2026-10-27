@@ -30,6 +30,12 @@ export interface DashboardDevice {
   // Set when this device's DER data could not be read in full. An empty
   // ders with derError set means unreadable, not "no DERs".
   derError?: string
+  // True when a server DERControl is in force on this device now (FSA-sent
+  // controls included), false when none is, null when the control stores
+  // could not be read. Absent from older servers, which reads as unknown.
+  underControl?: boolean | null
+  // Set when underControl is null because a control read failed.
+  controlError?: string
   // Text per DashboardColumn id from an embedder's column source. Absent
   // from older servers; a missing id renders "-".
   cells?: Record<string, string>

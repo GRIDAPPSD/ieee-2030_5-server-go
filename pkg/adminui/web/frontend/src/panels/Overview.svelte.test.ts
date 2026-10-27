@@ -133,6 +133,30 @@ describe('Overview DER counts', () => {
     expect(container.querySelector('#derConnected')).toHaveTextContent('1')
   })
 
+  it('counts devices under a control and notes unknown ones apart from the count', () => {
+    const d: DashboardData = {
+      ...data,
+      deviceCount: 5,
+      devices: [
+        dev([], { underControl: true }),
+        dev([], { underControl: true }),
+        dev([], { underControl: false }),
+        dev([], { underControl: null, controlError: 'store closed' }),
+        dev([], { underControl: null, controlError: 'store closed' }),
+      ],
+    }
+    const { container } = render(Overview, { props: { data: d } })
+    expect(container.querySelector('#derUnderControl')?.textContent?.trim()).toBe('2')
+    expect(container.querySelector('#derControlUnknown')?.textContent?.trim()).toBe('2 unknown')
+  })
+
+  it('shows no unknown row when every device control state is known', () => {
+    const d: DashboardData = { ...data, deviceCount: 2, devices: [dev([], { underControl: true }), dev([], { underControl: false })] }
+    const { container } = render(Overview, { props: { data: d } })
+    expect(container.querySelector('#derUnderControl')?.textContent?.trim()).toBe('1')
+    expect(container.querySelector('#derControlUnknown')).toBeNull()
+  })
+
   it('shows zeroes before the first update', () => {
     expect(counts(null)).toEqual({ registered: '0', connected: '0', operating: '0' })
   })

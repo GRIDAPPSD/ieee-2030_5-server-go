@@ -192,7 +192,7 @@ func (p *PowerHistory) path(scope string) string {
 }
 
 // scopeOfFile is the scope a history file name belongs to: "all" or a
-// canonical aggregator LFDI. Any other name is not ours.
+// canonical aggregator LFDI or the Direct group. Any other name is not ours.
 func scopeOfFile(name string) (string, bool) {
 	scope, ok := strings.CutPrefix(name, powerHistoryFilePrefix)
 	if !ok {
@@ -201,7 +201,7 @@ func scopeOfFile(name string) (string, bool) {
 	if scope, ok = strings.CutSuffix(scope, powerHistoryFileSuffix); !ok {
 		return "", false
 	}
-	if scope == powerHistoryAllScope {
+	if scope == powerHistoryAllScope || scope == powerDirectKey {
 		return scope, true
 	}
 	if c, ok := sep2lfdi.Canonical(scope); ok && c == scope {
@@ -381,35 +381,61 @@ func fineTotals(devices []devicePower, buckets int) []bucketTotal {
 	return out
 }
 
-// fineSource answers the route's buckets from fineTotals, whose first entry is
-// the 5 s bucket starting at from.
-func fineSource(totals []bucketTotal, from int64) func(start, end int64) (bucketTotal, historyState) {
-	return func(start, end int64) (bucketTotal, historyState) {
+// liveParts is the 5 s parts of the route bucket [start, end) from fineTotals,
+// whose first entry is the 5 s bucket starting at from.
+func liveParts(totals []bucketTotal, from int64) func(start, end int64) []part {
+	return func(start, end int64) []part {
 		i := int((start - from) / PowerHistoryStep)
 		parts := make([]part, (end-start)/PowerHistoryStep)
 		for k := range parts {
 			parts[k] = partOf(totals[i+k])
 		}
-		return foldParts(parts)
+		return parts
 	}
 }
 
-// lookup totals the route bucket [start, end) of scope from the records, by
-// the same fold as a live bucket.
-func (p *PowerHistory) lookup(scope string, start, end int64) (bucketTotal, historyState) {
+// fineSource answers the route's buckets from fineTotals, whose first entry is
+// the 5 s bucket starting at from.
+func fineSource(totals []bucketTotal, from int64) func(start, end int64) (bucketTotal, historyState) {
+	parts := liveParts(totals, from)
+	return func(start, end int64) (bucketTotal, historyState) {
+		return foldParts(parts(start, end))
+	}
+}
+
+// recordParts is the recorded 5 s parts of the route bucket [start, end) of
+// scope; a part with no record has no reporting device.
+func (p *PowerHistory) recordParts(scope string, start, end int64) []part {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	parts := make([]part, (end-start)/PowerHistoryStep)
 	sc := p.scopes[scope]
 	if sc == nil {
-		return bucketTotal{}, historyNone
+		return parts
 	}
-	parts := make([]part, (end-start)/PowerHistoryStep)
 	i := sort.Search(len(sc.recs), func(i int) bool { return sc.recs[i].At >= start })
 	for ; i < len(sc.recs) && sc.recs[i].At < end; i++ {
 		r := sc.recs[i]
 		parts[(r.At-start)/PowerHistoryStep] = part{exportWs: r.ExportWs, importWs: r.ImportWs, reporting: r.Reporting, covered: r.Covered}
 	}
-	return foldParts(parts)
+	return parts
+}
+
+// lookup totals the route bucket [start, end) of scope from the records, by
+// the same fold as a live bucket.
+func (p *PowerHistory) lookup(scope string, start, end int64) (bucketTotal, historyState) {
+	return foldParts(p.recordParts(scope, start, end))
+}
+
+// holds reports whether any record is held for scope. False on a nil history.
+func (p *PowerHistory) holds(scope string) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sc := p.scopes[scope]
+	return sc != nil && len(sc.recs) > 0
 }
 
 // finalEnd is the end of the newest bucket that is final at now.
@@ -430,12 +456,28 @@ func (p *PowerHistory) view(scope string, now int64) func(start, end int64) (buc
 	}
 }
 
+// partsView is view for the 5 s parts: nil without a history, and a nil result
+// for a bucket that is not final.
+func (p *PowerHistory) partsView(scope string, now int64) func(start, end int64) []part {
+	if p == nil {
+		return nil
+	}
+	final := finalEnd(now)
+	return func(start, end int64) []part {
+		if end > final {
+			return nil
+		}
+		return p.recordParts(scope, start, end)
+	}
+}
+
 // powerHistoryChunk bounds how many seconds one pass integrates at a time, so
 // the first pass over a long retention does not hold it all in memory.
 const powerHistoryChunk = 2 * 3600
 
 // Record writes every bucket that became final since each scope's last
-// record, for scope all and for each aggregator's fleet. Who is reporting in a
+// record, for scope all, for each aggregator's fleet and for the devices no
+// aggregator manages. Who is reporting in a
 // bucket is decided by fineTotals, the rule the route uses. A bucket with no
 // reporting device is not recorded; one with reporting devices that none
 // covered is recorded as a gap. A failed write leaves
@@ -446,17 +488,17 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 
 	final := finalEnd(now)
 	type scopeJob struct {
-		name    string
-		members []string // nil for scope all
-		from    int64
+		name string
+		has  func(canonical string) bool
+		from int64
 	}
-	jobs := []scopeJob{{name: powerHistoryAllScope}}
-	for _, agg := range sortedAggregators(ctx, h) {
-		members, err := canonicalMembers(ctx, h, agg)
-		if err != nil {
-			return fmt.Errorf("power history: %w", err)
-		}
-		jobs = append(jobs, scopeJob{name: agg, members: members})
+	jobs := []scopeJob{{name: powerHistoryAllScope, has: func(string) bool { return true }}}
+	groups, err := energyGroupsOf(ctx, h, sortedAggregators(ctx, h))
+	if err != nil {
+		return fmt.Errorf("power history: %w", err)
+	}
+	for _, g := range groups {
+		jobs = append(jobs, scopeJob{name: g.key, has: g.has})
 	}
 
 	p.mu.Lock()
@@ -484,20 +526,15 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 	for start := earliest; start < final; {
 		end := min(final, start+powerHistoryChunk)
 		grid := fineGrid(start, end)
-		devices := map[string]devicePower{}
+		devices := make([]devicePower, 0, len(byDevice))
 		for lfdi, ms := range byDevice {
-			devices[lfdi] = devicePowerOf(lfdi, ms, h.Edition, grid)
+			devices = append(devices, devicePowerOf(lfdi, ms, h.Edition, grid))
 		}
 		for i, job := range jobs {
 			if job.from >= end {
 				continue
 			}
-			var scoped []devicePower
-			for lfdi, d := range devices {
-				if job.members == nil || slices.Contains(job.members, canonicalLFDI(lfdi)) {
-					scoped = append(scoped, d)
-				}
-			}
+			scoped := filterDevices(devices, job.has)
 			from := max(job.from, start)
 			totals := fineTotals(scoped, len(grid)-1)[(from-start)/PowerHistoryStep:]
 			parts := make([]part, len(totals))

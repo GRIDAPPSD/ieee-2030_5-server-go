@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Release(ctx, managerLFDI, managedLFDI)`, a compare-and-delete; an embedder
   that implements the interface must add it.
 
+### Fixed
+
+- Every EndDevice now advertises `DERListLink`, and the server seeds one DER
+  at `/edev/{id}/der/1` for each EndDevice, on `POST /edev` and at boot. A
+  device that registered itself was served no `DERListLink` and had no DER, so
+  a client following links could not find where to PUT its DERStatus,
+  DERCapability, DERSettings or DERAvailability, and the dashboard and fleet
+  view showed none. A device that already has a DER is not given a second one.
+
 ## [0.18.0] - 2026-10-21
 
 This entry covers `v0.17.0..v0.18.0`. It is a MINOR release under the 0.x

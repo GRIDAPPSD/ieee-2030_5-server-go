@@ -329,7 +329,8 @@ func TestURLIndex_NoLFDIAppearsInAnyServedHref(t *testing.T) {
 	der := sep2.DER{}
 	der.Href = "/edev/1/der/1"
 	der.DERCapabilityLink = &sep2.Link{Href: "/edev/1/der/1/dercap"}
-	if err := stores.DERs.Create(ctx, "1", "1", der); err != nil {
+	// Registration seeded DER 1; replace it with one carrying the link.
+	if err := stores.DERs.Update(ctx, "1", "1", der); err != nil {
 		t.Fatalf("seed DER: %v", err)
 	}
 

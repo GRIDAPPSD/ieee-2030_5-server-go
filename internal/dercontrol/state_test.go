@@ -193,3 +193,37 @@ func TestInForceScopes_ReadFailureIsAnErrorNeverFalse(t *testing.T) {
 		})
 	}
 }
+
+// A control that is over is judged from its own interval, so an unreadable
+// lifecycle record cannot fail Retire or the dashboard read for it.
+type getFailLifecycles struct{ lifecycleStore }
+
+func (getFailLifecycles) Get(context.Context, string, string) (LifecycleRecord, error) {
+	return LifecycleRecord{}, errors.New("lifecycle backend down")
+}
+
+func TestEndedControl_NeverReadsItsLifecycle(t *testing.T) {
+	for name, iv := range map[string]*sep2.DateTimeInterval{
+		"ended":       {Start: stateNow - 600, Duration: 60},
+		"no interval": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, Config{PEN: testPEN(1)})
+			putControl(t, h, "dev1", "c1", iv, nil)
+
+			got, err := InForceScopes(context.Background(), h.controls, getFailLifecycles{h.lifecycles}, "dev1", stateNow)
+			if err != nil || got {
+				t.Errorf("InForceScopes = %v, %v; want false, nil", got, err)
+			}
+
+			issuer, err := NewIssuer(h.programs, h.controls, getFailLifecycles{h.lifecycles}, Config{PEN: testPEN(1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			live, err := issuer.liveControls(context.Background(), "dev1/0/p1", stateNow)
+			if err != nil || len(live) != 0 {
+				t.Errorf("liveControls = %v, %v; want none, nil", live, err)
+			}
+		})
+	}
+}

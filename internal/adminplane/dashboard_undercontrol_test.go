@@ -1,11 +1,14 @@
 package adminplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -169,5 +172,46 @@ func TestDashboardUnderControl_UnwiredStoresAreNullWithNoError(t *testing.T) {
 	}
 	if !strings.Contains(body, `"underControl":null`) || strings.Contains(body, "controlError") {
 		t.Errorf("body %s: want underControl null and no controlError key", body)
+	}
+}
+
+func TestDashboardUnderControl_FailureIsLoggedOncePerPass(t *testing.T) {
+	now := statusNow.Unix()
+	f := newControlFixture(t)
+	for _, id := range []string{"1", "2", "3"} {
+		f.device(id)
+		f.control(id, "0", "c1", &sep2.DateTimeInterval{Start: now - 10, Duration: 600}, nil, &dercontrol.LifecycleRecord{})
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	_, p := f.get(func(s *Stores) { s.DERControlLifecycles = failingGetLifecycles{f.lifecycles} })
+	for _, d := range p.Devices {
+		if d.UnderControl != nil || d.ControlError == "" {
+			t.Errorf("%s: underControl = %v, controlError %q; want null and the cause", d.LFDI, d.UnderControl, d.ControlError)
+		}
+	}
+	var lines []string
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(l, "control state") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "3 device(s)") || !strings.Contains(lines[0], "lifecycle backend down") {
+		t.Errorf("control-state log lines = %q; want one naming 3 devices and the cause", lines)
+	}
+}
+
+func TestDashboardUnderControl_HrefWithNoIdIsNullWithAnError(t *testing.T) {
+	f := newControlFixture(t)
+	dev := sep2.EndDevice{SFDI: "s1", LFDI: "lfdi1"}
+	dev.Href = "/edev/1/"
+	if err := f.edevs.Create(context.Background(), "1", dev); err != nil {
+		t.Fatal(err)
+	}
+	_, p := f.get(nil)
+	if d := p.Devices[0]; d.UnderControl != nil || !strings.Contains(d.ControlError, "has no id") {
+		t.Errorf("underControl = %v, controlError %q; want null and a no-id error", d.UnderControl, d.ControlError)
 	}
 }

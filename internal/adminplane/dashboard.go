@@ -273,6 +273,7 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 	if listErr != nil {
 		note("device list", listErr)
 	}
+	controlFailures, firstControlError := 0, ""
 	for _, dev := range result.Items {
 		var enabled *bool
 		if dev.Enabled != nil {
@@ -288,6 +289,12 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 			derError = err.Error()
 		}
 		underControl, controlError := d.underControl(ctx, dev.Href, now.Unix())
+		if controlError != "" {
+			controlFailures++
+			if firstControlError == "" {
+				firstControlError = controlError
+			}
+		}
 		devices = append(devices, DashboardDevice{
 			SFDI:         dev.SFDI,
 			LFDI:         dev.LFDI,
@@ -302,6 +309,12 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 			ControlError: controlError,
 			Cells:        map[string]string{},
 		})
+	}
+
+	if controlFailures > 0 {
+		// One line per pass, not per device: a store that is down fails every
+		// device on every tick.
+		log.Printf("dashboard: control state unavailable for %d device(s), first: %s", controlFailures, logsafe.Str(firstControlError))
 	}
 
 	sortDevicesByHref(devices)
@@ -638,15 +651,18 @@ func (d *DashboardHandler) collectDERs(ctx context.Context, edevHref string, now
 // underControl reports whether the EndDevice at edevHref has a server
 // DERControl in force at now (Unix seconds). It returns nil, with no error
 // text, when the control stores are not wired, and nil with the reason when a
-// read fails, so a failed read never reads as "not under a control".
+// read fails or the href names no device, so neither reads as "not under a
+// control". The caller logs failures once per pass.
 func (d *DashboardHandler) underControl(ctx context.Context, edevHref string, now int64) (*bool, string) {
 	if d.stores.DERControls == nil || store.IsAbsent(d.stores.DERControlLifecycles) {
 		return nil, ""
 	}
 	edevID := edevHref[strings.LastIndex(edevHref, "/")+1:]
+	if edevID == "" {
+		return nil, "device href " + strconv.Quote(edevHref) + " has no id"
+	}
 	in, err := dercontrol.InForceScopes(ctx, d.stores.DERControls, d.stores.DERControlLifecycles, edevID, now)
 	if err != nil {
-		log.Printf("dashboard: control state for %s: %v", logsafe.Str(edevHref), logsafe.Err(err))
 		return nil, err.Error()
 	}
 	return &in, ""

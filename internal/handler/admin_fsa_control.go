@@ -552,7 +552,26 @@ func (h *AdminFSAControlHandler) cancelFailed(w http.ResponseWriter, r *http.Req
 	logged.add("cause", "record_cancel_failed")
 	logRefusal(ch.logger(), r, refusedEvent("fsa_cancel"), refuseInternal, logged)
 	writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-		"every copy of control %s is cancelled, but its record could not be written; it is not sent to devices assigned meanwhile, so retry the cancel", rec.MRID))
+		"%s; control %s is not sent to devices assigned meanwhile, so retry the cancel", recordCancelReason, rec.MRID))
+}
+
+// recordCancelReason is why a cancel whose copies are all cancelled failed.
+const recordCancelReason = "every copy is cancelled but the record could not be written"
+
+// cancelStopReason is why a cancel stopped at dev's copy.
+func cancelStopReason(dev string) string {
+	return "cancel stopped at device " + dev + "; the copies before it are cancelled"
+}
+
+// cancelFailReason is the reason text for an error of cancelControl, from
+// fixed text and a device id, never a store's error text. The FSA cancel
+// route and the grid cancel routes both report it.
+func cancelFailReason(err error) string {
+	var stop *cancelStopError
+	if errors.As(err, &stop) {
+		return cancelStopReason(stop.device)
+	}
+	return recordCancelReason
 }
 
 // recordKept answers a fan-out that failed and removed every copy but not its
@@ -588,7 +607,7 @@ func (h *AdminFSAControlHandler) cancelStopped(w http.ResponseWriter, r *http.Re
 	logged.add("device_id", dev)
 	logRefusal(ch.logger(), r, refusedEvent("fsa_cancel"), refuseInternal, logged)
 	writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-		"cancel stopped at device %s; the copies before it are cancelled and control %s is still live, so retry the cancel", dev, rec.MRID))
+		"%s and control %s is still live, so retry the cancel", cancelStopReason(dev), rec.MRID))
 }
 
 // view is rec with the copy held by each of devices.

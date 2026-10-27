@@ -57,16 +57,19 @@ type GridCurrentShare struct {
 // null when no copy has a reading, never a filled zero; CopiesWithoutReading
 // counts the copies that add nothing.
 type GridBlockShareView struct {
-	AggregatorLFDI       string   `json:"aggregatorLFDI"`
-	FSA                  string   `json:"fsa"`
-	Program              string   `json:"program"`
-	MRID                 string   `json:"mRID"`
-	Devices              int      `json:"devices"`
-	WeightW              float64  `json:"weightW"`
-	DefaultedDevices     []string `json:"defaultedDevices"`
-	OverCapDevices       []string `json:"overCapDevices"`
-	TestDefaultCount     int      `json:"testDefaultCount"`
-	TargetW              frScaled `json:"targetW"`
+	AggregatorLFDI   string   `json:"aggregatorLFDI"`
+	FSA              string   `json:"fsa"`
+	Program          string   `json:"program"`
+	MRID             string   `json:"mRID"`
+	Devices          int      `json:"devices"`
+	WeightW          float64  `json:"weightW"`
+	DefaultedDevices []string `json:"defaultedDevices"`
+	OverCapDevices   []string `json:"overCapDevices"`
+	TestDefaultCount int      `json:"testDefaultCount"`
+	// TargetW is null for a share with an Error: no value is invented for it.
+	TargetW *frScaled `json:"targetW"`
+	// Status is the share's control status from its lifecycle, also for a share
+	// with an Error, so a live control on a corrupt record still reads live.
 	Status               string   `json:"status"`
 	AggregatorGone       bool     `json:"aggregatorGone"`
 	DeliveredW           *float64 `json:"deliveredW"`
@@ -74,24 +77,25 @@ type GridBlockShareView struct {
 	Copies               int      `json:"copies"`
 	CopiesWithoutReading int      `json:"copiesWithoutReading"`
 	ReadingsExpired      bool     `json:"readingsExpired"`
-	// Error is set, with Status "error" and no target or delivery, for a share
+	// Error is set, with a null TargetW and no delivery, for a share
 	// whose stored record cannot be read as a share: an unknown direction or no
 	// target power. The rest of the view is unaffected.
 	Error string `json:"error,omitempty"`
 }
 
 // GridBlockView is one row of a batch with its stored shares. RequestedW is
-// signed like opModTargetW and DifferenceW is EncodedW minus RequestedW. Status
+// signed like opModTargetW and DifferenceW is EncodedW minus RequestedW; the three are null when no share can be read. Status
 // is the shares' common status, "partly cancelled" when some share is
 // cancelled and some is not, or "mixed". BasisChanged is true when an
 // aggregator is gone or the current weights differ from those the block was
 // split on, and CurrentSplit then shows the split the current fleets give.
 type GridBlockView struct {
-	Row             int                  `json:"row"`
-	Direction       string               `json:"direction"`
-	RequestedW      float64              `json:"requestedW"`
-	EncodedW        float64              `json:"encodedW"`
-	DifferenceW     float64              `json:"differenceW"`
+	Row       int    `json:"row"`
+	Direction string `json:"direction"`
+	// RequestedW is null for a block with no share of a known direction.
+	RequestedW      *float64             `json:"requestedW"`
+	EncodedW        *float64             `json:"encodedW"`
+	DifferenceW     *float64             `json:"differenceW"`
 	Start           int64                `json:"start"`
 	End             int64                `json:"end"`
 	DurationSeconds uint32               `json:"durationSeconds"`
@@ -220,28 +224,39 @@ func (g *gridReader) block(ctx context.Context, ctls []gridControl, fleets []gri
 	}
 	if sign != 0 {
 		out.Direction = basis.Direction
-		out.RequestedW = scaledFloat(int64(sign)*basis.RequestValue, basis.RequestMultiplier)
+		req := scaledFloat(int64(sign)*basis.RequestValue, basis.RequestMultiplier)
+		out.RequestedW = &req
 	}
 	statuses := make([]string, 0, len(ctls))
 	stored := make([]*memory.GridShare, 0, len(ctls))
 	var delivered []float64
+	encoded, readable := 0.0, false
 	for _, gc := range ctls {
 		sv, err := g.share(ctx, gc, fleets)
 		if err != nil {
 			return GridBlockView{}, err
 		}
 		out.Shares = append(out.Shares, sv)
+		// Status is the control's own, so a share with an error still counts.
+		statuses = append(statuses, sv.Status)
 		if sv.Error != "" {
 			continue
 		}
-		out.EncodedW += scaledFloat(sv.TargetW.Value, sv.TargetW.Multiplier)
-		statuses = append(statuses, sv.Status)
+		encoded += scaledFloat(sv.TargetW.Value, sv.TargetW.Multiplier)
+		readable = true
 		stored = append(stored, gc.rec.GridShare)
 		if sv.DeliveredW != nil {
 			delivered = append(delivered, *sv.DeliveredW)
 		}
 	}
-	out.DifferenceW = out.EncodedW - out.RequestedW
+	// With no readable share there is no encoded figure to show, not a zero.
+	if readable {
+		out.EncodedW = &encoded
+		if out.RequestedW != nil {
+			d := encoded - *out.RequestedW
+			out.DifferenceW = &d
+		}
+	}
 	out.Status = blockStatus(statuses)
 	if len(delivered) > 0 {
 		sum := 0.0
@@ -285,13 +300,13 @@ func (g *gridReader) share(ctx context.Context, gc gridControl, fleets []gridFle
 	target := dercontrol.TargetOf(&rec.Base)
 	switch {
 	case directionSign(basis.Direction) == 0:
-		sv.Status, sv.Error = gridShareError, fmt.Sprintf("share has direction %q", basis.Direction)
+		sv.Error = fmt.Sprintf("share has direction %q", basis.Direction)
 		return sv, nil
 	case target == nil:
-		sv.Status, sv.Error = gridShareError, "share carries no target power"
+		sv.Error = "share carries no target power"
 		return sv, nil
 	}
-	sv.TargetW = frScaled{Value: int64(target.Value), Multiplier: target.Multiplier}
+	sv.TargetW = &frScaled{Value: int64(target.Value), Multiplier: target.Multiplier}
 	sum, readings := 0.0, 0
 	for _, dev := range devices {
 		d, err := g.copyDelivery(ctx, gc, dev)
@@ -533,16 +548,6 @@ func (h *AdminGridRequestHandler) cancel(oneRow bool) http.HandlerFunc {
 			"batch", logsafe.Str(batch), "row", row, "shares", len(mrids), "mrids", mrids})
 		writeJSON(w, http.StatusOK, out)
 	}
-}
-
-// cancelFailReason is the reason a share's cancel failed, from fixed text
-// and a device id, never a store's error text.
-func cancelFailReason(err error) string {
-	var stop *cancelStopError
-	if errors.As(err, &stop) {
-		return "copy cancel stopped at device " + stop.device + "; the copies before it are cancelled"
-	}
-	return "every copy is cancelled but the record could not be written"
 }
 
 // noneLive returns the refusal for shares none of which can be cancelled:

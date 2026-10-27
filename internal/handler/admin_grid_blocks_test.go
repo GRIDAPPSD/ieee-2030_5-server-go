@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,11 +86,11 @@ func TestGridBlocks_ListShowsEachShare(t *testing.T) {
 		t.Fatalf("list = %+v, want one batch %s with two rows", l, created.Batch)
 	}
 	r1, r2 := l.Batches[0].Rows[0], l.Batches[0].Rows[1]
-	if r1.Row != 1 || r1.Direction != "discharge" || r1.RequestedW != 40000 || r1.EncodedW != 40000 || r1.DifferenceW != 0 ||
+	if r1.Row != 1 || r1.Direction != "discharge" || fl(r1.RequestedW) != 40000 || fl(r1.EncodedW) != 40000 || fl(r1.DifferenceW) != 0 ||
 		r1.Start != created.Rows[0].Start || r1.End != created.Rows[0].Start+600 || r1.DurationSeconds != 600 {
 		t.Errorf("row 1 = %+v, want discharge 40000 W encoded exactly over 600 s", r1)
 	}
-	if r2.Row != 2 || r2.Direction != "charge" || r2.RequestedW != -20000 || r2.EncodedW != -20000 || r2.Start != r1.End || r2.DurationSeconds != 300 {
+	if r2.Row != 2 || r2.Direction != "charge" || fl(r2.RequestedW) != -20000 || fl(r2.EncodedW) != -20000 || r2.Start != r1.End || r2.DurationSeconds != 300 {
 		t.Errorf("row 2 = %+v, want charge -20000 W from row 1's end for 300 s", r2)
 	}
 	if r1.Status != "scheduled" || r2.Status != "scheduled" {
@@ -517,11 +518,21 @@ func TestGridBlocks_CancelBatchTriesEveryShareAfterAFailure(t *testing.T) {
 	}
 }
 
-// A stored share that cannot be read as a share is shown with its error and
-// the rest of the view is kept.
+// fl is *p, or NaN for a null, which no expected figure equals.
+func fl(p *float64) float64 {
+	if p == nil {
+		return math.NaN()
+	}
+	return *p
+}
+
+// A stored share that cannot be read as a share is shown with its error, a
+// null target and the status its control really has; the rest of the view is
+// kept, and a block with no readable share shows null figures, not zeros.
 func TestGridBlocks_UnreadableShareDoesNotFailTheView(t *testing.T) {
 	g := newGridFixture(t)
-	created := decodeGridCreated(t, g.post(gridBody(gridRow("discharge", 40, 3, soon(), 600), gridRow("discharge", 10, 3, soon()+7200, 600))))
+	created := decodeGridCreated(t, g.post(gridBody(
+		gridRow("discharge", 40, 3, soon(), 600), gridRow("discharge", 10, 3, soon()+7200, 600), gridRow("discharge", 10, 3, soon()+14400, 600))))
 	ctx := context.Background()
 	rewrite := func(s handler.GridShareView, edit func(*memory.FSAControl)) {
 		rec, err := g.f.h.AdminFSAs.FSAControl(ctx, s.FSA, s.Program, s.Control.ID)
@@ -535,17 +546,46 @@ func TestGridBlocks_UnreadableShareDoesNotFailTheView(t *testing.T) {
 	}
 	rewrite(created.Rows[0].Shares[0], func(r *memory.FSAControl) { r.GridShare.Direction = "sideways" })
 	rewrite(created.Rows[1].Shares[1], func(r *memory.FSAControl) { r.Base.OpModTargetW = nil })
+	for _, s := range created.Rows[2].Shares {
+		rewrite(s, func(r *memory.FSAControl) { r.GridShare.Direction = "sideways" })
+	}
+	// Cancel A of row 2 from the Controls tab: a bad share beside a cancelled
+	// one must still make the block "partly cancelled".
+	a2 := created.Rows[1].Shares[0]
+	if w := g.f.do(http.MethodPost, "/api/fsas/"+a2.FSA+"/der-programs/"+a2.Program+"/controls/"+a2.Control.ID+"/cancel", `{}`); w.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s", w.Code, w.Body.String())
+	}
 
 	l := g.get()
-	r1, r2 := l.Batches[0].Rows[0], l.Batches[0].Rows[1]
-	if r1.Direction != "discharge" || r1.RequestedW != 40000 || len(r1.Shares) != 2 {
+	r1, r2, r3 := l.Batches[0].Rows[0], l.Batches[0].Rows[1], l.Batches[0].Rows[2]
+	if r1.Direction != "discharge" || fl(r1.RequestedW) != 40000 || len(r1.Shares) != 2 {
 		t.Fatalf("row 1 = %+v, want the request read from B's share", r1)
 	}
 	a, b := r1.Shares[0], r1.Shares[1]
-	if a.Error == "" || a.Status != "error" || !strings.Contains(a.Error, "sideways") || b.Error != "" || b.TargetW.Value != 10 || r1.EncodedW != 10000 {
-		t.Errorf("row 1 shares A %+v B %+v encoded %v, want A flagged and B kept at 10 x 10^3", a, b, r1.EncodedW)
+	if a.Error == "" || !strings.Contains(a.Error, "sideways") || a.TargetW != nil || a.Status != "scheduled" ||
+		b.Error != "" || b.TargetW == nil || b.TargetW.Value != 10 || fl(r1.EncodedW) != 10000 {
+		t.Errorf("row 1 shares A %+v B %+v encoded %v, want A flagged with a null target and its real status, B kept at 10 x 10^3", a, b, fl(r1.EncodedW))
 	}
-	if r2.Shares[1].Error == "" || r2.Shares[1].Status != "error" || r2.Shares[0].Error != "" || r2.EncodedW != 8000 {
-		t.Errorf("row 2 shares %+v encoded %v, want B flagged and A kept", r2.Shares, r2.EncodedW)
+	if x := r2.Shares[1]; x.Error == "" || x.TargetW != nil || x.Status != "scheduled" || r2.Shares[0].Error != "" || fl(r2.EncodedW) != 8000 {
+		t.Errorf("row 2 shares %+v encoded %v, want B flagged and live, A kept", r2.Shares, fl(r2.EncodedW))
+	}
+	if r2.Shares[0].Status != "cancelled" || r2.Status != "partly cancelled" {
+		t.Errorf("row 2 statuses A %q block %q, want cancelled and partly cancelled: the bad share still counts", r2.Shares[0].Status, r2.Status)
+	}
+	if r3.Direction != "" || r3.RequestedW != nil || r3.EncodedW != nil || r3.DifferenceW != nil || r3.Status != "scheduled" {
+		t.Errorf("row 3 = %+v, want null figures and the live status when no share is readable", r3)
+	}
+	for _, sv := range r3.Shares {
+		if sv.TargetW != nil || sv.Error == "" || sv.Status != "scheduled" {
+			t.Errorf("row 3 share = %+v, want an error, a null target and status scheduled", sv)
+		}
+	}
+	// The wire form: null, not a filled zero.
+	w := httptest.NewRecorder()
+	g.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/derms/grid-requests", nil))
+	for _, frag := range []string{`"requestedW":null`, `"encodedW":null`, `"differenceW":null`, `"targetW":null`} {
+		if !strings.Contains(w.Body.String(), frag) {
+			t.Errorf("body lacks %s: %s", frag, w.Body.String())
+		}
 	}
 }

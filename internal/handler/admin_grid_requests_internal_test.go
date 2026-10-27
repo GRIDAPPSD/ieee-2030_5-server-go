@@ -27,3 +27,21 @@ func TestValidateRows_StartGraceBoundary(t *testing.T) {
 		t.Errorf("refused = %+v, want row 2 start_in_past", refused)
 	}
 }
+
+// A block with no share has no status to read: the guard answers error rather
+// than indexing an empty list.
+func TestBlockStatus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   []string
+		want string
+	}{
+		"none":              {nil, "error"},
+		"agree":             {[]string{"active", "active"}, "active"},
+		"some cancelled":    {[]string{"scheduled", "cancelled"}, "partly cancelled"},
+		"differ not cancel": {[]string{"active", "scheduled"}, "mixed"},
+	} {
+		if got := blockStatus(tc.in); got != tc.want {
+			t.Errorf("%s: blockStatus(%q) = %q, want %q", name, tc.in, got, tc.want)
+		}
+	}
+}

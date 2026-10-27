@@ -166,17 +166,24 @@ func TestPower_FleetLinePerDeviceAndTotalOnlyWhereBothCover(t *testing.T) {
 			t.Fatalf("D1 point %v, want 1000 W", pt)
 		}
 	}
-	if len(total.Points) != 5 {
-		t.Fatalf("total points = %v, want the 5 buckets both cover", total.Points)
+	// A device reports in a bucket once it has covered a second in the hour
+	// ending there. D1 is alone for the first 5 buckets (D2 has not been
+	// heard yet), both cover the next 5, and in the 5 after D1's last second
+	// D1 is still reporting but silent, so those buckets are gaps.
+	if len(total.Points) != 10 {
+		t.Fatalf("total points = %v, want the 10 buckets every reporting device covers", total.Points)
 	}
 	for i, pt := range total.Points {
-		wantAt := float64((powerNow - 75 + int64(i)*5) * 1000)
-		if pt[0] != wantAt || pt[1] != 3500 {
-			t.Fatalf("total point %d = %v, want [%v 3500]", i, pt, wantAt)
+		wantAt, wantW := float64((powerNow-100+int64(i)*5)*1000), 1000.0
+		if i >= 5 {
+			wantW = 3500
+		}
+		if pt[0] != wantAt || pt[1] != wantW {
+			t.Fatalf("total point %d = %v, want [%v %v]", i, pt, wantAt, wantW)
 		}
 	}
-	if a.TotalGapBuckets != 10 {
-		t.Errorf("totalGapBuckets = %d, want 10 (5 covered only by D1, 5 only by D2)", a.TotalGapBuckets)
+	if a.TotalGapBuckets != 5 {
+		t.Errorf("totalGapBuckets = %d, want 5 (D2 covers them, D1 is reporting and silent)", a.TotalGapBuckets)
 	}
 	for _, lfdi := range []string{powerD1, powerD2} {
 		d := a.device(lfdi)

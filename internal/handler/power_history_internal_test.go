@@ -231,32 +231,41 @@ func TestPowerHistory_GapsSurviveARestart(t *testing.T) {
 	}
 
 	recs := readFileRecords(t, filepath.Join(dir, "power-history-all.jsonl"))
-	var gaps, full int
+	var gaps, full, solo int
 	for _, r := range recs {
-		if r.Covered {
+		switch {
+		case r.Covered && r.Reporting == 1:
+			solo++
+			if r.ExportWs != 1000*5 {
+				t.Errorf("solo bucket %d exports %v Ws, want 5000", r.At, r.ExportWs)
+			}
+		case r.Covered:
 			full++
 			if r.ExportWs != 1500*5 {
 				t.Errorf("full bucket %d exports %v Ws, want 7500", r.At, r.ExportWs)
 			}
-		} else {
+		default:
 			gaps++
 			if r.ExportWs != 0 || r.ImportWs != 0 {
 				t.Errorf("gap bucket %d carries totals %+v", r.At, r)
 			}
 		}
 	}
-	if full != 10 || gaps != 530 {
-		t.Fatalf("full = %d, gaps = %d, want 10 and 530", full, gaps)
+	// D2 is heard from now-3000 to now-2950 and then reports for an hour.
+	// Before it is heard D1 is alone (120 buckets), then 10 buckets both
+	// cover, then D1 alone covers while D2 is silent: 410 gaps to the final end.
+	if solo != 120 || full != 10 || gaps != 410 {
+		t.Fatalf("solo = %d, full = %d, gaps = %d, want 120, 10 and 410", solo, full, gaps)
 	}
 
 	restarted := newPowerHarness(t)
 	restarted.manage(powerD1, powerD2)
 	after := routeAnswer(t, restarted.withHistory(openHistory(t, dir, 48*time.Hour, powerNow)), "scope=all&window=3600")
-	if after.TotalGapBuckets != 530 {
-		t.Errorf("totalGapBuckets after restart = %d, want 530", after.TotalGapBuckets)
+	if after.TotalGapBuckets != 410 {
+		t.Errorf("totalGapBuckets after restart = %d, want 410", after.TotalGapBuckets)
 	}
-	if pts := after.series("Total").Points; len(pts) != 10 {
-		t.Errorf("Total points after restart = %d, want the 10 covered buckets", len(pts))
+	if pts := after.series("Total").Points; len(pts) != 130 {
+		t.Errorf("Total points after restart = %d, want the 130 covered buckets", len(pts))
 	}
 }
 
@@ -505,5 +514,159 @@ func TestLatestGrid_FiveSecondStepsEndingOnTheClosedBoundary(t *testing.T) {
 	if len(got) != 181 || got[0] != 1_700_000_400-900 || got[1]-got[0] != 5 || got[180] != 1_700_000_400 {
 		t.Errorf("latestGrid = %d points from %d (step %d) to %d, want 181 from %d by 5 to %d",
 			len(got), got[0], got[1]-got[0], got[len(got)-1], 1_700_000_400-900, 1_700_000_400)
+	}
+}
+
+// Which devices are reporting does not depend on the chart window or on how
+// many buckets one recording pass covers: device 2 was last heard 20 h ago,
+// so it is not reporting during the 3 h device 1 posts, and the record-served
+// answer equals the one computed from readings.
+func TestPowerHistory_ReportingRuleIsTheSameInTheRouteAndTheRecord(t *testing.T) {
+	p := newPowerHarness(t)
+	p.manage(powerD1, powerD2)
+	const rev = sep2.FlowDirectionReverse
+	p.post(powerD1, roleFlagIsDER, 50, rev, readings(powerNow-3*historyHour, powerNow, constWatts(2000))...)
+	p.post(powerD2, roleFlagIsDER, 50, rev, readings(powerNow-20*historyHour, powerNow-20*historyHour+50, constWatts(500))...)
+	dir := t.TempDir()
+	hist := openHistory(t, dir, 48*time.Hour, powerNow)
+	if err := hist.Record(context.Background(), p.withHistory(hist), powerNow); err != nil {
+		t.Fatal(err)
+	}
+
+	live := routeAnswer(t, p.withHistory(nil), "scope=all&window=86400")
+	restarted := newPowerHarness(t)
+	restarted.manage(powerD1, powerD2)
+	served := routeAnswer(t, restarted.withHistory(openHistory(t, dir, 48*time.Hour, powerNow)), "scope=all&window=86400")
+
+	if live.TotalGapBuckets != 0 {
+		t.Errorf("readings give %d gap buckets, want 0: device 2 is not reporting while device 1 posts", live.TotalGapBuckets)
+	}
+	if served.TotalGapBuckets != live.TotalGapBuckets {
+		t.Errorf("record-served gaps = %d, readings = %d", served.TotalGapBuckets, live.TotalGapBuckets)
+	}
+	lt, st := live.series("Total"), served.series("Total")
+	if lt == nil || st == nil {
+		t.Fatalf("Total missing: live %v served %v", lt != nil, st != nil)
+	}
+	var final int
+	for _, pt := range lt.Points {
+		at := int64(pt[0]) / 1000
+		if at+120 > historyFinal {
+			continue
+		}
+		final++
+		if got, ok := seriesAt(st, at); !ok || got != pt[1] {
+			t.Errorf("bucket %d: record-served = %v (present %v), readings = %v", at, got, ok, pt[1])
+		}
+	}
+	if final < 80 {
+		t.Errorf("only %d final Total points from readings, want at least 80 over the 3 h", final)
+	}
+	if got, ok := seriesAt(lt, powerNow-2*historyHour); !ok || got != 2000 {
+		t.Errorf("Total two hours ago = %v (present %v), want 2000", got, ok)
+	}
+}
+
+// A 30 s bucket is built from the same 5 s totals the recorder stores, so a
+// device with a short gap in each 5 s part gives the same answer from
+// readings and from the record.
+func TestPowerHistory_CoarseBucketsEqualTheRecord(t *testing.T) {
+	p := newPowerHarness(t)
+	p.manage(powerD1, powerD2)
+	const rev, fwd = sep2.FlowDirectionReverse, sep2.FlowDirectionForward
+	p.post(powerD1, roleFlagIsDER, 50, rev, readings(powerNow-historyHour, powerNow, func(i int) int64 { return 2000 + 100*int64(i%3) })...)
+	// Posts every 50 s and holds 48 s: 2 s uncovered in each, so some 5 s
+	// parts are covered for 3 of 5 s and coverage is unequal between devices.
+	p.post(powerD2, roleFlagIsDER, 48, fwd, readings(powerNow-historyHour, powerNow, func(i int) int64 { return 1000 + 300*int64(i%4) })...)
+	dir := t.TempDir()
+	hist := openHistory(t, dir, 48*time.Hour, powerNow)
+	if err := hist.Record(context.Background(), p.withHistory(hist), powerNow); err != nil {
+		t.Fatal(err)
+	}
+	live := routeAnswer(t, p.withHistory(nil), "scope=all&window=21600")
+	restarted := newPowerHarness(t)
+	restarted.manage(powerD1, powerD2)
+	served := routeAnswer(t, restarted.withHistory(openHistory(t, dir, 48*time.Hour, powerNow)), "scope=all&window=21600")
+	if live.BucketSeconds != 30 {
+		t.Fatalf("bucketSeconds = %d, want 30", live.BucketSeconds)
+	}
+	compared := 0
+	for _, c := range []struct {
+		name      string
+		live, rec *powerChartSeries
+	}{
+		{"Total", live.series("Total"), served.series("Total")},
+		{"Discharged", live.energy("Discharged"), served.energy("Discharged")},
+		{"Charged", live.energy("Charged"), served.energy("Charged")},
+	} {
+		if c.live == nil || c.rec == nil {
+			t.Fatalf("%s missing", c.name)
+		}
+		for _, pt := range c.live.Points {
+			at := int64(pt[0]) / 1000
+			if at+30 > historyFinal {
+				continue
+			}
+			compared++
+			if got, ok := seriesAt(c.rec, at); !ok || math.Abs(got-pt[1]) > 1e-9 {
+				t.Errorf("%s at %d: record-served = %v (present %v), readings = %v", c.name, at, got, ok, pt[1])
+			}
+		}
+	}
+	if compared < 250 {
+		t.Errorf("compared %d points, want at least 250", compared)
+	}
+}
+
+// The newest final bucket ends on a 5 s boundary however the clock falls, so
+// every record is on the grid and a reload keeps all of them.
+func TestPowerHistory_FinalEndIsFlooredToTheGrid(t *testing.T) {
+	if got, want := finalEnd(powerNow+3), powerNow-maxHoldSeconds; got != want {
+		t.Errorf("finalEnd(now+3) = %d, want %d", got, want)
+	}
+	p := newPowerHarness(t)
+	twoDeviceHour(p)
+	dir := t.TempDir()
+	hist := openHistory(t, dir, 48*time.Hour, powerNow)
+	if err := hist.Record(context.Background(), p.withHistory(hist), powerNow+3); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "power-history-all.jsonl")
+	recs := readFileRecords(t, path)
+	for _, r := range recs {
+		if r.At%5 != 0 {
+			t.Fatalf("record at %d is off the 5 s grid", r.At)
+		}
+	}
+	if len(recs) == 0 || recs[len(recs)-1].At+5 != historyFinal {
+		t.Fatalf("records = %d, newest ends at %d, want %d", len(recs), recs[len(recs)-1].At+5, historyFinal)
+	}
+	reopened := openHistory(t, dir, 48*time.Hour, powerNow+3)
+	if n := len(reopened.scopes[powerHistoryAllScope].recs); n != len(recs) {
+		t.Errorf("records after reopen = %d, want %d", n, len(recs))
+	}
+}
+
+// An append starts on a clean line: a file whose last line lost its newline
+// does not glue the next record onto it.
+func TestPowerHistory_AppendAfterALineWithoutNewline(t *testing.T) {
+	p := newPowerHarness(t)
+	twoDeviceHour(p)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "power-history-all.jsonl")
+	old := mkRecord(historyFinal-7200, 100, -20, 2, true)
+	if err := os.WriteFile(path, []byte(mustJSON(t, old)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hist := openHistory(t, dir, 48*time.Hour, powerNow)
+	if err := hist.Record(context.Background(), p.withHistory(hist), powerNow); err != nil {
+		t.Fatal(err)
+	}
+	recs := readFileRecords(t, path)
+	if len(recs) < 2 || recs[0] != old {
+		t.Fatalf("records = %d, first %+v, want the old record kept and new ones after it", len(recs), recs[0])
+	}
+	if data, _ := os.ReadFile(path); len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Error("file does not end with a newline")
 	}
 }

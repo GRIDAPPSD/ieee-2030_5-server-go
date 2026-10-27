@@ -273,9 +273,106 @@ func (p *PowerHistory) rewrite(scope string) error {
 	return nil
 }
 
-// lookup totals the route bucket [start, end) of scope from the records. It
-// answers historyCovered only when every 5 s part is recorded and covered, so
-// a bucket with a missing part is computed from readings instead.
+// part is one 5 s bucket of one scope as the route and the recorder both see
+// it: absent when no reporting device covered it, a gap when a reporting
+// device did not cover all of it, else covered with the fleet's totals.
+type part struct {
+	exportWs, importWs float64
+	reporting          int
+	present, covered   bool
+}
+
+// partOf is the one conversion from a 5 s total to a part, used to record a
+// bucket and to draw a live one.
+func partOf(t bucketTotal) part {
+	pt := part{reporting: t.reporting, present: t.covering > 0, covered: t.full()}
+	if pt.covered {
+		pt.exportWs, pt.importWs = t.exportWs, t.importWs
+	}
+	return pt
+}
+
+// foldParts totals the 5 s parts of one route bucket. It answers
+// historyCovered only when every part is present and covered, historyGap when
+// any present part is not covered, and historyNone otherwise.
+func foldParts(parts []part) (bucketTotal, historyState) {
+	var t bucketTotal
+	present := 0
+	for _, pt := range parts {
+		if !pt.present {
+			continue
+		}
+		if !pt.covered {
+			return bucketTotal{}, historyGap
+		}
+		present++
+		t.exportWs += pt.exportWs
+		t.importWs += pt.importWs
+		t.covering, t.reporting = pt.reporting, pt.reporting
+	}
+	if present == 0 || present != len(parts) {
+		return bucketTotal{}, historyNone
+	}
+	t.w = (t.exportWs + t.importWs) / float64(len(parts)*PowerHistoryStep)
+	return t, historyCovered
+}
+
+// fineLead is how many 5 s buckets before a bucket a device may have covered a
+// second and still be reporting in it.
+const fineLead = latestReportedSeconds / PowerHistoryStep
+
+// fineGrid is the 5 s grid from start to end, preceded by the fineLead
+// buckets that decide who is reporting in the first one.
+func fineGrid(start, end int64) []int64 {
+	return boundsFor(start-latestReportedSeconds, end, PowerHistoryStep)
+}
+
+// fineTotals is the totals of every 5 s bucket after the lead of a grid the
+// devices were integrated over (fineGrid). A device is reporting in a bucket
+// when it covered a second of the latestReportedSeconds ending at that
+// bucket's end, so who reports depends on neither the chart window nor how
+// many buckets one recording pass covers. buckets is the grid's bucket count.
+func fineTotals(devices []devicePower, buckets int) []bucketTotal {
+	cum := make([][]int, len(devices))
+	for i, d := range devices {
+		c := make([]int, buckets+1)
+		for j := 0; j < buckets; j++ {
+			c[j+1] = c[j]
+			if d.sums[j].covered > 0 {
+				c[j+1]++
+			}
+		}
+		cum[i] = c
+	}
+	out := make([]bucketTotal, 0, buckets-fineLead)
+	var reporting []devicePower
+	for j := fineLead; j < buckets; j++ {
+		reporting = reporting[:0]
+		for i, d := range devices {
+			if cum[i][j+1]-cum[i][j+1-fineLead] > 0 {
+				reporting = append(reporting, d)
+			}
+		}
+		out = append(out, totalBucket(reporting, j, PowerHistoryStep))
+	}
+	return out
+}
+
+// fineSource answers the route's buckets from fineTotals, whose first entry is
+// the 5 s bucket starting at from.
+func fineSource(totals []bucketTotal, from int64) func(start, end int64) (bucketTotal, historyState) {
+	return func(start, end int64) (bucketTotal, historyState) {
+		i := int((start - from) / PowerHistoryStep)
+		parts := make([]part, (end-start)/PowerHistoryStep)
+		for k := range parts {
+			parts[k] = partOf(totals[i+k])
+		}
+		return foldParts(parts)
+	}
+}
+
+// lookup totals the route bucket [start, end) of scope from the records, by
+// the same fold as a live bucket.
 func (p *PowerHistory) lookup(scope string, start, end int64) (bucketTotal, historyState) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -283,28 +380,13 @@ func (p *PowerHistory) lookup(scope string, start, end int64) (bucketTotal, hist
 	if sc == nil {
 		return bucketTotal{}, historyNone
 	}
+	parts := make([]part, (end-start)/PowerHistoryStep)
 	i := sort.Search(len(sc.recs), func(i int) bool { return sc.recs[i].At >= start })
-	var t bucketTotal
-	parts, gap := 0, false
 	for ; i < len(sc.recs) && sc.recs[i].At < end; i++ {
 		r := sc.recs[i]
-		parts++
-		if !r.Covered {
-			gap = true
-			continue
-		}
-		t.exportWs += r.ExportWs
-		t.importWs += r.ImportWs
-		t.covering, t.reporting = r.Reporting, r.Reporting
+		parts[(r.At-start)/PowerHistoryStep] = part{exportWs: r.ExportWs, importWs: r.ImportWs, reporting: r.Reporting, present: true, covered: r.Covered}
 	}
-	switch {
-	case gap:
-		return bucketTotal{}, historyGap
-	case parts == int((end-start)/PowerHistoryStep):
-		t.w = (t.exportWs + t.importWs) / float64(end-start)
-		return t, historyCovered
-	}
-	return bucketTotal{}, historyNone
+	return foldParts(parts)
 }
 
 // finalEnd is the end of the newest bucket that is final at now.
@@ -325,32 +407,32 @@ func (p *PowerHistory) view(scope string, now int64) func(start, end int64) (buc
 	}
 }
 
+// powerHistoryChunk bounds how many seconds one pass integrates at a time, so
+// the first pass over a long retention does not hold it all in memory.
+const powerHistoryChunk = 2 * 3600
+
 // Record writes every bucket that became final since each scope's last
-// record, for scope all and for each aggregator's fleet. A device is
-// reporting for a bucket when it covered a second of the latestReportedSeconds
-// before the batch ends, the same span the latest total uses. A bucket where
-// no reporting device covered any second is not recorded, as the route draws
-// no point and counts no gap there. A failed write leaves the scope's cursor
-// where it was, so the next call retries the same buckets.
+// record, for scope all and for each aggregator's fleet. Who is reporting in a
+// bucket is decided by fineTotals, the rule the route uses. A bucket where no
+// reporting device covered any second is not recorded. A failed write leaves
+// the scope's cursor where it was, so the next call retries the same buckets.
 func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int64) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 
 	final := finalEnd(now)
-	aggregators := canonicalAll(h.Managers.Managers(ctx))
-	slices.Sort(aggregators)
 	type scopeJob struct {
 		name    string
 		members []string // nil for scope all
 		from    int64
 	}
 	jobs := []scopeJob{{name: powerHistoryAllScope}}
-	for _, agg := range aggregators {
-		raw, err := fleetMembers(ctx, h.Managers, agg)
+	for _, agg := range sortedAggregators(ctx, h) {
+		members, err := canonicalMembers(ctx, h, agg)
 		if err != nil {
 			return fmt.Errorf("power history: %w", err)
 		}
-		jobs = append(jobs, scopeJob{name: agg, members: canonicalAll(raw)})
+		jobs = append(jobs, scopeJob{name: agg, members: members})
 	}
 
 	p.mu.Lock()
@@ -358,10 +440,10 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 	earliest := final
 	for i := range jobs {
 		jobs[i].from = floor
-		if sc := p.scopes[jobs[i].name]; sc != nil && len(sc.recs) > 0 {
-			jobs[i].from = max(jobs[i].from, sc.recs[len(sc.recs)-1].At+PowerHistoryStep)
-		}
 		if sc := p.scopes[jobs[i].name]; sc != nil {
+			if len(sc.recs) > 0 {
+				jobs[i].from = max(jobs[i].from, sc.recs[len(sc.recs)-1].At+PowerHistoryStep)
+			}
 			jobs[i].from = max(jobs[i].from, sc.next)
 		}
 		earliest = min(earliest, jobs[i].from)
@@ -371,57 +453,56 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 		return p.pruneIfDue(now)
 	}
 
-	mirrors, err := mirrorReadingsFor(ctx, "admin power history", h.MirrorUsagePoints, h.MirrorMeterReadings, func(string) bool { return true })
+	byDevice, err := mirrorsByDevice(ctx, h, "admin power history", func(string) bool { return true })
 	if err != nil {
-		return fmt.Errorf("power history: %w", errPowerRead)
+		return fmt.Errorf("power history: %w", err)
 	}
-	byDevice := map[string][]deviceMirror{}
-	for _, m := range mirrors {
-		byDevice[m.deviceLFDI] = append(byDevice[m.deviceLFDI], m)
-	}
-
-	bounds := boundsFor(earliest, final, PowerHistoryStep)
-	reportedBounds := []int64{earliest - latestReportedSeconds, final}
-	devices := map[string]devicePower{}
-	reported := map[string]bool{}
-	for lfdi, ms := range byDevice {
-		devices[lfdi] = devicePowerOf(lfdi, ms, h.Edition, bounds)
-		reported[lfdi] = devicePowerOf(lfdi, ms, h.Edition, reportedBounds).covered > 0
-	}
-
-	for _, job := range jobs {
-		var reporting []devicePower
-		for lfdi, d := range devices {
-			if reported[lfdi] && (job.members == nil || slices.Contains(job.members, canonicalLFDI(lfdi))) {
-				reporting = append(reporting, d)
+	for start := earliest; start < final; {
+		end := min(final, start+powerHistoryChunk)
+		grid := fineGrid(start, end)
+		devices := map[string]devicePower{}
+		for lfdi, ms := range byDevice {
+			devices[lfdi] = devicePowerOf(lfdi, ms, h.Edition, grid)
+		}
+		for i, job := range jobs {
+			if job.from >= end {
+				continue
 			}
+			var scoped []devicePower
+			for lfdi, d := range devices {
+				if job.members == nil || slices.Contains(job.members, canonicalLFDI(lfdi)) {
+					scoped = append(scoped, d)
+				}
+			}
+			from := max(job.from, start)
+			totals := fineTotals(scoped, len(grid)-1)[(from-start)/PowerHistoryStep:]
+			parts := make([]part, len(totals))
+			for k, t := range totals {
+				parts[k] = partOf(t)
+			}
+			if err := p.appendScope(job.name, from, end, parts); err != nil {
+				return err
+			}
+			jobs[i].from = end
 		}
-		if err := p.appendScope(job.name, job.from, earliest, final, bounds, reporting); err != nil {
-			return err
-		}
+		start = end
 	}
 	return p.pruneIfDue(now)
 }
 
-// appendScope records the buckets of scope from `from` on, with bounds
-// starting at boundsStart, then persists them. The in-memory scope changes
-// only after the write succeeds; a pass that records nothing still moves the
-// scope's cursor to final, so an idle fleet is not rescanned.
-func (p *PowerHistory) appendScope(scope string, from, boundsStart, final int64, bounds []int64, reporting []devicePower) error {
+// appendScope records the present parts of scope, the first starting at from,
+// then persists them. The in-memory scope changes only after the write
+// succeeds; a pass that records nothing still moves the scope's cursor to
+// next, so an idle fleet is not rescanned.
+func (p *PowerHistory) appendScope(scope string, from, next int64, parts []part) error {
 	var added []historyRecord
-	if len(reporting) > 0 {
-		for k := int((from - boundsStart) / PowerHistoryStep); k+1 < len(bounds); k++ {
-			t := totalBucket(reporting, k, PowerHistoryStep)
-			if t.covering == 0 {
-				continue
-			}
-			r := historyRecord{At: bounds[k], Reporting: t.reporting, Covered: t.full()}
-			if r.Covered {
-				r.ExportWs, r.ImportWs = t.exportWs, t.importWs
-			}
-			r.Sum = r.checksum()
-			added = append(added, r)
+	for k, pt := range parts {
+		if !pt.present {
+			continue
 		}
+		r := historyRecord{At: from + int64(k)*PowerHistoryStep, ExportWs: pt.exportWs, ImportWs: pt.importWs, Reporting: pt.reporting, Covered: pt.covered}
+		r.Sum = r.checksum()
+		added = append(added, r)
 	}
 
 	p.mu.Lock()
@@ -435,7 +516,7 @@ func (p *PowerHistory) appendScope(scope string, from, boundsStart, final int64,
 
 	if len(added) == 0 {
 		p.mu.Lock()
-		sc.next = final
+		sc.next = next
 		p.mu.Unlock()
 		return nil
 	}
@@ -458,22 +539,36 @@ func (p *PowerHistory) appendScope(scope string, from, boundsStart, final int64,
 	}
 	p.mu.Lock()
 	sc.recs = append(sc.recs, added...)
-	sc.next = final
+	sc.next = next
 	p.mu.Unlock()
 	return nil
 }
 
+// appendFile adds payload to the file and syncs it. If the file does not end
+// in a newline, a torn or truncated last line, the append starts a new line so
+// it cannot join two records.
 func appendFile(path string, payload []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", path, err)
 	}
+	defer func() { _ = f.Close() }()
+	if st, err := f.Stat(); err != nil {
+		return fmt.Errorf("stat %q: %w", path, err)
+	} else if st.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, st.Size()-1); err != nil {
+			return fmt.Errorf("read %q: %w", path, err)
+		}
+		if last[0] != '\n' {
+			payload = append([]byte{'\n'}, payload...)
+		}
+	}
 	if _, err := f.Write(payload); err != nil {
-		_ = f.Close()
 		return fmt.Errorf("append %q: %w", path, err)
 	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %q: %w", path, err)
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync %q: %w", path, err)
 	}
 	return nil
 }

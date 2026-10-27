@@ -260,8 +260,7 @@ func HandlePower(h *AdminFleetHandler, retention time.Duration) http.HandlerFunc
 			return
 		}
 
-		aggregators := canonicalAll(h.Managers.Managers(ctx))
-		slices.Sort(aggregators)
+		aggregators := sortedAggregators(ctx, h)
 		resp := PowerResponse{Scope: "all", Aggregators: aggregators}
 		match := func(string) bool { return true }
 		var members []string
@@ -275,13 +274,12 @@ func HandlePower(h *AdminFleetHandler, retention time.Duration) http.HandlerFunc
 				writeError(w, http.StatusNotFound, "no such aggregator")
 				return
 			}
-			raw, err := fleetMembers(ctx, h.Managers, agg)
+			members, err = canonicalMembers(ctx, h, agg)
 			if err != nil {
 				log.Printf("admin power: %s", logsafe.Err(err))
 				writeError(w, http.StatusInternalServerError, "power read failed, see server log")
 				return
 			}
-			members = canonicalAll(raw)
 			resp.Scope, resp.AggregatorLFDI = "fleet", agg
 			match = func(device string) bool { return slices.Contains(members, device) }
 		}
@@ -313,15 +311,9 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	resp.WindowStart, resp.WindowEnd, resp.BucketSeconds = ws, we, bucket
 	resp.ReadingsExpired = readingsExpired(ws, now, retention)
 
-	mirrors, err := mirrorReadingsFor(ctx, "admin GET /api/derms/power", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
-		return match(canonicalLFDI(device))
-	})
+	byDevice, err := mirrorsByDevice(ctx, h, "admin GET /api/derms/power", match)
 	if err != nil {
 		return PowerResponse{}, errPowerRead
-	}
-	byDevice := map[string][]deviceMirror{}
-	for _, m := range mirrors {
-		byDevice[m.deviceLFDI] = append(byDevice[m.deviceLFDI], m)
 	}
 	if fleetScope {
 		for _, m := range members {
@@ -333,12 +325,15 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 
 	latestBounds := latestGrid(now)
 	reportedBounds := []int64{latestBounds[len(latestBounds)-1] - latestReportedSeconds, latestBounds[len(latestBounds)-1]}
+	grid := fineGrid(ws, we)
 	devices := make([]devicePower, 0, len(byDevice))
+	fine := make([]devicePower, 0, len(byDevice))
 	latest := make([]devicePower, 0, len(byDevice))
 	reported := make([]devicePower, 0, len(byDevice))
 	for _, lfdi := range slices.Sorted(maps.Keys(byDevice)) {
 		ms := byDevice[lfdi]
 		devices = append(devices, devicePowerOf(lfdi, ms, h.Edition, bounds))
+		fine = append(fine, devicePowerOf(lfdi, ms, h.Edition, grid))
 		latest = append(latest, devicePowerOf(lfdi, ms, h.Edition, latestBounds))
 		reported = append(reported, devicePowerOf(lfdi, ms, h.Edition, reportedBounds))
 	}
@@ -347,7 +342,8 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	if fleetScope {
 		historyScope = resp.AggregatorLFDI
 	}
-	if err := fillPowerFrom(&resp, devices, bounds, h.PowerHistory.view(historyScope, now)); err != nil {
+	live := fineSource(fineTotals(fine, len(grid)-1), ws)
+	if err := fillPowerFrom(&resp, devices, bounds, live, h.PowerHistory.view(historyScope, now)); err != nil {
 		log.Printf("admin power: encode chart: %s", logsafe.Err(err))
 		return PowerResponse{}, errPowerChart
 	}
@@ -427,63 +423,79 @@ func latestPower(resp *PowerResponse, reported, latest []devicePower, bounds []i
 	resp.LatestW, resp.LatestAt = &sum, &oldest
 }
 
-// fillPower is fillPowerFrom with no history, the route as it stood before
-// buckets were recorded.
-func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error {
-	return fillPowerFrom(resp, devices, bounds, nil)
-}
-
-// fillPowerFrom builds the chart, device list and gap counts of resp from the
-// devices' buckets. A Total point needs every reporting device to cover the
-// bucket (totalBucket): a total that quietly dropped a device would read as a
-// real power change. Of the reporting devices the powerSeriesCap with the
-// largest absolute energy are drawn, ties by LFDI; all stay in the Total.
-// history, when not nil, is asked about each bucket; a recorded, fully covered
-// bucket replaces the one computed from readings, and a recorded gap counts
-// as one where the readings show nothing, so the Total and energy series
-// survive the readings that made them.
-func fillPowerFrom(resp *PowerResponse, devices []devicePower, bounds []int64, history func(start, end int64) (bucketTotal, historyState)) error {
-	resp.Devices = []PowerDevice{}
-	resp.NotReporting = []string{}
-	var reporting []devicePower
+// reportingOf splits devices into those with a covered second in their
+// buckets and the LFDIs of those without.
+func reportingOf(devices []devicePower) (reporting []devicePower, notReporting []string) {
+	notReporting = []string{}
 	for _, d := range devices {
 		if d.covered > 0 {
 			reporting = append(reporting, d)
 		} else {
-			resp.NotReporting = append(resp.NotReporting, d.lfdi)
+			notReporting = append(notReporting, d.lfdi)
 		}
 	}
+	return reporting, notReporting
+}
+
+// fillPower is fillPowerFrom with the devices' own buckets as the totals and
+// no history: a Total point needs every device with a covered second in the
+// buckets to cover the bucket.
+func fillPower(resp *PowerResponse, devices []devicePower, bounds []int64) error {
+	reporting, _ := reportingOf(devices)
+	live := func(start, end int64) (bucketTotal, historyState) {
+		t := totalBucket(reporting, slices.Index(bounds, start), float64(end-start))
+		switch {
+		case t.full():
+			return t, historyCovered
+		case t.covering > 0:
+			return bucketTotal{}, historyGap
+		}
+		return bucketTotal{}, historyNone
+	}
+	return fillPowerFrom(resp, devices, bounds, live, nil)
+}
+
+// fillPowerFrom builds the chart, device list and gap counts of resp. The
+// Total and energy points come from live, which totals the route bucket
+// [start, end) by the 5 s rule the recorder also uses (fineSource), so a
+// recorded bucket equals the live one; a Total point needs every reporting
+// device to cover the bucket, since a total that quietly dropped a device
+// would read as a real power change. history, when not nil, is asked first,
+// and what it has recorded for a bucket replaces the live answer, so the
+// series survive the readings that made them. Of the reporting devices the
+// powerSeriesCap with the largest absolute energy are drawn, ties by LFDI;
+// all stay in the Total.
+func fillPowerFrom(resp *PowerResponse, devices []devicePower, bounds []int64, live, history func(start, end int64) (bucketTotal, historyState)) error {
+	resp.Devices = []PowerDevice{}
+	reporting, notReporting := reportingOf(devices)
+	resp.NotReporting = notReporting
 
 	chart := sep2admin.ChartBody{Unit: "W"}
 	energy := sep2admin.ChartBody{Unit: "kWh"}
 	total := sep2admin.ChartSeries{Name: powerTotalName}
 	discharged := sep2admin.ChartSeries{Name: powerEnergyDischarged}
 	charged := sep2admin.ChartSeries{Name: powerEnergyCharged}
-	recorded := false
+	answered := false
 	for k := 0; k+1 < len(bounds); k++ {
-		var t bucketTotal
-		if len(reporting) > 0 {
-			t = totalBucket(reporting, k, float64(bounds[k+1]-bounds[k]))
-		}
+		t, state := live(bounds[k], bounds[k+1])
 		if history != nil {
-			switch h, state := history(bounds[k], bounds[k+1]); {
-			case state == historyCovered:
-				t, recorded = h, true
-			case state == historyGap && t.covering == 0:
-				resp.TotalGapBuckets++
+			if ht, hs := history(bounds[k], bounds[k+1]); hs != historyNone {
+				t, state = ht, hs
 			}
 		}
-		switch {
-		case t.full():
+		switch state {
+		case historyCovered:
+			answered = true
 			at := time.Unix(bounds[k], 0)
 			total.Points = append(total.Points, sep2admin.ChartPoint{At: at, Value: t.w})
 			discharged.Points = append(discharged.Points, sep2admin.ChartPoint{At: at, Value: t.exportWs / wattSecondsPerKWh})
 			charged.Points = append(charged.Points, sep2admin.ChartPoint{At: at, Value: t.importWs / wattSecondsPerKWh})
-		case t.covering > 0:
+		case historyGap:
+			answered = true
 			resp.TotalGapBuckets++
 		}
 	}
-	if len(reporting) > 0 || recorded {
+	if len(reporting) > 0 || answered {
 		chart.Series = append(chart.Series, total)
 		energy.Series = append(energy.Series, discharged, charged)
 	}
@@ -534,4 +546,37 @@ func canonicalAll(in []string) []string {
 		out = append(out, canonicalLFDI(s))
 	}
 	return out
+}
+
+// sortedAggregators is the canonical LFDI of every aggregator, sorted.
+func sortedAggregators(ctx context.Context, h *AdminFleetHandler) []string {
+	aggregators := canonicalAll(h.Managers.Managers(ctx))
+	slices.Sort(aggregators)
+	return aggregators
+}
+
+// canonicalMembers is the canonical LFDI of an aggregator's fleet: itself and
+// the devices it manages.
+func canonicalMembers(ctx context.Context, h *AdminFleetHandler, aggregator string) ([]string, error) {
+	raw, err := fleetMembers(ctx, h.Managers, aggregator)
+	if err != nil {
+		return nil, err
+	}
+	return canonicalAll(raw), nil
+}
+
+// mirrorsByDevice reads the mirrors of the devices match accepts (by
+// canonical LFDI), grouped by the mirror's device.
+func mirrorsByDevice(ctx context.Context, h *AdminFleetHandler, label string, match func(canonical string) bool) (map[string][]deviceMirror, error) {
+	mirrors, err := mirrorReadingsFor(ctx, label, h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
+		return match(canonicalLFDI(device))
+	})
+	if err != nil {
+		return nil, err
+	}
+	byDevice := map[string][]deviceMirror{}
+	for _, m := range mirrors {
+		byDevice[m.deviceLFDI] = append(byDevice[m.deviceLFDI], m)
+	}
+	return byDevice, nil
 }

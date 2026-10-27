@@ -438,12 +438,6 @@ func (h *AdminFSAHandler) ensureDeviceFailed(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// copyRefused answers a copy that conflicts with a device's own program as
-// 409, and any other failure as a 500.
-func (h *AdminFSAHandler) copyRefused(w http.ResponseWriter, r *http.Request, err error) {
-	h.copyRefusedFault(r, err).answer(w)
-}
-
 // writeTemplate adds tmpl, whose ids are minted, to fsaID and copies it to
 // every assigned device, returning those devices. Every copy is checked before
 // anything is written, so a conflict refuses the template with nothing to undo.

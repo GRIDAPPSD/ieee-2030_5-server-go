@@ -237,7 +237,7 @@ func (h *AdminFSAHandler) HandleDeleteAdminFSA() http.HandlerFunc {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "fsa not found")
 		case errors.Is(err, memory.ErrAdminFSAInUse):
-			writeError(w, http.StatusConflict, "fsa still has programs or devices attached")
+			writeError(w, http.StatusConflict, fsaInUseMessage)
 		default:
 			writeError(w, http.StatusInternalServerError, "delete fsa: "+err.Error())
 		}

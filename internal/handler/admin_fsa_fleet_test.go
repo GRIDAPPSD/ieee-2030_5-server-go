@@ -425,3 +425,38 @@ func TestFleetFSA_DeleteOnlyOnceTheAggregatorIsGone(t *testing.T) {
 		t.Errorf("delete with a pair still present = %d %s, want 409", w.Code, w.Body.String())
 	}
 }
+
+// An attached program makes the delete a 409, as on the operator route, and
+// nothing is removed first. The attach route is not mounted in this fixture,
+// so the link is written to the store directly.
+func TestFleetFSA_DeleteWithAnAttachedProgramIs409AndLosesNothing(t *testing.T) {
+	t.Parallel()
+	f := newFleetFSAFixture(t)
+	ctx := context.Background()
+	f.pair(t, fleetL1)
+	id := f.fleet(t)
+	tmplID := f.h.AdminFSAs.Templates(ctx, id)[0].ID
+	if err := f.managers.Unassign(ctx, fleetL1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.devices.Delete(ctx, "9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.h.AdminFSAs.AttachProgram(ctx, id, "/edev/1/fsa/x/derp/0"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := f.do(http.MethodDelete, "/api/fsas/"+id, "")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("delete = %d %s, want 409", w.Code, w.Body.String())
+	}
+	if got := f.h.AdminFSAs.Devices(ctx, id); !slices.Equal(got, []string{"1"}) {
+		t.Errorf("assigned after the refusal = %v, want [1] untouched", got)
+	}
+	if got := f.h.AdminFSAs.Templates(ctx, id); len(got) != 1 || got[0].ID != tmplID {
+		t.Errorf("templates after the refusal = %v, want only %s", got, tmplID)
+	}
+	if _, err := f.copies.Programs.Get(ctx, "1", tmplID); err != nil {
+		t.Errorf("device 1 lost its copy to a refused delete: %v", err)
+	}
+}

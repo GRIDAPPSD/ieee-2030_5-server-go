@@ -47,7 +47,7 @@ func (h *AdminFSAHandler) incompleteFault(err error, deviceID, fsaID string) *me
 }
 
 // copyRefusedFault is the one answer to a copy that conflicts with a device's
-// own program (409) or fails (500); copyRefused writes it.
+// own program (409) or fails (500).
 func (h *AdminFSAHandler) copyRefusedFault(r *http.Request, err error) *membershipFault {
 	if errors.Is(err, fsaprogram.ErrCopyConflict) {
 		return statusFault(err, http.StatusConflict, "a device assigned to this fsa already holds a program with this id or mRID")

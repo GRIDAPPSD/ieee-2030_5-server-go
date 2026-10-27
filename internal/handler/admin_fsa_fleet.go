@@ -40,6 +40,10 @@ type FleetDeviceLookup interface {
 	GetByLFDI(ctx context.Context, lfdi string) (sep2.EndDevice, error)
 }
 
+// fsaInUseMessage is the 409 text of a delete refused because programs are
+// attached or devices assigned.
+const fsaInUseMessage = "fsa still has programs or devices attached"
+
 // serverManagedRefused answers a change the server reserves for a fleet FSA
 // (delete, assignment, adding or deleting a program, a device program), and
 // reports whether it did. It is the one place that decides an FSA is the
@@ -80,6 +84,11 @@ func (h *AdminFSAHandler) deleteFleet(w http.ResponseWriter, r *http.Request, fs
 		h.serverManagedRefused(w, fsaID)
 		return
 	}
+	// Checked before anything is removed, so a refusal loses nothing.
+	if len(h.AdminFSAs.Programs(ctx, fsaID)) > 0 {
+		writeError(w, http.StatusConflict, fsaInUseMessage)
+		return
+	}
 	for _, dev := range h.AdminFSAs.Devices(ctx, fsaID) {
 		if fault := h.unassignLocked(r, dev, fsaID); fault != nil {
 			fault.answer(w)
@@ -97,6 +106,8 @@ func (h *AdminFSAHandler) deleteFleet(w http.ResponseWriter, r *http.Request, fs
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "fsa not found")
+	case errors.Is(err, memory.ErrAdminFSAInUse):
+		writeError(w, http.StatusConflict, fsaInUseMessage)
 	default:
 		h.templateFailed(w, r, "fleet_delete", err)
 	}

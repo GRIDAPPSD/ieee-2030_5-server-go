@@ -122,6 +122,17 @@ describe('Overview DER counts', () => {
     expect(counts(d)).toEqual({ registered: '1', connected: '2', operating: '2' })
   })
 
+  it('notes unreadable devices only when there are some, without changing the counts', () => {
+    const none = render(Overview, { props: { data: { ...data, deviceCount: 1, devices: [dev([der()])] } } })
+    expect(none.container.querySelector('#derUnreadable')).toBeNull()
+    none.unmount()
+
+    const d: DashboardData = { ...data, deviceCount: 3, devices: [dev([der()]), dev([], { derError: 'boom' }), dev([], { derError: 'bang' })] }
+    const { container } = render(Overview, { props: { data: d } })
+    expect(container.querySelector('#derUnreadable')).toHaveTextContent('2')
+    expect(container.querySelector('#derConnected')).toHaveTextContent('1')
+  })
+
   it('shows zeroes before the first update', () => {
     expect(counts(null)).toEqual({ registered: '0', connected: '0', operating: '0' })
   })

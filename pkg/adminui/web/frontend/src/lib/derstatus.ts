@@ -53,7 +53,7 @@ export function connectChips(c: DerConnect): Chip[] {
   // positive "not energized". A 2018 field leaves energized undefined.
   if (any((p) => p.energized === true)) chips.push({ label: 'Energized', warn: false })
   else if (any((p) => p.energized === false)) chips.push({ label: 'Not energized', warn: false })
-  if (any((p) => p.operating)) chips.push({ label: 'Operating', warn: false })
+  if (anyOperating(c)) chips.push({ label: 'Operating', warn: false })
   if (any((p) => p.test)) chips.push({ label: 'Test', warn: true })
   if (any((p) => p.fault)) chips.push({ label: 'Fault', warn: true })
   const reserved = parts.reduce((bits, p) => bits | p.reservedBits, 0)

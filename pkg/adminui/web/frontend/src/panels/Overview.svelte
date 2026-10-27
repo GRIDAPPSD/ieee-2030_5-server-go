@@ -27,6 +27,11 @@
   <div class="stat-row">
     <span class="stat-label" title="DERs whose latest report has the connect bit set. Connected is the power connection and does not mean energized or exporting. A DER with no readable status, a stale report or a device not talking is not counted.">Connected</span><span id="derConnected">{counts.connected}</span>
   </div>
+  {#if counts.unreadable > 0}
+    <div class="stat-row">
+      <span class="stat-label" title="Devices whose DER status could not be read. They are not counted connected or operating.">Unreadable</span><span id="derUnreadable">{counts.unreadable}</span>
+    </div>
+  {/if}
   <div class="stat-row">
     <span class="stat-label" title="DERs whose latest report has the operating bit set, under the same rule as Connected.">Operating</span><span id="derOperating">{counts.operating}</span>
   </div>

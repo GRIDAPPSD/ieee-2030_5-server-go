@@ -141,6 +141,10 @@ export const powerBucketMs = (windowSeconds: number): number =>
 // kW to one decimal; the server reports watts.
 export const formatKw = (watts: number): string => `${(watts / 1000).toFixed(1)} kW`
 
+// The names of the energy chart's two series, as the server sends them.
+export const DISCHARGED_SERIES = 'Discharged'
+export const CHARGED_SERIES = 'Charged'
+
 export interface EnergyTotals {
   discharged: number
   charged: number
@@ -150,7 +154,7 @@ export interface EnergyTotals {
 // of the energy chart (discharge at or above zero, charge at or below).
 export function energyTotals(chart: DescriptorChartBody): EnergyTotals {
   const sum = (name: string) => chart.series.find((s) => s.name === name)?.points.reduce((acc, p) => acc + p[1], 0) ?? 0
-  return { discharged: sum('Discharged'), charged: sum('Charged') }
+  return { discharged: sum(DISCHARGED_SERIES), charged: sum(CHARGED_SERIES) }
 }
 
 // The energy chart drawn as bars: Discharged above zero, Charged below, each
@@ -158,7 +162,7 @@ export function energyTotals(chart: DescriptorChartBody): EnergyTotals {
 export function energyBars(chart: DescriptorChartBody): DrawnChartBody {
   return {
     ...chart,
-    series: chart.series.map((s) => ({ ...s, type: 'bar', direction: s.name === 'Charged' ? 'charge' : 'discharge' })),
+    series: chart.series.map((s) => ({ ...s, type: 'bar', direction: s.name === CHARGED_SERIES ? 'charge' : 'discharge' })),
   }
 }
 

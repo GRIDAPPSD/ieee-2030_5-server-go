@@ -57,7 +57,8 @@
         },
         yAxis: {
           type: 'value',
-          scale: true,
+          // Bars start at zero, or a discharge-only window exaggerates them.
+          scale: !body.series.some((s) => s.type === 'bar'),
           boundaryGap: ['5%', '5%'],
           name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },

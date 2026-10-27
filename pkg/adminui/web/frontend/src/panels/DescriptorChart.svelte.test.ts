@@ -7,7 +7,6 @@ import { render, screen, waitFor } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import DescriptorChart from './DescriptorChart.svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
-import { DIRECTION_COLORS } from '../lib/chart'
 import { installCanvasStub } from '../test-canvas-stub'
 import type { Descriptor, DescriptorChartBody, DrawnChartBody } from '../lib/descriptor'
 
@@ -55,31 +54,57 @@ describe('DescriptorChart', () => {
     expect(option.legend).toHaveLength(1)
   })
 
-  it('draws a series typed bar as a bar with its direction colors, and the rest as lines', async () => {
-    const pts = [[1759343400000, 0.5]] as [number, number][]
+  it('draws a series typed bar as a stacked translucent bar with its direction colors, charge hatched', async () => {
     const { instance } = await mounted({
       unit: 'kWh',
       series: [
-        { name: 'Discharged', points: pts, type: 'bar', direction: 'discharge' },
+        { name: 'Discharged', points: [[1759343400000, 0.5]], type: 'bar', direction: 'discharge' },
         { name: 'Charged', points: [[1759343400000, -0.25]], type: 'bar', direction: 'charge' },
-        { name: 'plain', points: pts },
+        { name: 'Untyped', points: [[1759343400000, 1]], type: 'bar' },
       ],
     })
     await waitFor(() => expect(instance.getOption().series).toHaveLength(3))
     const option = instance.getOption() as {
-      series: { name: string; type: string; stack?: string; itemStyle?: { color: string; borderColor: string; decal?: unknown } }[]
+      series: { name: string; type: string; stack?: string; itemStyle: { color: string; borderColor: string; borderWidth: number; decal?: Record<string, unknown> } }[]
     }
-    expect(option.series.map((s) => [s.name, s.type])).toEqual([
-      ['Discharged', 'bar'],
-      ['Charged', 'bar'],
-      ['plain', 'line'],
-    ])
-    expect(option.series[0].itemStyle?.borderColor).toBe(DIRECTION_COLORS.discharge.edge)
-    expect(option.series[0].itemStyle?.color).toBe(DIRECTION_COLORS.discharge.fill)
-    expect(option.series[0].itemStyle?.decal).toBeUndefined()
-    expect(option.series[1].itemStyle?.borderColor).toBe(DIRECTION_COLORS.charge.edge)
-    expect(option.series[1].itemStyle?.decal).toBeDefined()
-    expect(option.series[0].stack).toBe(option.series[1].stack)
+    const [dis, chg, dflt] = option.series
+    expect([dis.type, chg.type, dflt.type]).toEqual(['bar', 'bar', 'bar'])
+    expect([dis.stack, chg.stack, dflt.stack]).toEqual(['energy', 'energy', 'energy'])
+    expect(dis.itemStyle).toMatchObject({ color: 'rgba(251,146,60,0.45)', borderColor: '#fb923c', borderWidth: 1 })
+    expect(dis.itemStyle.decal).toBeUndefined()
+    expect(chg.itemStyle).toMatchObject({ color: 'rgba(196,181,253,0.40)', borderColor: '#c4b5fd', borderWidth: 1 })
+    expect(chg.itemStyle.decal).toMatchObject({ symbol: 'rect', rotation: Math.PI / 4, color: '#c4b5fd', dashArrayX: [1, 0], dashArrayY: [2, 3] })
+    expect(dflt.itemStyle).toMatchObject({ color: 'rgba(251,146,60,0.45)', borderColor: '#fb923c' })
+    expect(dflt.itemStyle.decal).toBeUndefined()
+  })
+
+  it('draws an untyped series as a line with the full line option', async () => {
+    const pts = [[1759343400000, 0.5]] as [number, number][]
+    const { instance } = await mounted({ unit: 'kWh', series: [{ name: 'plain', points: pts }] })
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(1))
+    const s = (instance.getOption() as { series: Record<string, unknown>[] }).series[0]
+    expect(s).toMatchObject({ name: 'plain', type: 'line', showSymbol: false, data: pts })
+    expect(s.stack).toBeUndefined()
+    expect(s.itemStyle).toBeUndefined()
+  })
+
+  it('includes zero on the value axis when a bar series is present, and scales to the data for lines', async () => {
+    const extent = (inst: echarts.ECharts) =>
+      (inst as unknown as { getModel(): { getComponent(t: string): { axis: { scale: { getExtent(): number[] } } } } })
+        .getModel()
+        .getComponent('yAxis').axis.scale.getExtent()
+    const pts = [[1759343400000, 3], [1759343460000, 4]] as [number, number][]
+
+    const bars = await mounted({ series: [{ name: 'Discharged', points: pts, type: 'bar', direction: 'discharge' }] })
+    await waitFor(() => expect(bars.instance.getOption().series).toHaveLength(1))
+    expect(Math.min(...extent(bars.instance))).toBeLessThanOrEqual(0)
+    expect((bars.instance.getOption() as { yAxis: { scale: boolean }[] }).yAxis[0].scale).toBe(false)
+    bars.unmount()
+
+    const lines = await mounted({ series: [{ name: 'line', points: pts }] })
+    await waitFor(() => expect(lines.instance.getOption().series).toHaveLength(1))
+    expect(Math.min(...extent(lines.instance))).toBeGreaterThan(0)
+    expect((lines.instance.getOption() as { yAxis: { scale: boolean }[] }).yAxis[0].scale).toBe(true)
   })
 
   it('draws the tooltip through rich text, not HTML', async () => {

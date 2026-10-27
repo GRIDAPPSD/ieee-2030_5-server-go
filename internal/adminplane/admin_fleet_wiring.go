@@ -1,6 +1,7 @@
 package adminplane
 
 import (
+	"context"
 	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -32,7 +33,7 @@ func newAdminFleetHandler(stores *Stores) *handler.AdminFleetHandler {
 		return nil
 	}
 
-	h := &handler.AdminFleetHandler{Managers: managers, Edition: stores.Sep2Edition}
+	h := &handler.AdminFleetHandler{Managers: managers, Edition: stores.Sep2Edition, PowerHistory: stores.PowerHistory}
 	if !store.IsAbsent(stores.EndDevices) {
 		h.EndDevices = stores.EndDevices
 	}
@@ -52,4 +53,18 @@ func newAdminFleetHandler(stores *Stores) *handler.AdminFleetHandler {
 		h.MirrorMeterReadings = stores.MirrorMeterReadings
 	}
 	return h
+}
+
+// StartPowerHistory starts the recorder of the stores' power history and
+// returns its stop. Without a history, or without management pairs to build
+// the fleet reads from, it starts nothing.
+func StartPowerHistory(ctx context.Context, stores *Stores) (stop func()) {
+	if stores == nil || stores.PowerHistory == nil {
+		return func() {}
+	}
+	h := newAdminFleetHandler(stores)
+	if h == nil {
+		return func() {}
+	}
+	return stores.PowerHistory.Start(ctx, h)
 }

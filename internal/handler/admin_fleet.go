@@ -208,6 +208,9 @@ type AdminFleetHandler struct {
 	// Edition2018, is what a handler built with none of this field set
 	// already did.
 	Edition SEP2Edition
+	// PowerHistory keeps the power route's final buckets across a restart. Nil
+	// without a data directory, and the route then reads only its readings.
+	PowerHistory *PowerHistory
 }
 
 // staleAfterSeconds is how old a DERAvailability or mirror reading may be

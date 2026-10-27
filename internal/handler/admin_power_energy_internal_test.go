@@ -107,8 +107,11 @@ func TestPower_EnergyKeepsChargeAndDischargeAndMatchesTotal(t *testing.T) {
 	}
 }
 
-// A bucket covered by only one of two reporting devices has no energy point,
-// the same buckets the Total skips, and the gap counter does not change.
+// A bucket where a reporting device has no reading has no energy point, the
+// same buckets the Total skips. A device reports once it has covered a second
+// in the hour ending at the bucket, so D1 alone fills the first 5 buckets,
+// both cover the next 5, and the last 10 are gaps: 5 only D2 covers and
+// 5 neither covers.
 func TestPower_EnergyHasNoPointWhereAReportingDeviceIsMissing(t *testing.T) {
 	p := newPowerHarness(t)
 	p.manage(powerD1, powerD2)
@@ -118,16 +121,20 @@ func TestPower_EnergyHasNoPointWhereAReportingDeviceIsMissing(t *testing.T) {
 
 	a := p.energy("aggregatorLFDI=" + powerAgg + "&window=900")
 	dis, chg, total := a.energySeries("Discharged"), a.energySeries("Charged"), a.series("Total")
-	if dis == nil || chg == nil || total == nil || len(dis.Points) != 5 || len(chg.Points) != 5 || len(total.Points) != 5 {
-		t.Fatalf("energy series = %+v, want 5 points each, as the Total", a.EnergyChart.Series)
+	if dis == nil || chg == nil || total == nil || len(dis.Points) != 10 || len(chg.Points) != 10 || len(total.Points) != 10 {
+		t.Fatalf("energy series = %+v, want 10 points each, as the Total", a.EnergyChart.Series)
 	}
 	for i, pt := range dis.Points {
-		if pt[0] != total.Points[i][0] || math.Abs(pt[1]-3500*5/3.6e6) > 1e-12 || chg.Points[i][1] != 0 {
-			t.Fatalf("point %d = discharged %v charged %v, want [%v 3500 W for 5 s] and 0", i, pt, chg.Points[i], total.Points[i][0])
+		w := 1000.0
+		if i >= 5 {
+			w = 3500
+		}
+		if pt[0] != total.Points[i][0] || math.Abs(pt[1]-w*5/3.6e6) > 1e-12 || chg.Points[i][1] != 0 {
+			t.Fatalf("point %d = discharged %v charged %v, want [%v %v W for 5 s] and 0", i, pt, chg.Points[i], total.Points[i][0], w)
 		}
 	}
 	if a.TotalGapBuckets != 10 {
-		t.Errorf("totalGapBuckets = %d, want 10 as before", a.TotalGapBuckets)
+		t.Errorf("totalGapBuckets = %d, want 10: 5 where D1 is silent, 5 where both are", a.TotalGapBuckets)
 	}
 }
 

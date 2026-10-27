@@ -307,6 +307,11 @@ type Config struct {
 	// Env: SEP2_MIRROR_READING_MAX_PER_SERIES, 292 to 2592000. Zero means
 	// unset; use EffectiveMirrorReadingMaxPerSeries.
 	MirrorReadingMaxPerSeries int
+
+	// PowerHistoryHours is how long the power route's recorded buckets are
+	// kept, in whole hours. Env: SEP2_POWER_HISTORY_HOURS, 1 to 720. Zero
+	// means unset; use EffectivePowerHistoryRetention. Recording needs DataDir.
+	PowerHistoryHours int
 }
 
 // ParsePEN validates the value of SEP2_PEN: empty resolves to the IEEE
@@ -533,6 +538,51 @@ func (c *Config) EffectiveMirrorReadingRetention() (time.Duration, error) {
 		return 0, fmt.Errorf("mirror reading retention %s is not whole seconds from %s to %s", r, MinMirrorReadingRetention, MaxMirrorReadingRetention)
 	}
 	return r, nil
+}
+
+// Bounds on SEP2_POWER_HISTORY_HOURS. The ceiling matches the reading
+// retention ceiling.
+const (
+	DefaultPowerHistoryHours = 48
+	MaxPowerHistoryHours     = 720
+)
+
+// ParsePowerHistoryHours validates the value of SEP2_POWER_HISTORY_HOURS:
+// empty is unset (zero), anything else must be whole hours within the bounds.
+func ParsePowerHistoryHours(v string) (int, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_POWER_HISTORY_HOURS: %q is not a whole number of hours", v)
+	}
+	if n < 1 || n > MaxPowerHistoryHours {
+		return 0, fmt.Errorf("SEP2_POWER_HISTORY_HOURS: %d is outside 1 to %d", n, MaxPowerHistoryHours)
+	}
+	return n, nil
+}
+
+// EffectivePowerHistoryRetention resolves an unset PowerHistoryHours to the
+// default and refuses a value outside the bounds.
+func (c *Config) EffectivePowerHistoryRetention() (time.Duration, error) {
+	h := c.PowerHistoryHours
+	if h == 0 {
+		h = DefaultPowerHistoryHours
+	}
+	if h < 1 || h > MaxPowerHistoryHours {
+		return 0, fmt.Errorf("power history hours %d is outside 1 to %d", h, MaxPowerHistoryHours)
+	}
+	return time.Duration(h) * time.Hour, nil
+}
+
+// EffectivePowerHistoryDir is where the power history is kept: a directory
+// under DataDir, or "" when there is no DataDir and the history is off.
+func (c *Config) EffectivePowerHistoryDir() string {
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, "power-history")
 }
 
 // ParseMirrorReadingMaxPerSeries validates the value of

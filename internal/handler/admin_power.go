@@ -148,6 +148,11 @@ type PowerDevice struct {
 	ConcurrentMirrors bool   `json:"concurrentMirrors"`
 	ExcludedReadings  int    `json:"excludedReadings"`
 	NonDERWatts       bool   `json:"nonDERWatts"`
+	// LatestW is the device's power now in watts, export-positive, and
+	// LatestAt the end of the 5 s bucket it was read from; both are null when
+	// the device has no covered second in the last latestSpanSeconds.
+	LatestW  *float64 `json:"latestW"`
+	LatestAt *int64   `json:"latestAt"`
 }
 
 // PowerResponse is the body of GET /api/derms/power. Chart is a
@@ -169,6 +174,14 @@ type PowerResponse struct {
 	NotReporting    []string        `json:"notReporting"`
 	TotalGapBuckets int             `json:"totalGapBuckets"`
 	ReadingsExpired bool            `json:"readingsExpired"`
+	// LatestW is the sum of every device's LatestW, in watts, and LatestAt the
+	// oldest bucket end among them. Both are null while LatestMissing is not
+	// empty, or when no device has a value: a partial sum would read as a
+	// real power change. LatestMissing lists the devices that covered a second
+	// of the chart window but have none in the last latestSpanSeconds.
+	LatestW       *float64 `json:"latestW"`
+	LatestAt      *int64   `json:"latestAt"`
+	LatestMissing []string `json:"latestMissing"`
 }
 
 // powerBucketSeconds is the smallest bucket that keeps window within
@@ -325,11 +338,79 @@ func computePower(ctx context.Context, h *AdminFleetHandler, retention time.Dura
 	}
 	slices.SortFunc(devices, func(a, b devicePower) int { return cmp.Compare(a.lfdi, b.lfdi) })
 
+	latestBounds := latestGrid(now)
+	latest := make([]devicePower, 0, len(devices))
+	for _, d := range devices {
+		latest = append(latest, devicePowerOf(d.lfdi, byDevice[d.lfdi], h.Edition, latestBounds))
+	}
+
 	if err := fillPower(&resp, devices, bounds); err != nil {
 		log.Printf("admin power: encode chart: %s", logsafe.Err(err))
 		return PowerResponse{}, errPowerChart
 	}
+	latestPower(&resp, devices, latest, latestBounds)
 	return resp, nil
+}
+
+// latestSpanSeconds is how far back a device's power now may be read: the
+// longest hold, so an Average-only device still has a value between posts.
+const latestSpanSeconds = maxHoldSeconds
+
+// latestGrid is the 5 s grid over the latestSpanSeconds before now, ending
+// on the last closed 5 s boundary. It does not depend on the chart window,
+// so the number does not change when the operator changes the window.
+func latestGrid(now int64) []int64 {
+	end := now / 5 * 5
+	bounds := make([]int64, 0, latestSpanSeconds/5+1)
+	for x := end - latestSpanSeconds; x <= end; x += 5 {
+		bounds = append(bounds, x)
+	}
+	return bounds
+}
+
+// latestPower is the one owner of a device's power now. latest holds each
+// device integrated over bounds by devicePowerOf, so the reading rule is the
+// chart's (powerLegs, pickPath) and not a second one. A device's value is
+// the average W of its newest bucket with a covered second. It fills
+// resp.Devices' LatestW and LatestAt and the response's total, which needs a
+// value from every device in reported that covered a chart second.
+func latestPower(resp *PowerResponse, reported, latest []devicePower, bounds []int64) {
+	type value struct {
+		w  float64
+		at int64
+	}
+	values := map[string]value{}
+	for _, d := range latest {
+		for k := len(d.sums) - 1; k >= 0; k-- {
+			if s := d.sums[k]; s.covered > 0 {
+				values[d.lfdi] = value{w: s.wattSeconds / float64(s.covered), at: bounds[k+1]}
+				break
+			}
+		}
+	}
+	for i := range resp.Devices {
+		if v, ok := values[resp.Devices[i].LFDI]; ok {
+			resp.Devices[i].LatestW, resp.Devices[i].LatestAt = &v.w, &v.at
+		}
+	}
+	resp.LatestMissing = []string{}
+	for _, d := range reported {
+		if _, ok := values[d.lfdi]; d.covered > 0 && !ok {
+			resp.LatestMissing = append(resp.LatestMissing, d.lfdi)
+		}
+	}
+	if len(resp.LatestMissing) > 0 || len(values) == 0 {
+		return
+	}
+	var sum float64
+	oldest := int64(math.MaxInt64)
+	for _, d := range latest {
+		if v, ok := values[d.lfdi]; ok {
+			sum += v.w
+			oldest = min(oldest, v.at)
+		}
+	}
+	resp.LatestW, resp.LatestAt = &sum, &oldest
 }
 
 // fillPower builds the chart, device list and gap counts of resp from the

@@ -9,9 +9,7 @@
   import {
     barsFor,
     controlEventsPath,
-    eventLabelParts,
     lookAheadFor,
-    eventTitle,
     lanesFor,
     nowPercent,
     parseControlEvents,
@@ -21,6 +19,7 @@
   import { deviceLabel } from '../lib/devices'
   import { powerBucketMs, type PowerAnswer } from '../lib/power'
   import { startPoll } from '../lib/poll'
+  import EventBar from './EventBar.svelte'
 
   // ahead is how far past now the shown events reach, in seconds; the card
   // reads it to extend the range of every chart. nowMs is the card's "now".
@@ -90,21 +89,7 @@
         <span class="ev-lane-label" data-testid="events-lane-label">{lane.label}</span>
         <ul class="ev-track" style:height="calc({Math.max(1, ...bars.map((b) => b.row + 1))} * var(--ev-bar-h))">
           {#each bars as bar (bar.event.mrid + ':' + bar.event.group + ':' + (bar.event.fsaID ?? '') + ':' + bar.event.start)}
-            {@const label = eventLabelParts(bar.event)}
-            <li
-              class="ev-bar ev-{bar.event.status} ev-dir-{bar.event.direction ?? 'none'}"
-              data-testid="events-bar"
-              data-status={bar.event.status}
-              data-origin={bar.event.origin}
-              style:left="{bar.left}%"
-              style:width="{bar.width}%"
-              style:top="calc({bar.row} * var(--ev-bar-h))"
-              title={eventTitle(bar.event)}
-              aria-label={eventTitle(bar.event)}
-            >
-              {#if bar.event.origin === 'derms'}<span class="ev-derms" data-testid="events-derms">DERMS</span>{/if}
-              <span class="ev-text"><span class="ev-lead" class:ev-dirword={label.word}>{label.lead}</span><span class="ev-detail">{label.detail}</span></span>
-            </li>
+            <EventBar {bar} />
           {/each}
           {#if now !== null}
             <li class="ev-future" aria-hidden="true" style:left="{now}%"></li>

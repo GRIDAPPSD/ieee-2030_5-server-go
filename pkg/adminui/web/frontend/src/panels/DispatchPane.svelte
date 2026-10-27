@@ -21,7 +21,8 @@
     type GrantView,
   } from '../lib/dispatch'
   import { formatAge, isFleet, type Fleet } from '../lib/fleet'
-  import { directionLabel, formatInterval, formatMeasured, formatQuantity, scaledNumber } from '../lib/flowreservation'
+  import { directionWord } from '../lib/direction'
+  import { formatInterval, formatMeasured, formatQuantity, scaledNumber } from '../lib/flowreservation'
 
   const TICK_MS = 1000
   const FETCH_TIMEOUT_MS = 15_000
@@ -339,7 +340,7 @@
     const carrying =
       grant === null
         ? 'A plain dispatch, carrying out no grant.'
-        : `Carrying out grant ${grant.response.mRID} (request ${grant.frqId}, ${directionLabel(grant.response.direction)}).`
+        : `Carrying out grant ${grant.response.mRID} (request ${grant.frqId}, ${directionWord(grant.response.direction, 'direction missing')}).`
     const dev = choices.find((c) => c.id === deviceId)
     const device = dev === undefined ? `device ${deviceId}` : `device ${chosenName(dev) || dev.label}${dev.lfdi === '' ? '' : ` (LFDI ${dev.lfdi})`}`
     const watts = b.targetW.value * Math.pow(10, b.targetW.multiplier)
@@ -447,7 +448,7 @@
   }
 
   function grantLabel(g: GrantView): string {
-    return `request ${g.frqId} on device ${g.edevId}: ${formatInterval(g.response.interval)}, ${directionLabel(g.response.direction)}`
+    return `request ${g.frqId} on device ${g.edevId}: ${formatInterval(g.response.interval)}, ${directionWord(g.response.direction, 'direction missing')}`
   }
 </script>
 
@@ -522,7 +523,7 @@
       {#if grant !== null}
         <div class="response tip" data-testid="dispatch-grant-detail">
           <div>
-            Grant {grant.response.mRID}: {formatInterval(grant.response.interval)}, {directionLabel(grant.response.direction)},
+            Grant {grant.response.mRID}: {formatInterval(grant.response.interval)}, {directionWord(grant.response.direction, 'direction missing')},
             power {formatQuantity(scaledNumber(grant.response.powerAvailable), 'W')},
             energy {formatQuantity(scaledNumber(grant.response.energyAvailable), 'Wh')}
           </div>

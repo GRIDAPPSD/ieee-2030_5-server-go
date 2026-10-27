@@ -3,6 +3,8 @@
 // are testable without mounting a component. The create request is built in
 // controlcatalog.ts.
 
+import type { Direction } from './direction'
+
 export interface DERProgramView {
   href: string
   mRID: string
@@ -40,7 +42,7 @@ export interface DERControlView {
 export type ControlOrigin = 'admin' | 'derms'
 
 // The flow of a control's power target, named by the server; null when it sets none.
-export type ControlDirection = 'discharge' | 'charge'
+export type ControlDirection = Direction
 
 // originMarker is the text shown beside a control that DERMS asked for:
 // "from DERMS", then the direction word the server reports.

@@ -97,7 +97,7 @@ export interface SumFigure {
   unreported: number
   stale: number
   // directionKnown is true only when the server says every contributing
-  // reading carried a flowDirection; directionWord is shown only then.
+  // reading carried a flowDirection; flowSignWord is shown only then.
   directionKnown: boolean
   // ageSeconds is the age of the newest reading among devices that
   // reported this quantity at all, which can include a reading the rollup
@@ -125,13 +125,13 @@ export function sumFigure(
   }
 }
 
-// directionWord names the export-positive sign convention the server
+// flowSignWord names the export-positive sign convention the server
 // already applied (admin_fleet.go's considerMeasurement): positive is
 // exporting, negative is importing, zero carries no direction word. The
 // word is decided on the ROUNDED magnitude, the same rounding formatValue
 // applies to the number beside it: an unrounded 0.4 W read as positive
 // would print "0 W exporting", a word the displayed "0 W" does not back.
-export function directionWord(watts: number): string {
+export function flowSignWord(watts: number): string {
   if (Math.round(Math.abs(watts)) === 0) return ''
   return watts > 0 ? 'exporting' : 'importing'
 }

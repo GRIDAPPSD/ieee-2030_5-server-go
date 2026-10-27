@@ -2,11 +2,12 @@
 // internal/handler admin_control_events.go), its narrowing, and the pure
 // layout the timeline draws: lanes in the power chart's order, bar spans on
 // the shared time range, labels in words.
+import { isDirection, type Direction } from './direction'
 import { DIRECT_KEY, aggregatorKeyLabels, formatClock, formatKw, isStrings, type PowerAnswer } from './power'
 
 // 'unknown' is a status the server sends when it cannot derive one.
 export type ControlEventStatus = 'scheduled' | 'active' | 'completed' | 'cancelled' | 'superseded' | 'unknown'
-export type ControlEventDirection = 'discharge' | 'charge'
+export type ControlEventDirection = Direction
 
 export interface ControlEvent {
   group: string
@@ -58,6 +59,8 @@ export const controlEventsPath = (windowSeconds: number): string =>
 
 const STATUSES: readonly string[] = ['scheduled', 'active', 'completed', 'cancelled', 'superseded', 'unknown']
 
+export const isControlEventStatus = (status: string): status is ControlEventStatus => STATUSES.includes(status)
+
 function isEvent(v: unknown): v is ControlEvent {
   if (typeof v !== 'object' || v === null) return false
   const e = v as Record<string, unknown>
@@ -69,11 +72,11 @@ function isEvent(v: unknown): v is ControlEvent {
     isStrings(e.deviceIDs) &&
     typeof e.mrid === 'string' &&
     (e.origin === 'admin' || e.origin === 'derms') &&
-    (e.direction === null || e.direction === 'discharge' || e.direction === 'charge') &&
+    (e.direction === null || isDirection(e.direction)) &&
     (e.targetW === null || (typeof e.targetW === 'number' && Number.isFinite(e.targetW))) &&
     isStrings(e.modes) &&
     typeof e.status === 'string' &&
-    STATUSES.includes(e.status) &&
+    isControlEventStatus(e.status) &&
     typeof e.start === 'number' &&
     typeof e.end === 'number'
   )

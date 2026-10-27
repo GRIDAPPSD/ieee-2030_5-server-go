@@ -5,7 +5,7 @@
 // test, not just that it renders without throwing.
 import { describe, expect, it } from 'vitest'
 import {
-  directionWord,
+  flowSignWord,
   formatAge,
   formatContributionNote,
   formatValue,
@@ -99,27 +99,27 @@ describe('sumFigure directionKnown (#733)', () => {
   })
 })
 
-describe('directionWord', () => {
+describe('flowSignWord', () => {
   it('names export for a positive export-positive value', () => {
-    expect(directionWord(500)).toBe('exporting')
+    expect(flowSignWord(500)).toBe('exporting')
   })
   it('names import for a negative export-positive value', () => {
-    expect(directionWord(-500)).toBe('importing')
+    expect(flowSignWord(-500)).toBe('importing')
   })
   it('carries no direction word for exactly zero', () => {
-    expect(directionWord(0)).toBe('')
+    expect(flowSignWord(0)).toBe('')
   })
   it('carries no direction word for a positive value that rounds to 0 (PR 730 round 1, finding 5)', () => {
-    expect(directionWord(0.4)).toBe('')
+    expect(flowSignWord(0.4)).toBe('')
   })
   it('carries no direction word for a negative value that rounds to 0', () => {
-    expect(directionWord(-0.4)).toBe('')
+    expect(flowSignWord(-0.4)).toBe('')
   })
   it('names export once the magnitude rounds up to at least 1', () => {
-    expect(directionWord(0.6)).toBe('exporting')
+    expect(flowSignWord(0.6)).toBe('exporting')
   })
   it('names import once the negative magnitude rounds up to at least 1', () => {
-    expect(directionWord(-0.6)).toBe('importing')
+    expect(flowSignWord(-0.6)).toBe('importing')
   })
 })
 

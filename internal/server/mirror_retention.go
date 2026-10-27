@@ -2,12 +2,38 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mirrorretention"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
+
+// newMirrorReadingStore builds the mirror meter reading store. With a data
+// directory it is the journal, replayed now, before the retention boot sweep
+// and before any listener, with the readings of mirrors that no longer exist
+// dropped; the returned journal is for the power history recorder, which
+// syncs and compacts it. Without one it is the in-memory store and no journal.
+func newMirrorReadingStore(cfg *config.Config, mirrors store.ResourceReader[sep2.MirrorUsagePoint]) (store.ScopedStore[sep2.MirrorMeterReading], *handler.ReadingJournal, error) {
+	path := cfg.EffectiveMirrorReadingJournalPath()
+	if path == "" {
+		return memory.NewScopedStore[sep2.MirrorMeterReading](), nil, nil
+	}
+	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading")
+	if err != nil {
+		return nil, nil, fmt.Errorf("MirrorMeterReading persistence: %w", err)
+	}
+	j := &handler.ReadingJournal{Readings: js, Mirrors: mirrors}
+	if err := j.DropOrphans(context.Background()); err != nil {
+		return nil, nil, fmt.Errorf("MirrorMeterReading persistence: %w", err)
+	}
+	return js, j, nil
+}
 
 // startMirrorRetentionAtBoot is the call Run makes; tests replace it to
 // observe when it runs and when its stop is called.

@@ -614,6 +614,16 @@ func (c *Config) EffectivePowerHistoryRetention() (time.Duration, error) {
 	return time.Duration(h) * time.Hour, nil
 }
 
+// EffectiveMirrorReadingJournalPath is the journal of the out-of-band mirror
+// meter readings under DataDir, or "" when there is no DataDir and the
+// readings are held in memory only.
+func (c *Config) EffectiveMirrorReadingJournalPath() string {
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, "mirrormeterreadings.jsonl")
+}
+
 // EffectivePowerHistoryDir is where the power history is kept: a directory
 // under DataDir, or "" when there is no DataDir and the history is off.
 func (c *Config) EffectivePowerHistoryDir() string {

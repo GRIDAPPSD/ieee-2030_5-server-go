@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,14 +17,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/jsonl"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 )
 
 // The power history keeps each final 5 s bucket's fleet totals across a
-// restart (power route, GET /api/derms/power). Mirror readings are held in
-// memory, so without it every bucket before a restart is gone.
+// restart (power route, GET /api/derms/power). Mirror readings outlive a
+// restart only for the span the newest buckets need (ReadingJournal), so
+// without it every older bucket is gone.
 //
 // A bucket is final maxHoldSeconds after its end, because a reading received
 // up to that long after it can still cover it. Final buckets are recorded
@@ -142,7 +142,15 @@ type PowerHistory struct {
 	mu        sync.Mutex
 	scopes    map[string]*historyScope
 	lastPrune int64
+
+	// journal, when set, keeps the mirror readings a restart needs; the
+	// recorder syncs it every pass and compacts it with each prune.
+	journal *ReadingJournal
 }
+
+// UseJournal hands the recorder the mirror reading journal. Call it before
+// Start.
+func (p *PowerHistory) UseJournal(j *ReadingJournal) { p.journal = j }
 
 // OpenPowerHistory loads the records under dir, creating it if needed, and
 // drops everything older than retention before now. A line that does not
@@ -213,41 +221,19 @@ func scopeOfFile(name string) (string, bool) {
 // readHistoryFile returns the valid records of path in ascending order and
 // how many lines it dropped. A missing file is empty.
 func readHistoryFile(path string) ([]historyRecord, int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, 0, nil
-		}
-		return nil, 0, fmt.Errorf("read %q: %w", path, err)
-	}
 	var recs []historyRecord
-	dropped := 0
-	for _, line := range bytes.Split(data, []byte{'\n'}) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
+	dropped, err := jsonl.ReadLines(path, func(line []byte) bool {
 		var r historyRecord
 		if err := json.Unmarshal(line, &r); err != nil || !r.valid() || (len(recs) > 0 && r.At <= recs[len(recs)-1].At) {
-			dropped++
-			continue
+			return false
 		}
 		recs = append(recs, r)
+		return true
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	return recs, dropped, nil
-}
-
-func encodeRecords(recs []historyRecord) ([]byte, error) {
-	var buf bytes.Buffer
-	for _, r := range recs {
-		line, err := json.Marshal(r)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(line)
-		buf.WriteByte('\n')
-	}
-	return buf.Bytes(), nil
 }
 
 // rewrite replaces scope's file with its records, or removes the file when
@@ -255,18 +241,11 @@ func encodeRecords(recs []historyRecord) ([]byte, error) {
 // so it reads them without p.mu.
 func (p *PowerHistory) rewrite(scope string) error {
 	sc := p.scopes[scope]
-	if len(sc.recs) == 0 {
-		if err := os.Remove(p.path(scope)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("power history: remove %q: %w", p.path(scope), err)
-		}
-		sc.dirty = false
-		return nil
-	}
-	payload, err := encodeRecords(sc.recs)
+	payload, err := jsonl.Encode(sc.recs)
 	if err != nil {
 		return fmt.Errorf("power history: encode %s: %w", scope, err)
 	}
-	if err := atomicfile.Write(p.path(scope), payload); err != nil {
+	if err := jsonl.Rewrite(p.path(scope), payload); err != nil {
 		return fmt.Errorf("power history: %w", err)
 	}
 	sc.dirty = false
@@ -516,7 +495,7 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 	}
 	p.mu.Unlock()
 	if earliest >= final {
-		return p.pruneIfDue(now)
+		return p.afterPass(ctx, now, final)
 	}
 
 	byDevice, err := mirrorsByDevice(ctx, h, "admin power history", func(string) bool { return true })
@@ -548,7 +527,20 @@ func (p *PowerHistory) Record(ctx context.Context, h *AdminFleetHandler, now int
 		}
 		start = end
 	}
-	return p.pruneIfDue(now)
+	return p.afterPass(ctx, now, final)
+}
+
+// afterPass runs once every scope has recorded the buckets final at now. It
+// syncs the reading journal, then prunes the history when due, and with it
+// compacts the journal to the readings that can reach the reporting lead of
+// final, the oldest bucket a restart now would leave unrecorded.
+func (p *PowerHistory) afterPass(ctx context.Context, now, final int64) error {
+	if p.journal != nil {
+		if err := p.journal.Sync(); err != nil {
+			return fmt.Errorf("power history: %w", err)
+		}
+	}
+	return p.pruneIfDue(ctx, now, reportedLead(final))
 }
 
 // appendScope records the present parts of scope, the first starting at from,
@@ -588,11 +580,11 @@ func (p *PowerHistory) appendScope(scope string, from, next int64, parts []part)
 			return err
 		}
 	}
-	payload, err := encodeRecords(added)
+	payload, err := jsonl.Encode(added)
 	if err != nil {
 		return fmt.Errorf("power history: encode %s: %w", scope, err)
 	}
-	if err := appendFile(p.path(scope), payload); err != nil {
+	if err := jsonl.Append(p.path(scope), payload, true); err != nil {
 		p.mu.Lock()
 		sc.dirty = true
 		p.mu.Unlock()
@@ -605,40 +597,12 @@ func (p *PowerHistory) appendScope(scope string, from, next int64, parts []part)
 	return nil
 }
 
-// appendFile adds payload to the file and syncs it. If the file does not end
-// in a newline, a torn or truncated last line, the append starts a new line so
-// it cannot join two records.
-func appendFile(path string, payload []byte) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		return fmt.Errorf("open %q: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-	if st, err := f.Stat(); err != nil {
-		return fmt.Errorf("stat %q: %w", path, err)
-	} else if st.Size() > 0 {
-		last := make([]byte, 1)
-		if _, err := f.ReadAt(last, st.Size()-1); err != nil {
-			return fmt.Errorf("read %q: %w", path, err)
-		}
-		if last[0] != '\n' {
-			payload = append([]byte{'\n'}, payload...)
-		}
-	}
-	if _, err := f.Write(payload); err != nil {
-		return fmt.Errorf("append %q: %w", path, err)
-	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("sync %q: %w", path, err)
-	}
-	return nil
-}
-
 // pruneIfDue removes records older than the retention, in memory and in the
-// files, once per powerHistoryPruneEvery. Between prunes a file can hold up to
-// that much beyond the bound; memory is trimmed on every prune only, so a
-// lookup can still serve a record that is due to go until then.
-func (p *PowerHistory) pruneIfDue(now int64) error {
+// files, once per powerHistoryPruneEvery, and compacts the reading journal to
+// keepFrom. Between prunes a file can hold up to that much beyond the bound;
+// memory is trimmed on every prune only, so a lookup can still serve a record
+// that is due to go until then.
+func (p *PowerHistory) pruneIfDue(ctx context.Context, now, keepFrom int64) error {
 	p.mu.Lock()
 	if now-p.lastPrune < int64(powerHistoryPruneEvery/time.Second) {
 		p.mu.Unlock()
@@ -660,6 +624,11 @@ func (p *PowerHistory) pruneIfDue(now int64) error {
 	for _, name := range changed {
 		if err := p.rewrite(name); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	if p.journal != nil {
+		if err := p.journal.Compact(ctx, keepFrom); err != nil {
+			errs = append(errs, fmt.Errorf("power history: compact the reading journal: %w", err))
 		}
 	}
 	return errors.Join(errs...)

@@ -23,7 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Mirror usage points now persist in `mirrorusagepoints.json` in the data dir, so a
   client that mirrored before a restart can still `POST /mup/{id}/mr` at the same
-  href instead of getting 404 (#1205). The mirror meter readings stay in memory.
+  href instead of getting 404 (#1205).
+- The power chart no longer loses its last 15 minutes across a restart, and
+  `latestW` is no longer null after one (#1206). With a data dir the mirror meter
+  readings are journaled to `mirrormeterreadings.jsonl` and replayed at boot; the
+  recorder compacts the journal hourly to the readings that can still reach a
+  bucket it has not recorded. The buckets recorded just after a restart are now
+  built from the same readings an uninterrupted server holds, so a device that had
+  gone quiet is no longer dropped from a covered Total.
 - Every EndDevice now advertises `DERListLink`, and the server seeds one DER
   at `/edev/{id}/der/1` for each EndDevice, on `POST /edev` and at boot. A
   device that registered itself was served no `DERListLink` and had no DER, so

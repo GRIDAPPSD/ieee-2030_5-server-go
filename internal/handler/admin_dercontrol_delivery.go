@@ -191,14 +191,21 @@ type ReadingLeg struct {
 	FlowDirection uint8
 }
 
+// InheritReadingTypes is a copy of readings with each missing ReadingType
+// filled by inheritReadingTypeByMRID. readings is not modified.
+func InheritReadingTypes(readings []sep2.MirrorMeterReading) []sep2.MirrorMeterReading {
+	typed := slices.Clone(readings)
+	inheritReadingTypeByMRID(typed)
+	return typed
+}
+
 // ReadingLegs reports, for each of one mirror's readings, its leg once its
 // ReadingType is inherited by mRID. readings is not modified. Mirror retention
 // caps readings per ReadingLeg: the direction is kept apart there, unlike in
 // the figure, so a client posting Forward and Reverse together still adds one
 // reading per post to each key.
 func ReadingLegs(readings []sep2.MirrorMeterReading) []ReadingLeg {
-	typed := slices.Clone(readings)
-	inheritReadingTypeByMRID(typed)
+	typed := InheritReadingTypes(readings)
 	out := make([]ReadingLeg, len(typed))
 	for i := range typed {
 		if l, ok := legOf(typed[i]); ok {
@@ -659,12 +666,27 @@ func (h *spanHeap) Pop() any {
 	return x
 }
 
+// holdReach is where the span of a reading received at receipt ends at the
+// latest when it has no timePeriod: an instantaneous reading holds forward at
+// most maxHoldSeconds, and an Average one ends at its receipt.
+func holdReach(receipt int64) int64 { return receipt + maxHoldSeconds }
+
+// readingReach is an upper bound on where r's span ends (readingCoverage is
+// the exact span): its timePeriod's end when it has one, else holdReach. A
+// reading whose reach is at or before t covers no second from t on.
+func readingReach(r sep2.MirrorMeterReading) int64 {
+	reach := holdReach(r.LastUpdateTime)
+	if r.Reading != nil && r.Reading.TimePeriod != nil && r.Reading.TimePeriod.Duration > 0 {
+		reach = max(reach, dercontrol.IntervalEnd(r.Reading.TimePeriod))
+	}
+	return reach
+}
+
 // readingsExpired reports whether a window starting at ws needs a reading
-// received before the retention cutoff: the earliest that can reach ws is
-// received maxHoldSeconds before it. A zero retention is unknown, never
-// expired.
+// received before the retention cutoff, that is whether one received there
+// can still reach ws (holdReach). A zero retention is unknown, never expired.
 func readingsExpired(ws, now int64, retention time.Duration) bool {
-	return retention > 0 && ws-maxHoldSeconds < now-int64(retention/time.Second)
+	return retention > 0 && ws < holdReach(now-int64(retention/time.Second))
 }
 
 // newDelivery computes one control's delivery from its device's mirrors.

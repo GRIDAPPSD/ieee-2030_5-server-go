@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DERCapability, DERSettings or DERAvailability, and the dashboard and fleet
   view showed none. A device that already has a DER is not given a second one.
 
+### Changed
+
+- Fleet DERAvailability staleness uses `derstatus.Assess`, the rule DERStatus
+  already uses (1860 s at the 900 s pollRate), in place of a fixed 15 minutes. A reading dated more
+  than one pollRate ahead is now stale. Mirror readings keep 15 minutes
+  (#1211).
+
 ## [0.18.0] - 2026-10-21
 
 This entry covers `v0.17.0..v0.18.0`. It is a MINOR release under the 0.x

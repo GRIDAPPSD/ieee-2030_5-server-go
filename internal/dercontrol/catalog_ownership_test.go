@@ -24,8 +24,8 @@ var (
 )
 
 // elementOwners are the only non-test files that may name a DERControlBase
-// element. link.go reads opModTargetW for what it means to a grant, not as a
-// catalog function.
+// element. link.go reads opModTargetW for what it means to a grant and for
+// the flow direction the views display (TargetOf), not as a catalog function.
 var elementOwners = map[string]bool{"catalog.go": true, "link.go": true}
 
 // A function is one catalog row: any other non-test file in this package or

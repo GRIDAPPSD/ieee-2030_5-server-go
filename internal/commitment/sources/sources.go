@@ -345,9 +345,7 @@ func controlOf(scope, id, fleet string, ctrl sep2.DERControl, lc dercontrol.Life
 	if ctl.Reach == 0 {
 		ctl.Reach = 1
 	}
-	if ctrl.DERControlBase != nil {
-		ctl.TargetW = ctrl.DERControlBase.OpModTargetW
-	}
+	ctl.TargetW = dercontrol.TargetOf(ctrl.DERControlBase)
 	if lc.SupersededAt != nil {
 		ctl.Window = ctl.Window.ClipAt(*lc.SupersededAt)
 	}

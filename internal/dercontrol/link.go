@@ -69,8 +69,8 @@ func newProposal(scope Scope, ctrl sep2.DERControl, grant string, fleet Fleet, c
 		GrantMRID: grant,
 		Reach:     fleet.Reach,
 	}
-	if ctrl.DERControlBase.OpModTargetW != nil {
-		v := *ctrl.DERControlBase.OpModTargetW
+	if t := TargetOf(ctrl.DERControlBase); t != nil {
+		v := *t
 		p.TargetW = &v
 	}
 	for _, c := range candidates {

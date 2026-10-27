@@ -36,6 +36,14 @@
     <span class="stat-label" title="DERs whose latest report has the operating bit set, under the same rule as Connected.">Operating</span><span id="derOperating">{counts.operating}</span>
   </div>
   <div class="stat-row">
+    <span class="stat-label" title="Devices with a DERControl from the server in force right now, FSA-sent controls included. A device whose control state could not be read is not counted.">Under a control</span><span id="derUnderControl">{counts.underControl}</span>
+  </div>
+  {#if counts.controlUnknown > 0}
+    <div class="stat-row">
+      <span class="stat-label" title="Devices whose control state could not be read. They are not counted under a control.">Control unknown</span><span id="derControlUnknown">{counts.controlUnknown} unknown</span>
+    </div>
+  {/if}
+  <div class="stat-row">
     <span class="stat-label">Mirror Usage Points</span><span id="mupCount">{data ? data.mupCount : 0}</span>
   </div>
 </div>

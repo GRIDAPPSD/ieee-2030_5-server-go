@@ -173,6 +173,10 @@ export interface DerCounts {
   lastKnown: number
   unreadable: number
   reported: number
+  // Devices with a server DERControl in force now, and devices whose
+  // control state is unknown (never counted under a control).
+  underControl: number
+  controlUnknown: number
 }
 
 // derCounts partitions every reported DER into exactly one bucket: stale
@@ -182,10 +186,14 @@ export interface DerCounts {
 // it is never counted connected or operating. operating overlaps connected
 // and disconnected rather than being a bucket of its own. unreadable counts
 // devices whose DER read failed, which are otherwise missing from every bucket.
+// underControl counts devices with a control in force; a device whose control
+// state is null or absent counts under controlUnknown, not under a control.
 export function derCounts(devices: DashboardDevice[]): DerCounts {
-  const n: DerCounts = { connected: 0, operating: 0, disconnected: 0, stale: 0, lastKnown: 0, unreadable: 0, reported: 0 }
+  const n: DerCounts = { connected: 0, operating: 0, disconnected: 0, stale: 0, lastKnown: 0, unreadable: 0, reported: 0, underControl: 0, controlUnknown: 0 }
   for (const device of devices) {
     if (device.derError) n.unreadable++
+    if (device.underControl === true) n.underControl++
+    else if (device.underControl !== false) n.controlUnknown++
     for (const der of device.ders) {
       if (!der.reported || der.connect === null) continue
       n.reported++

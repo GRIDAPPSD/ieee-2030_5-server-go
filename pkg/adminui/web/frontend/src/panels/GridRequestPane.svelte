@@ -10,6 +10,7 @@
   import { formatQuantity } from '../lib/flowreservation'
   import {
     buildGridRequest,
+    directionWord,
     newRow,
     refusedRows,
     shareText,
@@ -124,7 +125,7 @@
       <p tabindex="-1" {@attach focusOnMount}>Send {pending.lines.length} block{pending.lines.length === 1 ? '' : 's'} to the grid, split across every available aggregator:</p>
       <ul class="confirm-lines" data-testid="grid-confirm-lines">
         {#each pending.lines as line (line.row)}
-          <li data-testid="grid-confirm-line" class={line.directionWord === 'DISCHARGE' ? 'dir-discharge' : 'dir-charge'}>{line.text}</li>
+          <li data-testid="grid-confirm-line" class="dir-{line.direction}">{line.text}</li>
         {/each}
       </ul>
       <button class="btn btn-green" disabled={busy} onclick={confirm}>Confirm</button>
@@ -162,7 +163,7 @@
     </div>
     {#each created.rows as r (r.row)}
       <div data-testid="grid-created-row">
-        <strong>{r.direction === 'charge' ? 'CHARGE' : r.direction === 'discharge' ? 'DISCHARGE' : r.direction}</strong>
+        <strong>{directionWord(r.direction)}</strong>
         block {r.row}: requested {formatQuantity(r.requestedW, 'W')}, encoded {formatQuantity(r.encodedW, 'W')}
         (difference {formatQuantity(r.differenceW, 'W')}).
         <ul>

@@ -3,6 +3,8 @@
 // what the server sends: it never grants, flips a sign, or decides which
 // response is the tip.
 
+import { isObject } from './json'
+
 // multiplier may be absent on a malformed body; scaledNumber then reports
 // the quantity as missing instead of computing NaN.
 export interface ScaledValue {
@@ -183,10 +185,6 @@ export function formatActor(a: Actor | null | undefined): string {
 export function historyResponses(entry: FlowReservationEntry): ResponseView[] {
   const tipId = entry.tip?.id
   return entry.responses.filter((r) => r.id !== tipId)
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
 function objectOrNull(v: unknown): boolean {

@@ -3,6 +3,8 @@
 // pointer on the Go side is optional here for the same reason, an omitted
 // JSON key rather than a synthesized value.
 
+import { isObject } from './json'
+
 export interface FleetMeasurement {
   value: number
   readingTime: number
@@ -168,10 +170,6 @@ export function formatAge(seconds: number | null): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
   return `${Math.floor(seconds / 86400)}d ago`
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function isFleetSum(v: unknown): boolean {

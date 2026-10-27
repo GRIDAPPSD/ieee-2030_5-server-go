@@ -86,6 +86,8 @@ describe('GridRequestPane entry', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add row' }))
     expect(rowsOf()).toHaveLength(2)
     const second = within(rowsOf()[1])
+    expect((second.getAllByRole('radio') as HTMLInputElement[]).map((r) => r.checked)).toEqual([false, false])
+    await fillRow(1, { dir: 'To grid' })
     expect(second.getByTestId('grid-follows')).toHaveTextContent('Starts when block 1 ends')
     expect((second.getByTestId('grid-start') as HTMLInputElement).value).not.toBe('')
     expect((second.getByTestId('grid-x') as HTMLInputElement).value).toBe('50')
@@ -106,6 +108,7 @@ describe('GridRequestPane entry', () => {
     render(GridRequestPane)
     await fillRow(0, { dir: 'To grid', x: '50', minutes: '60' })
     await fireEvent.click(screen.getByRole('button', { name: 'Add row' }))
+    await fillRow(1, { dir: 'To grid' })
     await fireEvent.input(within(rowsOf()[1]).getByTestId('grid-start'), { target: { value: '2031-03-04T05:06:07' } })
     expect(within(rowsOf()[1]).queryByTestId('grid-follows')).toBeNull()
     await review()
@@ -114,6 +117,50 @@ describe('GridRequestPane entry', () => {
     const sent = (post.mock.calls[0][1] as { rows: Record<string, unknown>[] }).rows[1]
     expect(sent).toEqual({ direction: 'discharge', x: 50, y: 3, durationSeconds: 3600, start: new Date(2031, 2, 4, 5, 6, 7).getTime() / 1000 })
     expect(sent).not.toHaveProperty('followsPrevious')
+  })
+
+  it('an added row cannot be reviewed until a direction is chosen on it', async () => {
+    const post = mockWrite({ ok: true, data: created(2) })
+    render(GridRequestPane)
+    await fillRow(0, { dir: 'From grid', x: '50', minutes: '60' })
+    await fireEvent.click(screen.getByRole('button', { name: 'Add row' }))
+    await review()
+    expect(screen.queryByTestId('grid-confirm')).toBeNull()
+    expect(rowsOf()[0]).not.toContainElement(screen.queryByTestId('grid-row-refusal'))
+    expect(within(rowsOf()[1]).getByTestId('grid-row-refusal')).toHaveTextContent('Choose a direction')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('keeps the amount unsigned for a charge row', async () => {
+    const post = mockWrite({ ok: true, data: created() })
+    render(GridRequestPane)
+    await fillRow(0, { dir: 'From grid', x: '-20', minutes: '60' })
+    await review()
+    expect(within(rowsOf()[0]).getByTestId('grid-row-refusal')).toHaveTextContent('The amount takes no sign')
+    await fillRow(0, { x: '20' })
+    await review()
+    await fireEvent.click(confirmButton())
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect((post.mock.calls[0][1] as { rows: unknown[] }).rows).toEqual([{ direction: 'charge', x: 20, y: 3, durationSeconds: 3600 }])
+  })
+
+  describe('with the clock fixed', () => {
+    afterEach(() => vi.useRealTimers())
+
+    it('opens the start picker at the current moment when Start now is unchecked, and keeps a later start typed there', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2030, 0, 2, 3, 4, 5))
+      render(GridRequestPane)
+      const row = within(rowsOf()[0])
+      expect(row.queryByTestId('grid-start')).toBeNull()
+      await fireEvent.click(row.getByRole('checkbox', { name: 'Start now' }))
+      // jsdom may append milliseconds to a datetime-local value; a browser does not.
+      expect((row.getByTestId('grid-start') as HTMLInputElement).value).toMatch(/^2030-01-02T03:04:05(\.000)?$/)
+      await fireEvent.input(row.getByTestId('grid-start'), { target: { value: '2030-01-03T06:00:00' } })
+      await fireEvent.click(row.getByRole('checkbox', { name: 'Start now' }))
+      await fireEvent.click(row.getByRole('checkbox', { name: 'Start now' }))
+      expect((row.getByTestId('grid-start') as HTMLInputElement).value).toMatch(/^2030-01-03T06:00(:00)?(\.000)?$/)
+    })
   })
 
   it('removing a block drops it and keeps the rest as typed', async () => {
@@ -138,10 +185,24 @@ describe('GridRequestPane confirm', () => {
     await review()
     const lines = screen.getAllByTestId('grid-confirm-line').map((l) => l.textContent)
     expect(lines).toEqual([
-      'Block 1: DISCHARGE 50,000 W TO the grid, starts now, for 60 min. Wire: opModTargetW = +50 x 10^3 W (positive = discharge).',
-      'Block 2: CHARGE 20,000 W FROM the grid, starts when block 1 ends, for 60 min. Wire: opModTargetW = -20 x 10^3 W (negative = charge).',
+      'Block 1: DISCHARGE 50,000 W TO the grid, starts now, for 60 min. Wire, batch total: opModTargetW = +50 x 10^3 W (positive = discharge).',
+      'Block 2: CHARGE 20,000 W FROM the grid, starts when block 1 ends, for 60 min. Wire, batch total: opModTargetW = -20 x 10^3 W (negative = charge).',
     ])
     expect(post).not.toHaveBeenCalled()
+  })
+
+  it('marks each confirm line by its direction, discharge and charge differently', async () => {
+    mockWrite({ ok: true, data: created(2) })
+    render(GridRequestPane)
+    await fillRow(0, { dir: 'To grid', x: '50', minutes: '60' })
+    await fireEvent.click(screen.getByRole('button', { name: 'Add row' }))
+    await fillRow(1, { dir: 'From grid' })
+    await review()
+    const lines = screen.getAllByTestId('grid-confirm-line')
+    expect(lines[0]).toHaveClass('dir-discharge')
+    expect(lines[0]).not.toHaveClass('dir-charge')
+    expect(lines[1]).toHaveClass('dir-charge')
+    expect(lines[1]).not.toHaveClass('dir-discharge')
   })
 
   it('Back returns to the rows as typed', async () => {
@@ -205,8 +266,13 @@ describe('GridRequestPane after the answer', () => {
     [
       '409 aggregator_unavailable',
       409,
-      { error: 'unavailable', code: 'aggregator_unavailable', rows: [{ row: 2, code: 'aggregator_unavailable', aggregatorLFDI: AGG }] },
-      "An aggregator's fleet cannot take it. (aggregator_unavailable)",
+      {
+        error: 'unavailable',
+        code: 'aggregator_unavailable',
+        rows: [{ row: 2, code: 'aggregator_unavailable', aggregatorLFDI: AGG }],
+        aggregators: [{ aggregatorLFDI: AGG, device: '7', code: 'device_not_assignable' }],
+      },
+      'Aggregator AGG0000000000000... cannot take it: device 7 (device_not_assignable). (aggregator_unavailable)',
     ],
   ])('marks the row a %s names, and only that row, and keeps what was typed', async (_label, status, body, text) => {
     mockWrite({ ok: false, status, error: body.error, body })

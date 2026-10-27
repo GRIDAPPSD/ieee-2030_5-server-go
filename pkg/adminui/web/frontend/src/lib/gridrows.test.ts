@@ -9,6 +9,7 @@ import {
   MAX_GRID_ROWS,
   newRow,
   parseGridCreated,
+  parseGridRefusal,
   pickerValue,
   refusedRows,
   refusalText,
@@ -35,6 +36,7 @@ describe('buildGridRequest', () => {
 
   it('sends a chained row as followsPrevious with no start, and a typed start as its epoch seconds without followsPrevious', () => {
     const rows = addRow([filled()])
+    rows[1].direction = 'discharge'
     const chained = buildGridRequest(rows)
     if (!chained.ok) throw new Error('chained batch refused')
     expect(chained.body.rows[1]).toEqual({ direction: 'discharge', x: 50, y: 3, durationSeconds: 3600, followsPrevious: true })
@@ -50,13 +52,13 @@ describe('buildGridRequest', () => {
   it('states each row direction in words and its signed wire value, discharge positive and charge negative', () => {
     const r = buildGridRequest([filled(), filled({ direction: 'charge', x: '20', follows: true, startNow: false })])
     if (!r.ok) throw new Error('batch refused')
-    expect(r.lines[0].directionWord).toBe('DISCHARGE')
+    expect(r.lines[0].direction).toBe('discharge')
     expect(r.lines[0].text).toBe(
-      'Block 1: DISCHARGE 50,000 W TO the grid, starts now, for 60 min. Wire: opModTargetW = +50 x 10^3 W (positive = discharge).',
+      'Block 1: DISCHARGE 50,000 W TO the grid, starts now, for 60 min. Wire, batch total: opModTargetW = +50 x 10^3 W (positive = discharge).',
     )
-    expect(r.lines[1].directionWord).toBe('CHARGE')
+    expect(r.lines[1].direction).toBe('charge')
     expect(r.lines[1].text).toBe(
-      'Block 2: CHARGE 20,000 W FROM the grid, starts when block 1 ends, for 60 min. Wire: opModTargetW = -20 x 10^3 W (negative = charge).',
+      'Block 2: CHARGE 20,000 W FROM the grid, starts when block 1 ends, for 60 min. Wire, batch total: opModTargetW = -20 x 10^3 W (negative = charge).',
     )
   })
 
@@ -82,6 +84,16 @@ describe('buildGridRequest', () => {
     expect(buildGridRequest([filled({ x })])).toEqual({ ok: false, errors: [{ row: 1, message }] })
   })
 
+  it('keeps the amount unsigned for a charge row: a sign is refused, and the body carries the bare amount', () => {
+    expect(buildGridRequest([filled({ direction: 'charge', x: '-20' })])).toEqual({
+      ok: false,
+      errors: [{ row: 1, message: 'The amount takes no sign. Choose the direction instead.' }],
+    })
+    const r = buildGridRequest([filled({ direction: 'charge', x: '20' })])
+    if (!r.ok) throw new Error('batch refused')
+    expect(r.body.rows[0]).toMatchObject({ direction: 'charge', x: 20 })
+  })
+
   it('refuses a multiplier outside -9..9 and a duration outside 1..1440 minutes', () => {
     expect(buildGridRequest([filled({ y: '10' })]).ok).toBe(false)
     expect(buildGridRequest([filled({ y: '-9' })]).ok).toBe(true)
@@ -92,12 +104,19 @@ describe('buildGridRequest', () => {
 })
 
 describe('rows', () => {
-  it('addRow copies direction, amount and duration, chains to the row before, and stops at the cap', () => {
+  it('addRow copies amount and duration but never the direction, chains to the row before, and stops at the cap', () => {
     const rows = addRow([filled({ direction: 'charge', x: '7', y: '2', durationMinutes: '15' })])
-    expect(rows[1]).toEqual({ direction: 'charge', x: '7', y: '2', durationMinutes: '15', startNow: false, start: '', follows: true })
+    expect(rows[1]).toEqual({ direction: '', x: '7', y: '2', durationMinutes: '15', startNow: false, start: '', follows: true })
     let many = [filled()]
     for (let i = 0; i < 40; i++) many = addRow(many)
     expect(many).toHaveLength(MAX_GRID_ROWS)
+  })
+
+  it('an added row cannot be sent until a direction is chosen on it', () => {
+    const rows = addRow([filled({ direction: 'charge' })])
+    expect(buildGridRequest(rows)).toEqual({ ok: false, errors: [{ row: 2, message: 'Choose a direction: to the grid or from the grid.' }] })
+    rows[1].direction = 'discharge'
+    expect(buildGridRequest(rows).ok).toBe(true)
   })
 
   it('removeRow of the first row makes the next one start now instead of chaining to nothing', () => {
@@ -125,6 +144,24 @@ describe('refusals', () => {
     )
   })
 
+  it('names the aggregator and the device an aggregator_unavailable row names', () => {
+    const aggs = [{ aggregatorLFDI: 'AGG00000000000000000000000000000000001', device: '7', code: 'device_not_assignable' }]
+    expect(refusalText({ row: 1, code: 'aggregator_unavailable', aggregatorLFDI: aggs[0].aggregatorLFDI }, aggs)).toBe(
+      'Aggregator AGG0000000000000... cannot take it: device 7 (device_not_assignable). (aggregator_unavailable)',
+    )
+    expect(refusalText({ row: 1, code: 'aggregator_unavailable' })).toBe("An aggregator's fleet cannot take it. (aggregator_unavailable)")
+  })
+
+  it('reads the aggregators list of a refusal, and skips malformed entries', () => {
+    const r = parseGridRefusal({
+      error: 'x',
+      code: 'aggregator_unavailable',
+      rows: [],
+      aggregators: [{ aggregatorLFDI: 'A', device: '7', code: 'c' }, { aggregatorLFDI: 'B' }],
+    })
+    expect(r?.aggregators).toEqual([{ aggregatorLFDI: 'A', device: '7', code: 'c' }])
+  })
+
   it('shows an unknown code as given', () => {
     expect(refusalText({ row: 1, code: 'something_new' })).toBe('The server refused it. (something_new)')
   })
@@ -134,6 +171,7 @@ describe('refusals', () => {
       code: 'rows_conflict',
       error: 'x',
       devices: [],
+      aggregators: [],
       rows: [
         { row: 2, code: 'overlapping_request' },
         { row: 4, code: 'start_in_past' },

@@ -79,7 +79,7 @@ test('a two-row back-to-back batch is accepted, with each row split to the aggre
   const lines = page.getByTestId('grid-confirm-line');
   await expect(lines).toHaveCount(2);
   await expect(lines.nth(0)).toContainText('DISCHARGE 50,000 W TO the grid');
-  await expect(lines.nth(0)).toContainText('opModTargetW = +50 x 10^3 W');
+  await expect(lines.nth(0)).toContainText('Wire, batch total: opModTargetW = +50 x 10^3 W');
   await expect(lines.nth(1)).toContainText('CHARGE 20,000 W FROM the grid, starts when block 1 ends');
   await expect(lines.nth(1)).toContainText('opModTargetW = -20 x 10^3 W');
   await page.getByRole('button', { name: 'Confirm' }).click();

@@ -6,7 +6,9 @@
 // the server names.
 import { postJSON, type RequestOptions } from './api'
 import { localDateTimeInput, localDateTimeSeconds } from './dercontrol'
+import { deviceLabel } from './devices'
 import { formatQuantity, scaledNumber, type ScaledValue } from './flowreservation'
+import { isObject } from './json'
 
 export const MAX_GRID_ROWS = 24
 export const MIN_DURATION_MINUTES = 1
@@ -14,6 +16,23 @@ export const MAX_DURATION_MINUTES = 24 * 60
 const MAX_AMOUNT = 999_999_999
 
 export type GridDirection = 'discharge' | 'charge'
+
+// Everything the page says about a direction, in one place: the word, where
+// the power goes, and the sign opModTargetW carries (discharge positive).
+const DIRECTION: Record<GridDirection, { word: string; toFrom: string; sign: '+' | '-'; meaning: string }> = {
+  discharge: { word: 'DISCHARGE', toFrom: 'TO the grid', sign: '+', meaning: 'positive = discharge' },
+  charge: { word: 'CHARGE', toFrom: 'FROM the grid', sign: '-', meaning: 'negative = charge' },
+}
+
+function isDirection(d: string): d is GridDirection {
+  return d === 'discharge' || d === 'charge'
+}
+
+// directionWord is the upper-case word for a direction as the server names
+// it, and any other word as given.
+export function directionWord(direction: string): string {
+  return isDirection(direction) ? DIRECTION[direction].word : direction
+}
 
 // One block as typed. start is a datetime-local value and is read only when
 // neither startNow nor follows is set; follows chains the block to the end of
@@ -51,7 +70,7 @@ export interface GridRowError {
 // both directions cannot be read as one.
 export interface GridConfirmLine {
   row: number
-  directionWord: 'DISCHARGE' | 'CHARGE'
+  direction: GridDirection
   text: string
 }
 
@@ -60,11 +79,11 @@ export function newRow(): GridRowDraft {
 }
 
 // addRow appends a block chained to the end of the last one, with the same
-// direction, amount and duration.
+// amount and duration. The direction is left blank: it is never defaulted.
 export function addRow(rows: GridRowDraft[]): GridRowDraft[] {
   if (rows.length >= MAX_GRID_ROWS) return rows
   const last = rows[rows.length - 1]
-  return [...rows, { ...last, startNow: false, start: '', follows: true }]
+  return [...rows, { ...last, direction: '', startNow: false, start: '', follows: true }]
 }
 
 // removeRow drops block n. The first block cannot follow anything, so a block
@@ -140,9 +159,8 @@ export function rowErrors(r: GridRowDraft, i: number): string[] {
 }
 
 export function signedWire(direction: GridDirection, x: number, y: number): string {
-  const sign = direction === 'discharge' ? '+' : '-'
-  const meaning = direction === 'discharge' ? 'positive = discharge' : 'negative = charge'
-  return `opModTargetW = ${sign}${x} x 10^${y} W (${meaning})`
+  const d = DIRECTION[direction]
+  return `opModTargetW = ${d.sign}${x} x 10^${y} W (${d.meaning})`
 }
 
 function whenText(rows: GridRowDraft[], i: number, minutesLong: number): string {
@@ -179,14 +197,12 @@ export function buildGridRequest(rows: GridRowDraft[]): BuiltGrid {
     if (r.follows) row.followsPrevious = true
     else if (!r.startNow) row.start = localDateTimeSeconds(r.start) as number
     body.rows.push(row)
-    const word = direction === 'discharge' ? 'DISCHARGE' : 'CHARGE'
-    const toFrom = direction === 'discharge' ? 'TO the grid' : 'FROM the grid'
     lines.push({
       row: i + 1,
-      directionWord: word,
+      direction,
       text:
-        `Block ${i + 1}: ${word} ${formatQuantity(x * Math.pow(10, y), 'W')} ${toFrom}, ${whenText(rows, i, m)}. ` +
-        `Wire: ${signedWire(direction, x, y)}.`,
+        `Block ${i + 1}: ${DIRECTION[direction].word} ${formatQuantity(x * Math.pow(10, y), 'W')} ${DIRECTION[direction].toFrom}, ${whenText(rows, i, m)}. ` +
+        `Wire, batch total: ${signedWire(direction, x, y)}.`,
     })
   })
   return { ok: true, body, lines }
@@ -213,15 +229,18 @@ export interface GridDeviceEvents {
   added: number
 }
 
+export interface GridAggregatorRefusal {
+  aggregatorLFDI: string
+  device: string
+  code: string
+}
+
 export interface GridRefusal {
   code: string
   error: string
   rows: GridRowRefusal[]
   devices: GridDeviceEvents[]
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
+  aggregators: GridAggregatorRefusal[]
 }
 
 // parseGridRefusal reads the 409 and 422 body, or null when it is not one.
@@ -238,7 +257,11 @@ export function parseGridRefusal(body: unknown): GridRefusal | null {
   const devices = (Array.isArray(body.devices) ? body.devices : []).filter(
     (d): d is GridDeviceEvents => isObject(d) && typeof d.device === 'string' && typeof d.live === 'number' && typeof d.added === 'number',
   )
-  return { code: body.code, error: body.error, rows, devices }
+  const aggregators = (Array.isArray(body.aggregators) ? body.aggregators : []).filter(
+    (a): a is GridAggregatorRefusal =>
+      isObject(a) && typeof a.aggregatorLFDI === 'string' && typeof a.device === 'string' && typeof a.code === 'string',
+  )
+  return { code: body.code, error: body.error, rows, devices, aggregators }
 }
 
 const ROW_TEXT: Record<string, string> = {
@@ -267,13 +290,23 @@ function conflictText(c: GridConflict | undefined): string {
   return `It overlaps a live block of batch ${c.batch} (its row ${c.row}${window}).`
 }
 
+// unavailableText names the aggregator a row's share could not reach and the
+// device of its fleet the server names, from the refusal's aggregators list.
+function unavailableText(r: GridRowRefusal, aggregators: GridAggregatorRefusal[]): string {
+  if (r.aggregatorLFDI === undefined) return "An aggregator's fleet cannot take it."
+  const name = deviceLabel(r.aggregatorLFDI)
+  const named = aggregators.filter((a) => a.aggregatorLFDI === r.aggregatorLFDI)
+  if (named.length === 0) return `Aggregator ${name} cannot take it.`
+  return `Aggregator ${name} cannot take it: ${named.map((a) => `device ${a.device} (${a.code})`).join(', ')}.`
+}
+
 // refusalText words one refused row, always ending in the server's code.
-export function refusalText(r: GridRowRefusal): string {
+export function refusalText(r: GridRowRefusal, aggregators: GridAggregatorRefusal[] = []): string {
   const text =
     r.code === 'overlapping_request'
       ? conflictText(r.conflictsWith)
       : r.code === 'aggregator_unavailable'
-        ? "An aggregator's fleet cannot take it."
+        ? unavailableText(r, aggregators)
         : (ROW_TEXT[r.code] ?? 'The server refused it.')
   return `${text} (${r.code})`
 }
@@ -281,7 +314,7 @@ export function refusalText(r: GridRowRefusal): string {
 // refusedRows groups a refusal's row messages by block number.
 export function refusedRows(refusal: GridRefusal): Map<number, string[]> {
   const out = new Map<number, string[]>()
-  for (const r of refusal.rows) out.set(r.row, [...(out.get(r.row) ?? []), refusalText(r)])
+  for (const r of refusal.rows) out.set(r.row, [...(out.get(r.row) ?? []), refusalText(r, refusal.aggregators)])
   return out
 }
 

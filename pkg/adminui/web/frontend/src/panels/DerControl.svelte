@@ -44,6 +44,7 @@
     fmtTime,
     localDateTimeInput,
     keptControl,
+    originMarker,
     POLL_RATE_SECONDS,
     type DERControlListItem,
     type DERControlListResponse,
@@ -576,6 +577,12 @@
   const controlCount = (href: string): number => controls.filter((c) => c.derProgramHref === href).length
 </script>
 
+{#snippet originCell(text: string)}
+  {#if text}
+    <span class="stat-label" data-testid="control-origin">{text}</span>
+  {/if}
+{/snippet}
+
 {#snippet cancelCell(mrid: string)}
   {#if cancelTarget === mrid}
     <input type="text" placeholder="reason (optional)" style="max-width: 100px;" bind:value={cancelReason} />
@@ -795,7 +802,10 @@
           {#each shownControls as ctrl (ctrl.mRID)}
             <tr data-testid="der-control-row" data-mrid={ctrl.mRID}>
               <td>{ctrl.type}</td>
-              <td>{functionsText(ctrl.functions)}</td>
+              <td>
+                {functionsText(ctrl.functions)}
+                {@render originCell(originMarker(ctrl.origin, ctrl.functions))}
+              </td>
               <td>{ctrl.derProgramHref} ({primacyOf(ctrl.derProgramHref)})</td>
               <td>{fmtTime(ctrl.interval.start)}</td>
               <td>{fmtTime(ctrl.interval.start + ctrl.interval.duration)}</td>
@@ -855,7 +865,10 @@
           {#each shownFsaControls as ctrl (ctrl.id)}
             <tr data-testid="fsa-control-row" data-mrid={ctrl.mRID}>
               <td>{ctrl.type}</td>
-              <td>{functionsText(ctrl.functions)}</td>
+              <td>
+                {functionsText(ctrl.functions)}
+                {@render originCell(originMarker(ctrl.origin, ctrl.functions))}
+              </td>
               <td>{fmtTime(ctrl.interval.start)}</td>
               <td>{fmtTime(ctrl.interval.start + ctrl.interval.duration)}</td>
               <td data-testid="fsa-control-status">{fsaControlStatus(ctrl)}</td>

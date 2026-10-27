@@ -8,6 +8,7 @@
 import { fetchJSON, postJSON, putJSON, type ApiResult } from './api'
 import type { DeviceControlBody } from './controlcatalog'
 import type { ProgramTemplate } from './derprogram'
+import type { ControlOrigin } from './dercontrol'
 
 export interface FsaControlCopy {
   device: string
@@ -26,6 +27,8 @@ export interface FsaControlView {
   creationTime: number
   interval: { start: number; duration: number }
   ended: boolean
+  // Where the control came from.
+  origin?: ControlOrigin
   cancelled: boolean
   cancelledAt: number | null
   cancelReason?: string

@@ -317,6 +317,10 @@ type DERControlView struct {
 	Ended         bool            `json:"ended"`
 	EventStatus   EventStatusView `json:"eventStatus"`
 	ExecutesGrant *string         `json:"executesGrant"`
+	// Origin is "admin" for a control an operator issued and "derms" for one
+	// the server issued on a DERMS request; a record saved before the field
+	// reads admin.
+	Origin string `json:"origin"`
 }
 
 // DERControlCreated is the 201 body of POST /api/der/controls. Supersedes
@@ -1132,6 +1136,7 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		DERControlListHref: scope.ControlListHref(),
 		Description:        ctrl.Description,
 		CreationTime:       ctrl.CreationTime,
+		Origin:             dercontrol.OriginOf(lc.Origin),
 	}
 	v.Type, v.DERControlBase, v.Functions = controlBaseViews(ctrl.DERControlBase)
 	if lc.GrantMRID != "" {

@@ -73,6 +73,12 @@ type CreateRequest struct {
 	// it (GRIDAPPSD/ieee-2030_5-server-go#714).
 	ExecutesGrant string
 
+	// Origin is where the control came from: empty or OriginAdmin for an
+	// operator, OriginDERMS for the server acting on a DERMS request (#1155).
+	// Only server code sets it; no request body field maps to it. Only
+	// IssueAcross and the FSA record it writes honor it.
+	Origin string
+
 	// Start is the requested interval start, Unix seconds. Nil means
 	// "start at creationTime" (acceptance criterion 4).
 	Start *int64

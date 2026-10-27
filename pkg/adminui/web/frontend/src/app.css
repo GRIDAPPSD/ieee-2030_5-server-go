@@ -65,6 +65,7 @@
   --fs-4: 14px;
   --fs-5: 16px;
   --fs-display: 36px;
+  --ev-bar-h: 26px;
   --lh-base: 1.45;
 
   --sp-0: 2px;
@@ -418,6 +419,122 @@ td {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* The track sits inside the same side margins as the energy chart's plot
+   (left 60, right 30), so a time falls at the same x in both. */
+.events {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ev-lane-label {
+  display: block;
+  font-size: var(--fs-2);
+  color: var(--text-muted);
+  margin-left: 60px;
+  margin-bottom: var(--sp-0);
+}
+
+.ev-track {
+  list-style: none;
+  position: relative;
+  margin: 0 30px 0 60px;
+  padding: 0;
+  background: var(--surface-raised);
+  border-radius: var(--radius-sm);
+}
+
+.ev-bar {
+  position: absolute;
+  box-sizing: border-box;
+  height: calc(var(--ev-bar-h) - 4px);
+  margin-top: 2px;
+  min-width: 4px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-1);
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-2);
+  color: var(--text);
+  border: 2px solid var(--border-strong);
+  background: var(--surface-card);
+  border-radius: var(--radius-sm);
+}
+
+.ev-bar.ev-dir-discharge {
+  border-color: var(--power-discharge);
+  background: var(--power-discharge-fill);
+}
+
+.ev-bar.ev-dir-charge {
+  border-color: var(--power-charge);
+  background: var(--power-charge-fill);
+}
+
+.ev-bar.ev-scheduled {
+  border-style: dashed;
+  background: transparent;
+}
+
+.ev-bar.ev-completed {
+  opacity: 0.6;
+}
+
+.ev-bar.ev-cancelled,
+.ev-bar.ev-superseded {
+  opacity: 0.7;
+  text-decoration: line-through;
+  background: repeating-linear-gradient(135deg, transparent 0, transparent 4px, var(--border-strong) 4px, var(--border-strong) 5px);
+}
+
+.ev-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ev-derms {
+  flex: none;
+  font-size: var(--fs-1);
+  font-weight: 600;
+  padding: 0 var(--sp-1);
+  border-radius: var(--radius-sm);
+  background: var(--accent-solid);
+  color: var(--text-on-solid);
+  text-decoration: none;
+}
+
+.ev-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--text);
+  pointer-events: none;
+}
+
+.ev-axis {
+  position: relative;
+  height: var(--sp-5);
+  margin: 0 30px 0 60px;
+}
+
+.ev-now-label {
+  position: absolute;
+  font-size: var(--fs-1);
+  color: var(--text-muted);
+  transform: translateX(-50%);
+}
+
+.ev-now-label.ev-now-end {
+  transform: translateX(-100%);
+}
+
+.ev-empty {
+  margin: 0 30px 0 60px;
 }
 
 .power-chart .chart-container.chart-tall {

@@ -1,0 +1,154 @@
+// The Overview events timeline's wire shape (GET /api/derms/control-events,
+// internal/handler admin_control_events.go), its narrowing, and the pure
+// layout the timeline draws: lanes in the power chart's order, bar spans on
+// the shared time range, labels in words.
+import { DIRECT_KEY, aggregatorLabels, formatKw, type PowerAnswer } from './power'
+
+export type ControlEventStatus = 'scheduled' | 'active' | 'completed' | 'cancelled' | 'superseded'
+export type ControlEventDirection = 'discharge' | 'charge'
+
+export interface ControlEvent {
+  group: string
+  groupKind: 'aggregator' | 'direct'
+  scope: 'device' | 'fsa'
+  fsaID?: string
+  deviceIDs: string[]
+  mrid: string
+  origin: 'admin' | 'derms'
+  direction: ControlEventDirection | null
+  // Signed watts, discharge positive; null when the control has no target.
+  targetW: number | null
+  modes: string[]
+  status: ControlEventStatus
+  // Epoch seconds.
+  start: number
+  end: number
+}
+
+export interface ControlEventsAnswer {
+  windowStart: number
+  windowEnd: number
+  events: ControlEvent[]
+}
+
+export const controlEventsPath = (windowSeconds: number): string =>
+  `/api/derms/control-events?window=${windowSeconds}&scope=all`
+
+const STATUSES: readonly string[] = ['scheduled', 'active', 'completed', 'cancelled', 'superseded']
+
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
+
+function isEvent(v: unknown): v is ControlEvent {
+  if (typeof v !== 'object' || v === null) return false
+  const e = v as Record<string, unknown>
+  return (
+    typeof e.group === 'string' &&
+    (e.groupKind === 'aggregator' || e.groupKind === 'direct') &&
+    (e.scope === 'device' || e.scope === 'fsa') &&
+    (e.fsaID === undefined || typeof e.fsaID === 'string') &&
+    isStrings(e.deviceIDs) &&
+    typeof e.mrid === 'string' &&
+    (e.origin === 'admin' || e.origin === 'derms') &&
+    (e.direction === null || e.direction === 'discharge' || e.direction === 'charge') &&
+    (e.targetW === null || (typeof e.targetW === 'number' && Number.isFinite(e.targetW))) &&
+    isStrings(e.modes) &&
+    typeof e.status === 'string' &&
+    STATUSES.includes(e.status) &&
+    typeof e.start === 'number' &&
+    typeof e.end === 'number'
+  )
+}
+
+// parseControlEvents refuses a reply whole when any field the timeline reads
+// has the wrong type, so a malformed reply never draws as a partial one.
+export function parseControlEvents(value: unknown): ControlEventsAnswer | null {
+  if (typeof value !== 'object' || value === null) return null
+  const v = value as Record<string, unknown>
+  if (typeof v.windowStart !== 'number' || typeof v.windowEnd !== 'number' || !Array.isArray(v.events)) return null
+  if (!v.events.every(isEvent)) return null
+  return { windowStart: v.windowStart, windowEnd: v.windowEnd, events: v.events }
+}
+
+// The bar text, in words: the direction and target ("discharge 5.0 kW"), or
+// the mode names when the control has no target.
+export function eventLabel(e: ControlEvent): string {
+  if (e.targetW !== null) {
+    const kw = formatKw(Math.abs(e.targetW))
+    return e.direction === null ? kw : `${e.direction} ${kw}`
+  }
+  if (e.modes.length > 0) return e.modes.join(', ')
+  return e.direction ?? 'control'
+}
+
+const time = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString()
+
+// The hover and assistive text: the label, who sent it, its status and span.
+export function eventTitle(e: ControlEvent): string {
+  const origin = e.origin === 'derms' ? 'DERMS' : 'admin'
+  return `${eventLabel(e)}, ${origin}, ${e.status}, ${time(e.start)} to ${time(e.end)}`
+}
+
+export interface Lane {
+  key: string
+  label: string
+}
+
+// One lane per aggregator in the order the power chart draws them, then
+// Direct, labelled as the legend labels them. A group the power answer does
+// not list still gets a lane after those, so no event goes undrawn.
+export function lanesFor(answer: PowerAnswer, events: ControlEvent[], labelOf: (lfdi: string) => string): Lane[] {
+  const per = answer.aggregatorEnergy
+  const base: { key: string }[] =
+    per !== null && per.length > 0
+      ? per.map((e) => ({ key: e.key }))
+      : [...answer.aggregators.map((key) => ({ key })), { key: DIRECT_KEY }]
+  const known = new Set(base.map((l) => l.key))
+  for (const e of events) {
+    if (!known.has(e.group)) {
+      known.add(e.group)
+      base.push({ key: e.group })
+    }
+  }
+  const labels = aggregatorLabels(
+    base.map((l) => ({ key: l.key, name: l.key, latestW: null, latestMissing: [], discharged: [], charged: [] })),
+    labelOf,
+  )
+  return base.map((l, i) => ({ key: l.key, label: labels[i] }))
+}
+
+export interface Bar {
+  event: ControlEvent
+  // Percent of the shared range, clipped to it.
+  left: number
+  width: number
+  // The stacking row inside the lane, from 0.
+  row: number
+}
+
+// barsFor places a lane's events on the range [rangeStartMs, rangeEndMs] and
+// stacks overlapping ones into rows. An event wholly outside the range is
+// dropped.
+export function barsFor(events: ControlEvent[], rangeStartMs: number, rangeEndMs: number): Bar[] {
+  const span = rangeEndMs - rangeStartMs
+  if (span <= 0) return []
+  const sorted = events
+    .filter((e) => e.end * 1000 > rangeStartMs && e.start * 1000 < rangeEndMs)
+    .sort((a, b) => a.start - b.start || a.end - b.end)
+  const rowEnds: number[] = []
+  return sorted.map((event) => {
+    const from = Math.max(event.start * 1000, rangeStartMs)
+    const to = Math.min(event.end * 1000, rangeEndMs)
+    let row = rowEnds.findIndex((end) => end <= event.start)
+    if (row < 0) row = rowEnds.length
+    rowEnds[row] = event.end
+    return { event, left: ((from - rangeStartMs) / span) * 100, width: ((to - from) / span) * 100, row }
+  })
+}
+
+// Where "now" falls on the range, in percent, or null before it starts. The
+// range ends when the power answer arrived, so a later "now" sits at the end.
+export function nowPercent(nowMs: number, rangeStartMs: number, rangeEndMs: number): number | null {
+  const span = rangeEndMs - rangeStartMs
+  if (span <= 0 || nowMs < rangeStartMs) return null
+  return (Math.min(nowMs, rangeEndMs) - rangeStartMs) / span * 100
+}

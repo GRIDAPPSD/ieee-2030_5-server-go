@@ -29,6 +29,9 @@ const chartOption = () => {
   const el = screen.getByTestId('descriptor-chart') as HTMLElement
   return echarts.getInstanceByDom(el)!.getOption() as { series: { name: string; type: string; data: [number, number][] }[] }
 }
+// The card's power reads only; the events timeline under it reads its own route.
+const powerReads = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.filter((c) => String(c[0]).startsWith('/api/derms/power'))
+
 const chartSeries = () => chartOption().series.map((s) => [s.name, s.data.map((p) => p[1])])
 
 describe('PowerCard', () => {
@@ -113,9 +116,9 @@ describe('PowerCard', () => {
     const { unmount } = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(4999)
-    expect(spy).toHaveBeenCalledTimes(1)
+    expect(powerReads(spy)).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
-    expect(spy).toHaveBeenCalledTimes(2)
+    expect(powerReads(spy)).toHaveLength(2)
     unmount()
   })
 
@@ -169,12 +172,16 @@ describe('PowerCard', () => {
     const { unmount } = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
     const signal = spy.mock.calls[0][1]?.signal
+    const eventsSignal = spy.mock.calls[1][1]?.signal
     expect(signal?.aborted).toBe(false)
+    expect(eventsSignal?.aborted).toBe(false)
 
     unmount()
     expect(signal?.aborted).toBe(true)
+    expect(eventsSignal?.aborted).toBe(true)
     await vi.advanceTimersByTimeAsync(5000 * 6)
-    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(powerReads(spy)).toHaveLength(1)
   })
 
   it('does not read again when the read settles as cancelled after unmount', async () => {
@@ -214,7 +221,7 @@ describe('PowerCard', () => {
     await vi.advanceTimersByTimeAsync(0)
     const at = new Date(Date.now()).toLocaleTimeString()
     a.unmount()
-    expect(first).toHaveBeenCalledTimes(1)
+    expect(powerReads(first)).toHaveLength(1)
 
     await vi.advanceTimersByTimeAsync(60000)
     // The next read never settles, so anything drawn came from the kept answer.
@@ -223,7 +230,7 @@ describe('PowerCard', () => {
     const b = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(pending).toHaveBeenCalledTimes(1)
+    expect(powerReads(pending)).toHaveLength(1)
     expect(chartSeries()).toEqual([
       ['Discharged', [0.5]],
       ['Charged', [-0.25]],
@@ -246,7 +253,7 @@ describe('PowerCard', () => {
     select.value = '3600'
     select.dispatchEvent(new Event('change', { bubbles: true }))
     await vi.advanceTimersByTimeAsync(0)
-    expect(spy.mock.calls.map((c) => c[0])).toEqual([
+    expect(powerReads(spy).map((c) => c[0])).toEqual([
       '/api/derms/power?window=900&scope=all',
       '/api/derms/power?window=3600&scope=all',
     ])
@@ -256,7 +263,7 @@ describe('PowerCard', () => {
     spy.mockReturnValue(new Promise(() => {}))
     const b = render(PowerCard)
     await vi.advanceTimersByTimeAsync(0)
-    expect(spy.mock.calls.at(-1)![0]).toBe('/api/derms/power?window=3600&scope=all')
+    expect(powerReads(spy).at(-1)![0]).toBe('/api/derms/power?window=3600&scope=all')
     expect(screen.getByTestId('power-now')).toHaveTextContent('9.0 kW')
     b.unmount()
   })
@@ -273,7 +280,7 @@ describe('PowerCard', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(screen.queryByLabelText('Devices')).toBeNull()
-    expect(spy.mock.calls.map((c) => c[0])).toEqual(['/api/derms/power?window=900&scope=all'])
+    expect(powerReads(spy).map((c) => c[0])).toEqual(['/api/derms/power?window=900&scope=all'])
     unmount()
   })
 

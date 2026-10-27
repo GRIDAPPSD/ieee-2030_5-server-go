@@ -28,6 +28,7 @@
   } from '../lib/power'
   import { startPoll } from '../lib/poll'
   import DescriptorChart from './DescriptorChart.svelte'
+  import EventsTimeline from './EventsTimeline.svelte'
 
   // Every aggregator and the DERs without one are drawn together, so the
   // card always asks for the whole fleet.
@@ -168,6 +169,7 @@
       <div class="power-chart" title="Energy per bucket in kWh: discharge above zero, charge below.">
         <DescriptorChart body={bars ?? energyBars(answer.energyChart)} empty="No energy readings in this window yet." frame {range} />
       </div>
+      <EventsTimeline {answer} {range} {windowSeconds} />
     </div>
     <div class="power-foot">
       {#if totals !== null}

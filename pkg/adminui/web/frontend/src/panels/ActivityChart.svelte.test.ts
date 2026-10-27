@@ -3,22 +3,16 @@
 // jsdom supplies no 2D canvas context, hence the stub; that the chart
 // visibly DRAWS with outbound egress blocked is asserted in a real
 // browser by e2e/chart_offline.spec.ts.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { render, waitFor } from '@testing-library/svelte'
 import ActivityChart from './ActivityChart.svelte'
 import * as echarts from 'echarts/core'
 import { installCanvasStub } from '../test-canvas-stub'
-import { css, darkToken } from '../test-tokens'
+import { darkToken, useAppCss } from '../test-tokens'
 
 installCanvasStub()
 
-let tokens: HTMLStyleElement
-beforeEach(() => {
-  tokens = document.createElement('style')
-  tokens.textContent = css
-  document.head.appendChild(tokens)
-})
-afterEach(() => tokens.remove())
+useAppCss()
 
 describe('ActivityChart', () => {
   it('draws its three lines in the first three chart tokens and the chrome in the axis and grid tokens', async () => {

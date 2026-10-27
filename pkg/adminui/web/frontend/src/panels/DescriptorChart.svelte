@@ -67,7 +67,7 @@
           axisLabel: { color: textColor },
           splitLine: { lineStyle: { color: theme.grid } },
         },
-        series: body.series.map((s) => seriesOption(s, theme)),
+        series: body.series.map((s, i) => seriesOption(s, theme, i)),
       },
       true,
     )

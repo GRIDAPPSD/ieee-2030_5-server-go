@@ -2,13 +2,13 @@
 // fixture, so the encoder and the renderer are tested with the same string.
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import DescriptorChart from './DescriptorChart.svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
 import { installCanvasStub } from '../test-canvas-stub'
-import { css, darkToken } from '../test-tokens'
+import { darkToken, useAppCss } from '../test-tokens'
 import type { Descriptor, DescriptorChartBody, DrawnChartBody } from '../lib/descriptor'
 
 installCanvasStub()
@@ -26,15 +26,9 @@ const chartSection = fixture.sections.find((s) => s.kind === 'chart')!
 const body = chartSection.body as DescriptorChartBody
 const hostile = '<img src=x onerror=alert(1)>'
 
-let tokens: HTMLStyleElement
-beforeEach(() => {
-  tokens = document.createElement('style')
-  tokens.textContent = css
-  document.head.appendChild(tokens)
-})
+useAppCss()
 
 afterEach(() => {
-  tokens.remove()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -102,6 +96,36 @@ describe('DescriptorChart', () => {
     expect(option.legend[0].textStyle.color).toBe(darkToken('--chart-axis'))
     expect(option.tooltip[0].backgroundColor).toBe(darkToken('--chart-tooltip-bg'))
     expect(option.tooltip[0].textStyle.color).toBe(darkToken('--text'))
+  })
+
+  it('keeps both direction fills translucent', async () => {
+    for (const name of ['--power-discharge-fill', '--power-charge-fill']) {
+      const m = darkToken(name).match(/^rgba\((\d+),(\d+),(\d+),([0-9.]+)\)$/)
+      expect(m, `${name} is not rgba`).not.toBeNull()
+      expect(parseFloat(m![4])).toBeGreaterThan(0)
+      expect(parseFloat(m![4])).toBeLessThan(1)
+    }
+    const { instance } = await mounted({
+      unit: 'kWh',
+      series: [
+        { name: 'D', points: [[1759343400000, 0.5]], type: 'bar', direction: 'discharge' },
+        { name: 'C', points: [[1759343400000, -0.25]], type: 'bar', direction: 'charge' },
+      ],
+    })
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(2))
+    for (const s of (instance.getOption() as { series: { itemStyle: { color: string } }[] }).series) {
+      const alpha = s.itemStyle.color.match(/^rgba\(\d+,\d+,\d+,([0-9.]+)\)$/)
+      expect(alpha, `fill ${s.itemStyle.color} is opaque`).not.toBeNull()
+      expect(parseFloat(alpha![1])).toBeLessThan(1)
+    }
+  })
+
+  it('repeats the palette dashed for lines 6 to 10, dotted for 11 to 15, solid at 16', async () => {
+    const series = Array.from({ length: 16 }, (_, k) => ({ name: `s${k}`, points: [[1759343400000, k]] as [number, number][] }))
+    const { instance } = await mounted({ unit: '%', series })
+    await waitFor(() => expect(instance.getOption().series).toHaveLength(16))
+    const types = (instance.getOption() as { series: { lineStyle?: { type?: string } }[] }).series.map((s) => s.lineStyle?.type ?? 'solid')
+    expect(types).toEqual([...Array(5).fill('solid'), ...Array(5).fill('dashed'), ...Array(5).fill('dotted'), 'solid'])
   })
 
   it('draws an untyped series as a line with the full line option', async () => {

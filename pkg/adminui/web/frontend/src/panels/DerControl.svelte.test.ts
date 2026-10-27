@@ -7,6 +7,7 @@ import * as api from '../lib/api'
 import type { DashboardDevice } from '../lib/dashboard'
 import type { CatalogResponse, CurveListResponse } from '../lib/controlcatalog'
 import { fmtTime } from '../lib/dercontrol'
+import { useAppCss } from '../test-tokens'
 import { takeProgramsRequest } from '../lib/programsRequest'
 import type {
   DERControlCreated,
@@ -855,13 +856,7 @@ describe('DerControl: "now" for Cancel comes from the server clock', () => {
 // jsdom does no layout, so the stylesheet is injected and read back through
 // getComputedStyle: what is asserted is the rule the browser would apply.
 describe('DerControl: the function rows lay out in three columns', () => {
-  let style: HTMLStyleElement
-  beforeEach(() => {
-    style = document.createElement('style')
-    style.textContent = readFileSync('src/app.css', 'utf8')
-    document.head.appendChild(style)
-  })
-  afterEach(() => style.remove())
+  useAppCss()
 
   it('puts every catalog row in one three-column grid, in catalog order', async () => {
     await mount()

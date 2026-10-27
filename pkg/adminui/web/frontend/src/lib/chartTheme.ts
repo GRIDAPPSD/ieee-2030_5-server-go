@@ -16,12 +16,24 @@ export interface ChartTheme {
 
 // A browser returns a custom property already substituted; the loop only
 // matters where the engine hands back a bare var() reference.
+const reported = new Set<string>()
+
 function read(style: CSSStyleDeclaration, name: string): string {
   let value = style.getPropertyValue(name).trim()
   for (let i = 0; i < 8; i++) {
     const ref = value.match(/^var\((--[a-z0-9-]+)\)$/)
     if (ref === null) break
     value = style.getPropertyValue(ref[1]).trim()
+  }
+  if (value === '') {
+    // A missing token must not render as an invisible series. A dev build and
+    // the tests fail; a production build says so once and ECharts falls back.
+    const message = `chartTheme: design token ${name} is not set`
+    if (import.meta.env.DEV) throw new Error(message)
+    if (!reported.has(name)) {
+      reported.add(name)
+      console.error(message)
+    }
   }
   return value
 }

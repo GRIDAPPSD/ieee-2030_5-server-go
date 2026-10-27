@@ -2,25 +2,19 @@
 // jsdom does no layout, so the stylesheet is injected and read back through
 // getComputedStyle: what is asserted is the rule the browser would apply.
 /// <reference types="node" />
-import { readFileSync } from 'node:fs'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/svelte'
 import * as echarts from 'echarts/core'
 import DescriptorChart from './DescriptorChart.svelte'
 import DescriptorTable from './DescriptorTable.svelte'
 import ActivityChart from './ActivityChart.svelte'
 import { installCanvasStub } from '../test-canvas-stub'
+import { useAppCss } from '../test-tokens'
 import type { DescriptorChartBody, DescriptorTableBody } from '../lib/descriptor'
 
 installCanvasStub()
 
-let style: HTMLStyleElement
-beforeEach(() => {
-  style = document.createElement('style')
-  style.textContent = readFileSync('src/app.css', 'utf8')
-  document.head.appendChild(style)
-})
-afterEach(() => style.remove())
+useAppCss()
 
 const fleet: DescriptorChartBody = {
   unit: '%',

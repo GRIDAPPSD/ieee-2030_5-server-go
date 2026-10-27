@@ -10,7 +10,10 @@ import { installCanvasStub } from '../test-canvas-stub'
 import type { Descriptor, DescriptorCell, DescriptorSection } from '../lib/descriptor'
 
 // The fixture holds a chart section, which needs a canvas context jsdom lacks.
+import { useAppCss } from '../test-tokens'
+
 installCanvasStub()
+useAppCss()
 
 const fixture = JSON.parse(
   readFileSync('../../../../pkg/sep2admin/testdata/descriptor_v2.json', 'utf8'),

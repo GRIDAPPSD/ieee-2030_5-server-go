@@ -24,8 +24,8 @@
     color: var(--text);
   }
   .badge-info {
-    background: var(--surface-raised);
-    color: var(--accent);
+    background: var(--accent-solid);
+    color: var(--text-on-solid);
   }
   .badge-ok {
     background: var(--status-ok-bg);

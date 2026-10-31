@@ -41,6 +41,34 @@ type VoltageRMS struct {
 	Value      uint16 `xml:"value"`
 }
 
+// CurrentRMS is an rms current in amperes (uom 5). sep.xsd types its value
+// UInt16.
+type CurrentRMS struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// AmpereHour is available electric charge in ampere-hours (uom 106). sep.xsd
+// types its value UInt16.
+type AmpereHour struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// WattHour is active energy in watt-hours (uom 72). sep.xsd types its value
+// UInt16.
+type WattHour struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// ReactiveSusceptance is reactive susceptance in siemens (uom 53). sep.xsd
+// types its value UInt16.
+type ReactiveSusceptance struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
 // PerCent is a percentage in hundredths of a percent (10000 = 100%).
 // IEEE 2030.5-2018 Annex B.2.3.4 "Types package", "PerCent object
 // (UInt16)": range 0 to 10000. Unlike ActivePower/ReactivePower, PerCent

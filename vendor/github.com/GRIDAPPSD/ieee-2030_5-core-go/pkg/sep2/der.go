@@ -195,36 +195,71 @@ type DERList struct {
 
 // DERCapability describes device-level DER capabilities.
 //
-// Field order matches the sep.xsd DERCapability sequence (subset present
-// here): modesSupported, rtgMaxA, rtgMaxChargeRateW, rtgMaxDischargeRateW,
-// rtgMaxV, rtgMaxVA, rtgMaxVar, rtgMaxW, type. rtgMaxW is required
-// (minOccurs=1) and sorts near the end of the full XSD sequence, not
-// immediately after modesSupported.
+// Field order matches the sep.xsd DERCapability sequence: modesSupported,
+// rtgAbnormalCategory, rtgMaxA, rtgMaxAh, rtgMaxChargeRateVA,
+// rtgMaxChargeRateW, rtgMaxDischargeRateVA, rtgMaxDischargeRateW, rtgMaxV,
+// rtgMaxVA, rtgMaxVar, rtgMaxVarNeg, rtgMaxW, rtgMaxWh, rtgMinPFOverExcited,
+// rtgMinPFUnderExcited, rtgMinV, rtgNormalCategory, rtgOverExcitedPF,
+// rtgOverExcitedW, rtgReactiveSusceptance, rtgUnderExcitedPF,
+// rtgUnderExcitedW, rtgVNom, type. rtgMaxW is required (minOccurs=1) and
+// sorts in the middle of the sequence, not right after modesSupported.
 type DERCapability struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCapability"`
 	Resource
-	ModesSupported       *DERControlType `xml:"modesSupported,omitempty"`
-	RTGMaxA              *int32          `xml:"rtgMaxA,omitempty"`
-	RTGMaxChargeRateW    *ActivePower    `xml:"rtgMaxChargeRateW,omitempty"`
-	RTGMaxDischargeRateW *ActivePower    `xml:"rtgMaxDischargeRateW,omitempty"`
-	RTGMaxV              *VoltageRMS     `xml:"rtgMaxV,omitempty"`
-	RTGMaxVA             *ApparentPower  `xml:"rtgMaxVA,omitempty"`
-	RTGMaxVar            *ReactivePower  `xml:"rtgMaxVar,omitempty"`
-	RTGMaxW              *ActivePower    `xml:"rtgMaxW,omitempty"`
-	Type                 *uint8          `xml:"type,omitempty"`
+	ModesSupported         *DERControlType      `xml:"modesSupported,omitempty"`
+	RTGAbnormalCategory    *uint8               `xml:"rtgAbnormalCategory,omitempty"`
+	RTGMaxA                *CurrentRMS          `xml:"rtgMaxA,omitempty"`
+	RTGMaxAh               *AmpereHour          `xml:"rtgMaxAh,omitempty"`
+	RTGMaxChargeRateVA     *ApparentPower       `xml:"rtgMaxChargeRateVA,omitempty"`
+	RTGMaxChargeRateW      *ActivePower         `xml:"rtgMaxChargeRateW,omitempty"`
+	RTGMaxDischargeRateVA  *ApparentPower       `xml:"rtgMaxDischargeRateVA,omitempty"`
+	RTGMaxDischargeRateW   *ActivePower         `xml:"rtgMaxDischargeRateW,omitempty"`
+	RTGMaxV                *VoltageRMS          `xml:"rtgMaxV,omitempty"`
+	RTGMaxVA               *ApparentPower       `xml:"rtgMaxVA,omitempty"`
+	RTGMaxVar              *ReactivePower       `xml:"rtgMaxVar,omitempty"`
+	RTGMaxVarNeg           *ReactivePower       `xml:"rtgMaxVarNeg,omitempty"`
+	RTGMaxW                *ActivePower         `xml:"rtgMaxW,omitempty"`
+	RTGMaxWh               *WattHour            `xml:"rtgMaxWh,omitempty"`
+	RTGMinPFOverExcited    *PowerFactor         `xml:"rtgMinPFOverExcited,omitempty"`
+	RTGMinPFUnderExcited   *PowerFactor         `xml:"rtgMinPFUnderExcited,omitempty"`
+	RTGMinV                *VoltageRMS          `xml:"rtgMinV,omitempty"`
+	RTGNormalCategory      *uint8               `xml:"rtgNormalCategory,omitempty"`
+	RTGOverExcitedPF       *PowerFactor         `xml:"rtgOverExcitedPF,omitempty"`
+	RTGOverExcitedW        *ActivePower         `xml:"rtgOverExcitedW,omitempty"`
+	RTGReactiveSusceptance *ReactiveSusceptance `xml:"rtgReactiveSusceptance,omitempty"`
+	RTGUnderExcitedPF      *PowerFactor         `xml:"rtgUnderExcitedPF,omitempty"`
+	RTGUnderExcitedW       *ActivePower         `xml:"rtgUnderExcitedW,omitempty"`
+	RTGVNom                *VoltageRMS          `xml:"rtgVNom,omitempty"`
+	Type                   *uint8               `xml:"type,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (d DERCapability) Copy() DERCapability {
 	c := d
 	c.ModesSupported = clonePtr(d.ModesSupported)
-	c.RTGMaxW = clonePtr(d.RTGMaxW)
+	c.RTGAbnormalCategory = clonePtr(d.RTGAbnormalCategory)
 	c.RTGMaxA = clonePtr(d.RTGMaxA)
-	c.RTGMaxVar = clonePtr(d.RTGMaxVar)
+	c.RTGMaxAh = clonePtr(d.RTGMaxAh)
+	c.RTGMaxChargeRateVA = clonePtr(d.RTGMaxChargeRateVA)
 	c.RTGMaxChargeRateW = clonePtr(d.RTGMaxChargeRateW)
+	c.RTGMaxDischargeRateVA = clonePtr(d.RTGMaxDischargeRateVA)
 	c.RTGMaxDischargeRateW = clonePtr(d.RTGMaxDischargeRateW)
 	c.RTGMaxV = clonePtr(d.RTGMaxV)
 	c.RTGMaxVA = clonePtr(d.RTGMaxVA)
+	c.RTGMaxVar = clonePtr(d.RTGMaxVar)
+	c.RTGMaxVarNeg = clonePtr(d.RTGMaxVarNeg)
+	c.RTGMaxW = clonePtr(d.RTGMaxW)
+	c.RTGMaxWh = clonePtr(d.RTGMaxWh)
+	c.RTGMinPFOverExcited = clonePtr(d.RTGMinPFOverExcited)
+	c.RTGMinPFUnderExcited = clonePtr(d.RTGMinPFUnderExcited)
+	c.RTGMinV = clonePtr(d.RTGMinV)
+	c.RTGNormalCategory = clonePtr(d.RTGNormalCategory)
+	c.RTGOverExcitedPF = clonePtr(d.RTGOverExcitedPF)
+	c.RTGOverExcitedW = clonePtr(d.RTGOverExcitedW)
+	c.RTGReactiveSusceptance = clonePtr(d.RTGReactiveSusceptance)
+	c.RTGUnderExcitedPF = clonePtr(d.RTGUnderExcitedPF)
+	c.RTGUnderExcitedW = clonePtr(d.RTGUnderExcitedW)
+	c.RTGVNom = clonePtr(d.RTGVNom)
 	c.Type = clonePtr(d.Type)
 	return c
 }
@@ -281,6 +316,20 @@ type InverterStatusType struct {
 	Value    uint8 `xml:"value"`
 }
 
+// LocalControlModeStatusType reports whether the DER is under local (0) or
+// remote (1) control.
+type LocalControlModeStatusType struct {
+	DateTime int64 `xml:"dateTime"`
+	Value    uint8 `xml:"value"`
+}
+
+// ManufacturerStatusType carries a manufacturer status code. sep.xsd types
+// value String6.
+type ManufacturerStatusType struct {
+	DateTime int64  `xml:"dateTime"`
+	Value    string `xml:"value"`
+}
+
 // OperationalModeStatusType reports operational mode.
 type OperationalModeStatusType struct {
 	DateTime int64 `xml:"dateTime"`
@@ -309,8 +358,8 @@ type StorageModeStatusType struct {
 //
 // Field order matches the sep.xsd DERStatus sequence (subset present
 // here): alarmStatus, connectStatus, genConnectStatus, inverterStatus,
-// operationalModeStatus, readingTime, stateOfChargeStatus,
-// storageModeStatus, storConnectStatus.
+// localControlModeStatus, manufacturerStatus, operationalModeStatus,
+// readingTime, stateOfChargeStatus, storageModeStatus, storConnectStatus.
 //
 // ConnectStatus exists only in 2030.5-2023, which deprecates
 // GenConnectStatus; a 2018 document carries GenConnectStatus or
@@ -319,15 +368,17 @@ type StorageModeStatusType struct {
 type DERStatus struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERStatus"`
 	SubscribableResource
-	AlarmStatus           *HexBinary32               `xml:"alarmStatus,omitempty"`
-	ConnectStatus         *ConnectStatusType2        `xml:"connectStatus,omitempty"`
-	GenConnectStatus      *ConnectStatusType         `xml:"genConnectStatus,omitempty"`
-	InverterStatus        *InverterStatusType        `xml:"inverterStatus,omitempty"`
-	OperationalModeStatus *OperationalModeStatusType `xml:"operationalModeStatus,omitempty"`
-	ReadingTime           int64                      `xml:"readingTime,omitempty"`
-	StateOfChargeStatus   *StateOfChargeStatusType   `xml:"stateOfChargeStatus,omitempty"`
-	StorageModeStatus     *StorageModeStatusType     `xml:"storageModeStatus,omitempty"`
-	StorConnectStatus     *ConnectStatusType         `xml:"storConnectStatus,omitempty"`
+	AlarmStatus            *HexBinary32                `xml:"alarmStatus,omitempty"`
+	ConnectStatus          *ConnectStatusType2         `xml:"connectStatus,omitempty"`
+	GenConnectStatus       *ConnectStatusType          `xml:"genConnectStatus,omitempty"`
+	InverterStatus         *InverterStatusType         `xml:"inverterStatus,omitempty"`
+	LocalControlModeStatus *LocalControlModeStatusType `xml:"localControlModeStatus,omitempty"`
+	ManufacturerStatus     *ManufacturerStatusType     `xml:"manufacturerStatus,omitempty"`
+	OperationalModeStatus  *OperationalModeStatusType  `xml:"operationalModeStatus,omitempty"`
+	ReadingTime            int64                       `xml:"readingTime,omitempty"`
+	StateOfChargeStatus    *StateOfChargeStatusType    `xml:"stateOfChargeStatus,omitempty"`
+	StorageModeStatus      *StorageModeStatusType      `xml:"storageModeStatus,omitempty"`
+	StorConnectStatus      *ConnectStatusType          `xml:"storConnectStatus,omitempty"`
 }
 
 // Copy returns an independent copy.
@@ -338,6 +389,8 @@ func (d DERStatus) Copy() DERStatus {
 	c.StorConnectStatus = clonePtr(d.StorConnectStatus)
 	c.GenConnectStatus = clonePtr(d.GenConnectStatus)
 	c.InverterStatus = clonePtr(d.InverterStatus)
+	c.LocalControlModeStatus = clonePtr(d.LocalControlModeStatus)
+	c.ManufacturerStatus = clonePtr(d.ManufacturerStatus)
 	c.OperationalModeStatus = clonePtr(d.OperationalModeStatus)
 	c.AlarmStatus = clonePtr(d.AlarmStatus)
 	c.StateOfChargeStatus = clonePtr(d.StateOfChargeStatus)

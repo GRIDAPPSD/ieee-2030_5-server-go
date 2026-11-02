@@ -129,6 +129,12 @@ type frScaled struct {
 	Multiplier int8  `json:"multiplier"`
 }
 
+// newScaled is the one place a value and its power-of-ten multiplier become
+// the JSON pair every admin route serves.
+func newScaled(value int64, multiplier int8) *frScaled {
+	return &frScaled{Value: value, Multiplier: multiplier}
+}
+
 type frInterval struct {
 	Start    int64  `json:"start"`
 	Duration uint32 `json:"duration"`
@@ -593,14 +599,14 @@ func energyOf(e *sep2.SignedRealEnergy) *frScaled {
 	if e == nil {
 		return nil
 	}
-	return &frScaled{Value: e.Value, Multiplier: e.Multiplier}
+	return newScaled(e.Value, e.Multiplier)
 }
 
 func powerOf(p *sep2.ActivePower) *frScaled {
 	if p == nil {
 		return nil
 	}
-	return &frScaled{Value: int64(p.Value), Multiplier: p.Multiplier}
+	return newScaled(int64(p.Value), p.Multiplier)
 }
 
 // directionOf names the flow of an energy quantity from the one rule the

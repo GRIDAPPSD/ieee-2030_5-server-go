@@ -18,11 +18,14 @@ import (
 // directory it is the journal, replayed now, before the retention boot sweep
 // and before any listener, with the readings of mirrors that no longer exist
 // dropped; the returned journal is for the power history recorder, which
-// syncs and compacts it. Without one it is the in-memory store and no journal.
+// syncs and compacts it. Without one it is the in-memory store, complete
+// from this boot, and no journal.
 func newMirrorReadingStore(cfg *config.Config, mirrors store.ResourceReader[sep2.MirrorUsagePoint]) (store.ScopedStore[sep2.MirrorMeterReading], *handler.ReadingJournal, error) {
 	path := cfg.EffectiveMirrorReadingJournalPath()
 	if path == "" {
-		return memory.NewScopedStore[sep2.MirrorMeterReading](), nil, nil
+		// Nothing survives a restart, so every window that starts before
+		// this boot is incomplete.
+		return memory.NewScopedStoreFrom[sep2.MirrorMeterReading](time.Now().Unix()), nil, nil
 	}
 	js, err := memory.NewJournaledScopedStore[sep2.MirrorMeterReading](path, "MirrorMeterReading", time.Now().Unix())
 	if err != nil {

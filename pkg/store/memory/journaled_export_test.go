@@ -9,3 +9,10 @@ func SetJournalFault[T store.Copier[T]](s *JournaledScopedStore[T], fault func()
 	defer s.writeMu.Unlock()
 	s.fault = fault
 }
+
+// JournalCarrying reports whether s is collecting entries for a compaction.
+func JournalCarrying[T store.Copier[T]](s *JournaledScopedStore[T]) bool {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.since != nil
+}

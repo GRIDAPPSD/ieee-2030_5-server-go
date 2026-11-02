@@ -74,6 +74,14 @@ func postAverage(t *testing.T, s *Stores) int {
 // totalPoints is the Total line of GET /api/derms/power?window=900&scope=all.
 func totalPoints(t *testing.T, s *Stores) [][2]float64 {
 	t.Helper()
+	pts, _ := powerAnswer(t, s)
+	return pts
+}
+
+// powerAnswer is the Total line and readingsExpired of
+// GET /api/derms/power?window=900&scope=all.
+func powerAnswer(t *testing.T, s *Stores) ([][2]float64, bool) {
+	t.Helper()
 	h := &handler.AdminFleetHandler{
 		Managers:            s.EndDeviceManagers.(*memory.EndDeviceManagementStore),
 		MirrorUsagePoints:   s.MirrorUsagePoints,
@@ -86,7 +94,8 @@ func totalPoints(t *testing.T, s *Stores) [][2]float64 {
 		t.Fatalf("power: %d %s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Chart struct {
+		ReadingsExpired bool
+		Chart           struct {
 			Series []struct {
 				Name   string
 				Points [][2]float64
@@ -98,10 +107,10 @@ func totalPoints(t *testing.T, s *Stores) [][2]float64 {
 	}
 	for _, s := range resp.Chart.Series {
 		if s.Name == "Total" {
-			return s.Points
+			return s.Points, resp.ReadingsExpired
 		}
 	}
-	return nil
+	return nil, resp.ReadingsExpired
 }
 
 // #1206: a reading POSTed before a restart is still read after it, so the
@@ -133,13 +142,14 @@ func TestMirrorMeterReadings_SurviveARestart(t *testing.T) {
 }
 
 // Control and the no-data-directory mode: the same POST without a data
-// directory leaves no journal and an empty chart after a restart.
+// directory leaves no journal and an empty chart after a restart, and the
+// answer says readings are missing: the store is complete only from boot.
 func TestMirrorMeterReadings_NoDataDirIsMemoryOnly(t *testing.T) {
 	s1, _, err := newRunStores(&config.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s1.MirrorMeterReadings.(*memory.ScopedStore[sep2.MirrorMeterReading]); !ok {
+	if _, ok := s1.MirrorMeterReadings.(*memory.ScopedStoreFrom[sep2.MirrorMeterReading]); !ok {
 		t.Fatalf("reading store without a data directory is %T, want the in-memory store", s1.MirrorMeterReadings)
 	}
 	journalMirror(t, s1)
@@ -154,8 +164,8 @@ func TestMirrorMeterReadings_NoDataDirIsMemoryOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	journalMirror(t, s2)
-	if got := len(totalPoints(t, s2)); got != 0 {
-		t.Errorf("Total points after a restart without a data directory = %d, want 0", got)
+	if pts, expired := powerAnswer(t, s2); len(pts) != 0 || !expired {
+		t.Errorf("after a restart without a data directory: %d Total points, readingsExpired %v; want 0 and true", len(pts), expired)
 	}
 }
 

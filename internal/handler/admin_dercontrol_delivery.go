@@ -693,8 +693,8 @@ func readingsExpired(ws, now int64, retention time.Duration, floor int64) bool {
 }
 
 // readingsFloor is the time from which the reading store holds every reading
-// that can cover a second, or zero when it has held them all since this
-// process started (a store without a journal).
+// that can cover a second (a journal's floor, or the boot of a store that
+// starts empty), or zero for a store that states none.
 func readingsFloor(r store.ScopedReader[sep2.MirrorMeterReading]) int64 {
 	if c, ok := r.(interface{ CompleteFrom() int64 }); ok {
 		return c.CompleteFrom()

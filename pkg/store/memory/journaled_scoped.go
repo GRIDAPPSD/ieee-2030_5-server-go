@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/jsonl"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -258,6 +259,9 @@ func (s *JournaledScopedStore[T]) snapshotLocked(ctx context.Context) ([]parentR
 		for _, id := range pr.ids {
 			v, err := s.inner.Get(ctx, parent, id)
 			if err != nil {
+				// %v, not %w: this error can end a Delete or Update through
+				// the dirty rewrite, and a wrapped ErrNotFound would read
+				// there as "already gone" (store.ScopedStore).
 				return nil, fmt.Errorf("read %s/%s: %v", parent, id, err)
 			}
 			pr.items = append(pr.items, v)
@@ -342,9 +346,24 @@ func (s *JournaledScopedStore[T]) Compact(ctx context.Context, keepFrom int64, k
 	s.since = []journalEntry{}
 	s.writeMu.Unlock()
 
-	staged, err := s.stage(snap, floor, keep)
+	// Whatever ends the compaction, an error or a panic in keep, the carry
+	// over stops and no staged file is left behind.
+	var staged *atomicfile.Staged
+	locked := false
+	defer func() {
+		if staged != nil {
+			staged.Abort()
+		}
+		if !locked {
+			s.writeMu.Lock()
+			s.since = nil
+			s.writeMu.Unlock()
+		}
+	}()
+	staged, err = s.stage(snap, floor, keep)
 
 	s.writeMu.Lock()
+	locked = true
 	defer s.writeMu.Unlock()
 	since := s.since
 	s.since = nil
@@ -353,13 +372,11 @@ func (s *JournaledScopedStore[T]) Compact(ctx context.Context, keepFrom int64, k
 	}
 	tail, err := jsonl.Encode(since)
 	if err == nil {
-		if err = s.checkFault(); err == nil {
-			err = staged.Commit(tail)
-		} else {
-			staged.Abort()
-		}
-	} else {
-		staged.Abort()
+		err = s.checkFault()
+	}
+	if err == nil {
+		err = staged.Commit(tail)
+		staged = nil // Commit removes its own file on an error
 	}
 	if err != nil {
 		return fmt.Errorf("%s journal: %w", s.label, err)
@@ -369,7 +386,7 @@ func (s *JournaledScopedStore[T]) Compact(ctx context.Context, keepFrom int64, k
 	return nil
 }
 
-func (s *JournaledScopedStore[T]) stage(snap []parentRecords[T], floor int64, keep func(parent string, items []T) ([]bool, error)) (*jsonl.Staged, error) {
+func (s *JournaledScopedStore[T]) stage(snap []parentRecords[T], floor int64, keep func(parent string, items []T) ([]bool, error)) (*atomicfile.Staged, error) {
 	payload, err := journalOf(snap, floor, keep)
 	if err != nil {
 		return nil, err
@@ -377,7 +394,7 @@ func (s *JournaledScopedStore[T]) stage(snap []parentRecords[T], floor int64, ke
 	if err := s.checkFault(); err != nil {
 		return nil, err
 	}
-	return jsonl.Stage(s.path, payload)
+	return atomicfile.Stage(s.path, ".stage", payload)
 }
 
 // Sync flushes the appends written since the last Sync. A failed sync marks

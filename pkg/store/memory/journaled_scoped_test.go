@@ -390,12 +390,25 @@ func TestJournaledScopedStore_CompactAgainstWriters(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "j.jsonl")
 	s := openJournal(t, path)
-	keepAll := func(_ string, items []storetest.Resource) ([]bool, error) {
+	// keep itself writes once per compaction while it runs, outside the
+	// write lock, so every compaction has an entry to carry over.
+	carried := 0
+	keepAll := func(parent string, items []storetest.Resource) ([]bool, error) {
 		keep := make([]bool, len(items))
 		for i := range keep {
 			keep[i] = true
 		}
+		if parent == "p0" {
+			id := fmt.Sprintf("carry-%02d", carried)
+			carried++
+			if err := s.Create(ctx, "carry", id, storetest.Resource{ID: id}); err != nil {
+				return nil, err
+			}
+		}
 		return keep, nil
+	}
+	if err := s.Create(ctx, "p0", "seed", storetest.Resource{ID: "seed"}); err != nil {
+		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
@@ -435,8 +448,8 @@ func TestJournaledScopedStore_CompactAgainstWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 	mem := held(t, s)
-	if len(mem) != 4 || len(mem["p0"]) != 33 {
-		t.Fatalf("memory = %d parents, p0 %d records; want 4 and 33", len(mem), len(mem["p0"]))
+	if len(mem) != 5 || len(mem["p0"]) != 34 || len(mem["carry"]) != 20 {
+		t.Fatalf("memory = %d parents, p0 %d, carry %d records; want 5, 34 and 20", len(mem), len(mem["p0"]), len(mem["carry"]))
 	}
 	if got := held(t, openJournal(t, path)); !equalHeld(got, mem) {
 		t.Errorf("reopened journal differs from memory")
@@ -508,6 +521,9 @@ func TestJournaledScopedStore_BatchPostUnderAPersistingFault(t *testing.T) {
 		want      uint32
 	}{
 		{"one-step batch", false, 0, 0},
+		// The batch is one journal write, so a fault from the second write
+		// on leaves it whole; the per-reading loop would fail on reading 2.
+		{"one-step batch is one write", false, 1, 3},
 		{"control: per-reading loop", true, 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -534,8 +550,12 @@ func TestJournaledScopedStore_BatchPostUnderAPersistingFault(t *testing.T) {
 			mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mups, mmrs, nil, func(context.Context) (string, bool) { return faultDevice, true }))
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup/m1/mr", bytes.NewReader(faultBatchBody())))
-			if w.Code != http.StatusInternalServerError {
-				t.Fatalf("POST = %d, want 500; body %s", w.Code, w.Body.String())
+			wantCode := http.StatusInternalServerError
+			if tc.want == 3 {
+				wantCode = http.StatusCreated
+			}
+			if w.Code != wantCode {
+				t.Fatalf("POST = %d, want %d; body %s", w.Code, wantCode, w.Body.String())
 			}
 			if n, err := js.Count(ctx, "m1"); err != nil || n != tc.want {
 				t.Errorf("readings in memory = %d, %v; want %d", n, err, tc.want)
@@ -554,4 +574,48 @@ func openJournalOf[T store.Copier[T]](t *testing.T, path string) *memory.Journal
 		t.Fatal(err)
 	}
 	return s
+}
+
+// A keep that panics ends the compaction with no carry over left running and
+// no staged file left behind, and the journal as it was.
+func TestJournaledScopedStore_PanickingKeepCleansUp(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "j.jsonl")
+	s := openJournal(t, path)
+	if err := s.Create(ctx, "p", "1", storetest.Resource{ID: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("keep's panic did not reach the caller")
+			}
+		}()
+		_ = s.Compact(ctx, 0, func(string, []storetest.Resource) ([]bool, error) { panic("keep failed") })
+	}()
+	if memory.JournalCarrying(s) {
+		t.Error("the carry over is still collecting after the panic")
+	}
+	if _, err := os.Stat(path + ".stage"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("staged file after the panic: %v, want none", err)
+	}
+	if err := s.Create(ctx, "p", "2", storetest.Resource{ID: "2"}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]storetest.Resource{"p": {{ID: "1"}, {ID: "2"}}}
+	if got := held(t, openJournal(t, path)); !equalHeld(got, want) {
+		t.Errorf("after the panic and reopen = %+v, want %+v", got, want)
+	}
+}
+
+// A store that starts empty at boot says so.
+func TestScopedStoreFrom_CompleteFrom(t *testing.T) {
+	s := memory.NewScopedStoreFrom[storetest.Resource](1234)
+	if s.CompleteFrom() != 1234 {
+		t.Errorf("CompleteFrom = %d, want 1234", s.CompleteFrom())
+	}
+	var _ store.ScopedStore[storetest.Resource] = s
+	if n, err := s.DeleteParent(context.Background(), "x"); n != 0 || err != nil {
+		t.Errorf("DeleteParent = %d, %v; want the embedded store's cascade", n, err)
+	}
 }

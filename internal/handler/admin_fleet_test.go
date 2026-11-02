@@ -465,7 +465,7 @@ func TestHandleListFleets_FleetIsolation(t *testing.T) {
 // hardcoding buildFleet's now (for example "now := int64(0)"): a device
 // whose DERStatus is old by REAL wall-clock time must show up stale. Under
 // a hardcoded now of 0, now-ReadingTime would be a large negative number,
-// never exceeding staleAfterSeconds, so the device would wrongly read as
+// never exceeding the stale limit, so the device would wrongly read as
 // fresh instead.
 func TestHandleListFleets_UsesRealWallClockForStaleness(t *testing.T) {
 	t.Parallel()

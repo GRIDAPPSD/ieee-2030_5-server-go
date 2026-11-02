@@ -51,10 +51,14 @@ var (
 	_ store.ScopedReader[sep2.MirrorMeterReading] = (*ScopedStore[sep2.MirrorMeterReading])(nil)
 	_ store.ScopedStore[sep2.MirrorMeterReading]  = (*ScopedStore[sep2.MirrorMeterReading])(nil)
 
-	_ store.ScopedStore[sep2.DER]                     = (*ScopedStore[sep2.DER])(nil)
-	_ store.ScopedStore[sep2.DERCapability]           = (*ScopedStore[sep2.DERCapability])(nil)
-	_ store.ScopedStore[sep2.DERSettings]             = (*ScopedStore[sep2.DERSettings])(nil)
-	_ store.ScopedStore[sep2.DERAvailability]         = (*ScopedStore[sep2.DERAvailability])(nil)
+	_ store.ScopedStore[sep2.DER]             = (*ScopedStore[sep2.DER])(nil)
+	_ store.ScopedStore[sep2.DERCapability]   = (*ScopedStore[sep2.DERCapability])(nil)
+	_ store.ScopedStore[sep2.DERSettings]     = (*ScopedStore[sep2.DERSettings])(nil)
+	_ store.ScopedStore[sep2.DERAvailability] = (*ScopedStore[sep2.DERAvailability])(nil)
+
+	_ store.ScopedStore[sep2.DERStatus]               = (*ElementSinceStore[sep2.DERStatus])(nil)
+	_ store.ScopedStore[sep2.DERAvailability]         = (*ElementSinceStore[sep2.DERAvailability])(nil)
+	_ store.ElementSinceReader                        = (*ElementSinceStore[sep2.DERStatus])(nil)
 	_ store.ScopedStore[sep2.DERControl]              = (*ScopedStore[sep2.DERControl])(nil)
 	_ store.ScopedStore[sep2.DefaultDERControl]       = (*ScopedStore[sep2.DefaultDERControl])(nil)
 	_ store.ScopedStore[sep2.FunctionSetAssignments]  = (*ScopedStore[sep2.FunctionSetAssignments])(nil)

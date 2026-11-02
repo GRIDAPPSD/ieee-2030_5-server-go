@@ -54,12 +54,6 @@ var (
 	notStoredStatus = []string{"localControlModeStatus", "manufacturerStatus"}
 )
 
-// quantity is a value with its power-of-ten multiplier, unscaled.
-type quantity struct {
-	Value      int64 `json:"value"`
-	Multiplier int8  `json:"multiplier"`
-}
-
 // section is the part of every resource answer that says whether it was
 // read. Error is empty unless the read failed.
 type section struct {
@@ -69,7 +63,8 @@ type section struct {
 
 type derStatusView struct {
 	section
-	ReadingTime int64                `json:"readingTime"`
+	// ReadingTime is null when the resource is not reported or carries none.
+	ReadingTime *int64               `json:"readingTime"`
 	Freshness   *derstatus.Freshness `json:"freshness"`
 	Connect     *derstatus.Connect   `json:"connect"`
 	Inverter    *derstatus.Inverter  `json:"inverter"`
@@ -80,8 +75,10 @@ type derStatusView struct {
 	StateOfCharge   *uint16          `json:"stateOfCharge"`
 	Alarm           *derstatus.Alarm `json:"alarm"`
 	// Since maps an element's XML name to the Unix second its current value
-	// was first seen. It is null when the store keeps no such times, and an
-	// element with no entry has none recorded.
+	// was first seen. It is {} when the store can record times and has none
+	// for this resource, and null when the resource is not reported or the
+	// store cannot record times at all. An element with no entry has none
+	// recorded.
 	Since     map[string]int64 `json:"since"`
 	NotStored []string         `json:"notStored"`
 }
@@ -91,12 +88,12 @@ type derCapabilityView struct {
 	Type                 *uint8            `json:"type"`
 	ModesSupported       *dercontrol.Modes `json:"modesSupported"`
 	RTGMaxA              *int32            `json:"rtgMaxA"`
-	RTGMaxW              *quantity         `json:"rtgMaxW"`
-	RTGMaxVA             *quantity         `json:"rtgMaxVA"`
-	RTGMaxVar            *quantity         `json:"rtgMaxVar"`
-	RTGMaxV              *quantity         `json:"rtgMaxV"`
-	RTGMaxChargeRateW    *quantity         `json:"rtgMaxChargeRateW"`
-	RTGMaxDischargeRateW *quantity         `json:"rtgMaxDischargeRateW"`
+	RTGMaxW              *frScaled         `json:"rtgMaxW"`
+	RTGMaxVA             *frScaled         `json:"rtgMaxVA"`
+	RTGMaxVar            *frScaled         `json:"rtgMaxVar"`
+	RTGMaxV              *frScaled         `json:"rtgMaxV"`
+	RTGMaxChargeRateW    *frScaled         `json:"rtgMaxChargeRateW"`
+	RTGMaxDischargeRateW *frScaled         `json:"rtgMaxDischargeRateW"`
 	NotStored            []string          `json:"notStored"`
 }
 
@@ -104,23 +101,23 @@ type derSettingsView struct {
 	section
 	UpdatedTime          *int64            `json:"updatedTime"`
 	ModesEnabled         *dercontrol.Modes `json:"modesEnabled"`
-	SetMaxW              *quantity         `json:"setMaxW"`
-	SetMaxVar            *quantity         `json:"setMaxVar"`
-	SetMaxChargeRateW    *quantity         `json:"setMaxChargeRateW"`
-	SetMaxDischargeRateW *quantity         `json:"setMaxDischargeRateW"`
+	SetMaxW              *frScaled         `json:"setMaxW"`
+	SetMaxVar            *frScaled         `json:"setMaxVar"`
+	SetMaxChargeRateW    *frScaled         `json:"setMaxChargeRateW"`
+	SetMaxDischargeRateW *frScaled         `json:"setMaxDischargeRateW"`
 	NotStored            []string          `json:"notStored"`
 }
 
 type derAvailabilityView struct {
 	section
-	ReadingTime          int64                `json:"readingTime"`
+	ReadingTime          *int64               `json:"readingTime"`
 	Freshness            *derstatus.Freshness `json:"freshness"`
 	AvailabilityDuration *uint32              `json:"availabilityDuration"`
 	MaxChargeDuration    *uint32              `json:"maxChargeDuration"`
 	ReservePercent       *uint16              `json:"reservePercent"`
 	ReserveChargePercent *uint16              `json:"reserveChargePercent"`
-	StatWAvail           *quantity            `json:"statWAvail"`
-	StatVarAvail         *quantity            `json:"statVarAvail"`
+	StatWAvail           *frScaled            `json:"statWAvail"`
+	StatVarAvail         *frScaled            `json:"statVarAvail"`
 	Since                map[string]int64     `json:"since"`
 }
 
@@ -227,7 +224,7 @@ func (h *AdminDERReadHandler) status(ctx context.Context, key string, now int64)
 		return v
 	}
 	fresh := derstatus.Assess(s.ReadingTime, now, derstatus.DefaultPollRateSeconds)
-	v.ReadingTime = s.ReadingTime
+	v.ReadingTime = readingTimeOf(s.ReadingTime)
 	v.Freshness = &fresh
 	v.Connect = derstatus.ConnectOf(s)
 	v.Inverter = derstatus.InverterOf(s)
@@ -254,12 +251,12 @@ func (h *AdminDERReadHandler) capability(ctx context.Context, key string) derCap
 	v.Type = c.Type
 	v.ModesSupported = modesOf(c.ModesSupported)
 	v.RTGMaxA = c.RTGMaxA
-	v.RTGMaxW = activePower(c.RTGMaxW)
+	v.RTGMaxW = powerOf(c.RTGMaxW)
 	v.RTGMaxVA = apparentPower(c.RTGMaxVA)
-	v.RTGMaxVar = reactivePower(c.RTGMaxVar)
+	v.RTGMaxVar = repowerOf(c.RTGMaxVar)
 	v.RTGMaxV = voltage(c.RTGMaxV)
-	v.RTGMaxChargeRateW = activePower(c.RTGMaxChargeRateW)
-	v.RTGMaxDischargeRateW = activePower(c.RTGMaxDischargeRateW)
+	v.RTGMaxChargeRateW = powerOf(c.RTGMaxChargeRateW)
+	v.RTGMaxDischargeRateW = powerOf(c.RTGMaxDischargeRateW)
 	return v
 }
 
@@ -273,10 +270,10 @@ func (h *AdminDERReadHandler) settings(ctx context.Context, key string) derSetti
 		v.UpdatedTime = &s.UpdatedTime
 	}
 	v.ModesEnabled = modesOf(s.ModesEnabled)
-	v.SetMaxW = activePower(s.SetMaxW)
-	v.SetMaxVar = reactivePower(s.SetMaxVar)
-	v.SetMaxChargeRateW = activePower(s.SetMaxChargeRateW)
-	v.SetMaxDischargeRateW = activePower(s.SetMaxDischargeRateW)
+	v.SetMaxW = powerOf(s.SetMaxW)
+	v.SetMaxVar = repowerOf(s.SetMaxVar)
+	v.SetMaxChargeRateW = powerOf(s.SetMaxChargeRateW)
+	v.SetMaxDischargeRateW = powerOf(s.SetMaxDischargeRateW)
 	return v
 }
 
@@ -287,7 +284,7 @@ func (h *AdminDERReadHandler) availability(ctx context.Context, key string, now 
 		return v
 	}
 	fresh := derstatus.Assess(a.ReadingTime, now, derstatus.DefaultPollRateSeconds)
-	v.ReadingTime = a.ReadingTime
+	v.ReadingTime = readingTimeOf(a.ReadingTime)
 	v.Freshness = &fresh
 	v.AvailabilityDuration = a.AvailabilityDuration
 	v.MaxChargeDuration = a.MaxChargeDuration
@@ -299,8 +296,8 @@ func (h *AdminDERReadHandler) availability(ctx context.Context, key string, now 
 		p := uint16(*a.ReserveChargePercent)
 		v.ReserveChargePercent = &p
 	}
-	v.StatWAvail = activePower(a.StatWAvail)
-	v.StatVarAvail = reactivePower(a.StatVarAvail)
+	v.StatWAvail = powerOf(a.StatWAvail)
+	v.StatVarAvail = repowerOf(a.StatVarAvail)
 	v.Since = sinceOf(h.DERAvailabilities, key)
 	return v
 }
@@ -313,30 +310,32 @@ func modesOf(t *sep2.DERControlType) *dercontrol.Modes {
 	return &m
 }
 
-func activePower(p *sep2.ActivePower) *quantity {
+func repowerOf(p *sep2.ReactivePower) *frScaled {
 	if p == nil {
 		return nil
 	}
-	return &quantity{Value: int64(p.Value), Multiplier: p.Multiplier}
+	return newScaled(int64(p.Value), p.Multiplier)
 }
 
-func reactivePower(p *sep2.ReactivePower) *quantity {
+func apparentPower(p *sep2.ApparentPower) *frScaled {
 	if p == nil {
 		return nil
 	}
-	return &quantity{Value: int64(p.Value), Multiplier: p.Multiplier}
+	return newScaled(int64(p.Value), p.Multiplier)
 }
 
-func apparentPower(p *sep2.ApparentPower) *quantity {
+func voltage(p *sep2.VoltageRMS) *frScaled {
 	if p == nil {
 		return nil
 	}
-	return &quantity{Value: int64(p.Value), Multiplier: p.Multiplier}
+	return newScaled(int64(p.Value), p.Multiplier)
 }
 
-func voltage(p *sep2.VoltageRMS) *quantity {
-	if p == nil {
+// readingTimeOf is nil for a resource that carries no readingTime, which is
+// never read as the Unix epoch.
+func readingTimeOf(t int64) *int64 {
+	if t == 0 {
 		return nil
 	}
-	return &quantity{Value: int64(p.Value), Multiplier: p.Multiplier}
+	return &t
 }

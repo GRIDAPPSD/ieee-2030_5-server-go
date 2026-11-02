@@ -162,9 +162,9 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/derms/power", method: http.MethodGet, path: "/api/derms/power", wantReachedStatus: http.StatusBadRequest},
 		// #1190: the control timeline names every control and the device it reached.
 		{name: "GET /api/derms/control-events", method: http.MethodGet, path: "/api/derms/control-events", wantReachedStatus: http.StatusBadRequest},
-		// #1209: one device's DER status, ratings and availability. This router
-		// has no such device, so a credentialed request reaches the handler or
-		// finds no route and answers 404 either way; the gate runs first.
+		// #1209: one device's DER status, ratings and availability. This case
+		// shows the refusal without a credential; that the route is mounted
+		// is asserted in TestDERReadRouteIsMountedAndCredentialed.
 		{name: "GET /api/derms/devices/{edevId}/ders", method: http.MethodGet, path: "/api/derms/devices/4/ders", wantReachedStatus: http.StatusNotFound},
 		// #1157: the block view names every aggregator, device and delivered figure.
 		{name: "GET /api/derms/grid-requests", method: http.MethodGet, path: "/api/derms/grid-requests", wantReachedStatus: http.StatusOK},

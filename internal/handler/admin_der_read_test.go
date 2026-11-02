@@ -317,12 +317,26 @@ func TestDERReadThreeAbsencesAreDistinct(t *testing.T) {
 	if strings.Contains(string(raw), "10.1.2.3") {
 		t.Errorf("the reply carries the backend cause: %s", raw)
 	}
-	// A DER with nothing stored reads as all three resources not reported.
+	// A DER with nothing stored reads as all three resources not reported,
+	// with no reading time and no since map.
 	other := at(t, body, "ders", 1)
 	for _, sec := range []string{"status", "capability", "availability"} {
 		if at(t, other, sec, "reported") != false || at(t, other, sec, "error") != "" {
 			t.Errorf("DER 2 %s = %v", sec, at(t, other, sec))
 		}
+	}
+	for _, sec := range []string{"status", "availability"} {
+		if at(t, other, sec, "readingTime") != nil || at(t, other, sec, "since") != nil || at(t, other, sec, "freshness") != nil {
+			t.Errorf("DER 2 %s: readingTime=%v since=%v freshness=%v, want all null", sec, at(t, other, sec, "readingTime"), at(t, other, sec, "since"), at(t, other, sec, "freshness"))
+		}
+	}
+	// DER 1's availability is stored with a readingTime and no elements: the
+	// store can record and has nothing, so since is an empty object.
+	if got := at(t, der, "availability", "readingTime"); got != float64(derReadT0.Unix()) {
+		t.Errorf("availability readingTime = %v", got)
+	}
+	if got := at(t, der, "availability", "since"); !reflect.DeepEqual(got, map[string]any{}) {
+		t.Errorf("availability since = %v, want {}", got)
 	}
 }
 
@@ -340,6 +354,9 @@ func TestDERReadStaleAndClockAhead(t *testing.T) {
 	der := at(t, body, "ders", 0)
 	if at(t, der, "status", "freshness", "stale") != true || at(t, der, "status", "freshness", "ageSeconds") != float64(1861) {
 		t.Errorf("status freshness = %v", at(t, der, "status", "freshness"))
+	}
+	if at(t, der, "availability", "readingTime") != nil {
+		t.Errorf("availability stored with no readingTime reads %v, want null", at(t, der, "availability", "readingTime"))
 	}
 	if at(t, der, "availability", "freshness", "stale") != true || at(t, der, "availability", "freshness", "noReadingTime") != true {
 		t.Errorf("availability freshness = %v", at(t, der, "availability", "freshness"))
@@ -399,13 +416,32 @@ func TestDERReadUnwiredResourceIsNotReported(t *testing.T) {
 	}
 }
 
+// storedAmong returns the names in notStored that typ stores as an xml
+// element, which a notStored list must never hold.
+func storedAmong(typ reflect.Type, notStored []string) []string {
+	tags := map[string]bool{}
+	for i := 0; i < typ.NumField(); i++ {
+		tags[strings.Split(typ.Field(i).Tag.Get("xml"), ",")[0]] = true
+	}
+	var out []string
+	for _, n := range notStored {
+		if tags[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // The notStored lists must name only elements the vendored structs lack, or
 // a reader is told a stored field is dropped.
 func TestDERReadNotStoredNamesNoStoredElement(t *testing.T) {
-	f := newDERReadFixture(t)
-	if err := f.statuses.Create(context.Background(), "3/1", "default", sep2.DERStatus{}); err != nil {
-		t.Fatal(err)
+	// Control: the comparison flags a stored element and passes a dropped one.
+	capType := reflect.TypeOf(sep2.DERCapability{})
+	if got := storedAmong(capType, []string{"rtgMaxW", "rtgVNom"}); !reflect.DeepEqual(got, []string{"rtgMaxW"}) {
+		t.Fatalf("control: storedAmong = %v, want [rtgMaxW]", got)
 	}
+
+	f := newDERReadFixture(t)
 	_, body := serveDERRead(t, f.handler(), "3")
 	der := at(t, body, "ders", 0)
 	for _, c := range []struct {
@@ -413,28 +449,18 @@ func TestDERReadNotStoredNamesNoStoredElement(t *testing.T) {
 		typ     reflect.Type
 	}{
 		{"status", reflect.TypeOf(sep2.DERStatus{})},
-		{"capability", reflect.TypeOf(sep2.DERCapability{})},
+		{"capability", capType},
 		{"settings", reflect.TypeOf(sep2.DERSettings{})},
 	} {
-		tags := map[string]bool{}
-		for i := 0; i < c.typ.NumField(); i++ {
-			tags[strings.Split(c.typ.Field(i).Tag.Get("xml"), ",")[0]] = true
+		var names []string
+		for _, n := range at(t, der, c.section, "notStored").([]any) {
+			names = append(names, n.(string))
 		}
-		names := at(t, der, c.section, "notStored").([]any)
 		if len(names) == 0 {
 			t.Errorf("%s notStored is empty", c.section)
 		}
-		for _, n := range names {
-			if tags[n.(string)] {
-				t.Errorf("%s notStored names %v, which the vendored struct stores", c.section, n)
-			}
+		if got := storedAmong(c.typ, names); len(got) > 0 {
+			t.Errorf("%s notStored names %v, which the vendored struct stores", c.section, got)
 		}
-	}
-	// Control: the check fires on a stored element.
-	if !(reflect.TypeOf(sep2.DERStatus{}).NumField() > 0) {
-		t.Fatal("no fields")
-	}
-	if _, ok := reflect.TypeOf(sep2.DERCapability{}).FieldByName("RTGMaxW"); !ok {
-		t.Fatal("control field missing")
 	}
 }

@@ -1311,6 +1311,13 @@ func rootElementName(body []byte) (xml.Name, error) {
 	}
 }
 
+// readingBatchCreator is the optional capability to store a batch of
+// readings under one mirror as one write, all of them or none
+// (memory.JournaledScopedStore).
+type readingBatchCreator interface {
+	CreateAll(ctx context.Context, parentID string, ids []string, values []sep2.MirrorMeterReading) error
+}
+
 // decodeMirrorMeterReadings decodes a POST body into the readings it carries.
 //
 // IEEE 2030.5-2018 Annex A.4.4.11 lists TWO request representations for POST
@@ -1454,6 +1461,19 @@ func HandlePostMirrorMeterReading(
 		ids := make([]string, len(readings))
 		for i := range readings {
 			ids[i] = stampMirrorMeterReading(&readings[i], parentID, baseNanos+int64(i))
+		}
+
+		// A store that can write a batch in one step makes it all-or-nothing
+		// on disk too: a rollback Delete would hit the same fault that failed
+		// the write.
+		if batch, ok := mmrStore.(readingBatchCreator); ok {
+			if err := batch.CreateAll(r.Context(), parentID, ids, readings); err != nil {
+				srverr.Internal(w, r, fmt.Errorf("store %d reading(s): %w", len(readings), err))
+				return
+			}
+			w.Header().Set("Location", readings[0].Href)
+			w.WriteHeader(http.StatusCreated)
+			return
 		}
 
 		// All-or-nothing: a batch either lands whole or lands not at all.

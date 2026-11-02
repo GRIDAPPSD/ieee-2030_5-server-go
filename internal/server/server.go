@@ -244,13 +244,18 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		return nil, nil, fmt.Errorf("FlowReservationAnswer persistence: %w", err)
 	}
 	// #1205: mirror usage points persist, so a client that mirrored before a
-	// restart can keep posting readings to the same href. The meter readings
-	// stay in memory: POST /mup/{id}/mr only needs the mirror to resolve.
+	// restart can keep posting readings to the same href.
 	mirrorUsagePoints, err := memory.NewPersistentStore[sep2.MirrorUsagePoint](
 		cfg.EffectiveStorePath("mirrorusagepoints", ""), "MirrorUsagePoint",
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("MirrorUsagePoint persistence: %w", err)
+	}
+	// #1206: the meter readings the power history has not yet recorded
+	// survive a restart in a journal, compacted by the recorder.
+	mirrorMeterReadings, readingJournal, err := newMirrorReadingStore(cfg, mirrorUsagePoints)
+	if err != nil {
+		return nil, nil, err
 	}
 	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
 		cfg.EffectiveStorePath("enddevicemanagement", ""),
@@ -292,7 +297,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		Registrations:            registrations,
 		RegistrationPolicy:       memory.RegistrationPolicy{}, // fail-closed: no self-registration pIN resolver wired yet
 		MirrorUsagePoints:        mirrorUsagePoints,
-		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
+		MirrorMeterReadings:      mirrorMeterReadings,
 		DERs:                     memory.NewScopedStore[sep2.DER](),
 		DERCapabilities:          memory.NewScopedStore[sep2.DERCapability](),
 		DERSettings:              memory.NewScopedStore[sep2.DERSettings](),
@@ -370,6 +375,9 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		}
 		if stores.PowerHistory, err = handler.OpenPowerHistory(dir, retention, time.Now().Unix()); err != nil {
 			return nil, nil, err
+		}
+		if readingJournal != nil {
+			stores.PowerHistory.UseJournal(readingJournal)
 		}
 	}
 

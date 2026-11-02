@@ -158,7 +158,7 @@ func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64)
 			overCap[m]++
 		}
 	}
-	keepSeriesType(recs, drop, inline)
+	handler.KeepSeriesType(all[len(inline):], drop, inline)
 
 	for i := range recs {
 		if !drop[i] {
@@ -188,47 +188,6 @@ func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64)
 			"mirror", mupID, "leg", leg, "flowDirection", m.FlowDirection, "overCap", overCap[m], "maxPerSeries", r.MaxPerSeries)
 	}
 	return removed, failures
-}
-
-// keepSeriesType un-drops the oldest typed record of an mRID when every typed
-// record of it is being dropped while an untyped one survives, out of band or
-// inline. A reading that reuses an mRID may omit its ReadingType and inherits
-// it from any record of that mRID, inline ones included (2023 rule (n)), so
-// removing the last typed one would leave the surviving series untyped and
-// silently out of every figure.
-func keepSeriesType(recs []record, drop []bool, inline []sep2.MirrorMeterReading) {
-	type series struct {
-		survivor, typedSurvivor bool
-		oldestTypedDropped      int
-	}
-	byMRID := map[string]*series{}
-	for i := range recs {
-		m := recs[i].reading.MRID
-		s, ok := byMRID[m]
-		if !ok {
-			s = &series{oldestTypedDropped: -1}
-			byMRID[m] = s
-		}
-		typed := recs[i].reading.ReadingType != nil
-		switch {
-		case !drop[i]:
-			s.survivor = true
-			s.typedSurvivor = s.typedSurvivor || typed
-		case typed && s.oldestTypedDropped < 0:
-			s.oldestTypedDropped = i
-		}
-	}
-	for _, m := range inline {
-		if s, ok := byMRID[m.MRID]; ok {
-			s.survivor = true
-			s.typedSurvivor = s.typedSurvivor || m.ReadingType != nil
-		}
-	}
-	for _, s := range byMRID {
-		if s.survivor && !s.typedSurvivor && s.oldestTypedDropped >= 0 {
-			drop[s.oldestTypedDropped] = false
-		}
-	}
 }
 
 // readingID returns the store id of a reading stamped /mup/{mupID}/mr/{id}.

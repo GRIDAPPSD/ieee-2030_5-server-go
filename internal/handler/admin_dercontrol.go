@@ -972,7 +972,7 @@ type lazyMirrors struct {
 // gets no figure.
 func (h *AdminDERControlHandler) deliveryFor(ctx context.Context, route, edevLFDI string, iv sep2.DateTimeInterval, lc dercontrol.LifecycleRecord, now int64, lm *lazyMirrors) (*DERControlDelivery, error) {
 	ws, we := effectiveWindow(iv, lc, now)
-	if readingsExpired(ws, now, h.MirrorReadingRetention) {
+	if readingsExpired(ws, now, h.MirrorReadingRetention, readingsFloor(h.MirrorMeterReadings)) {
 		return &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: edevLFDI, ReadingsExpired: true}, nil
 	}
 	if !lm.read {

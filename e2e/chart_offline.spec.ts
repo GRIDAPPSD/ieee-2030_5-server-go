@@ -43,8 +43,8 @@ test.describe('admin UI with the chart library bundled', () => {
     baseUrl = await startServer();
   });
 
-  test.afterAll(() => {
-    stopServer();
+  test.afterAll(async () => {
+    await stopServer();
   });
 
   // The Bearer header is what authenticates these page loads. No credential

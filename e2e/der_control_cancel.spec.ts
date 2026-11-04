@@ -15,8 +15,8 @@ test.beforeAll(async () => {
   });
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {

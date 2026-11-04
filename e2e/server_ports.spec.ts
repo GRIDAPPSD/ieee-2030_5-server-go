@@ -38,7 +38,7 @@ for (const taken of ['admin', 'protocol'] as PortKind[]) {
       expect(getProtocolPort()).toBe(picked.protocol.at(-1));
       expect(taken === 'admin' ? new URL(getAdminUrl()).port : String(getProtocolPort())).not.toBe(String(busy));
     } finally {
-      stopServer();
+      await stopServer();
       await close(blocker);
     }
   });

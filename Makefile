@@ -84,7 +84,7 @@ test-verbose:             ## Run tests with verbose output
 	go test -v ./...
 
 test-e2e:                 ## Run Playwright E2E tests (requires npm install in e2e/)
-	cd e2e && NODE_TLS_REJECT_UNAUTHORIZED=0 npx playwright test --reporter=list
+	cd e2e && npm run test:ci
 
 # --- Certificates ------------------------------------------------
 

@@ -144,6 +144,9 @@ func TestDERReadOperatorValues(t *testing.T) {
 		OperationalModeStatus: &sep2.OperationalModeStatusType{DateTime: reading, Value: 2},
 		StateOfChargeStatus:   &sep2.StateOfChargeStatusType{DateTime: reading, Value: 7000},
 		AlarmStatus:           ptr(sep2.HexBinary32(0x805)),
+
+		LocalControlModeStatus: &sep2.LocalControlModeStatusType{DateTime: reading, Value: 1},
+		ManufacturerStatus:     &sep2.ManufacturerStatusType{DateTime: reading, Value: "F-07"},
 	}
 	if err := f.statuses.Create(ctx, "3/1", "default", status); err != nil {
 		t.Fatal(err)
@@ -163,7 +166,24 @@ func TestDERReadOperatorValues(t *testing.T) {
 		RTGMaxVA:             &sep2.ApparentPower{Value: 13000, Multiplier: 0},
 		RTGMaxVar:            &sep2.ReactivePower{Value: -400, Multiplier: 1},
 		RTGMaxV:              &sep2.VoltageRMS{Value: 240, Multiplier: 0},
-		RTGMaxA:              ptr(int32(50)),
+		RTGMaxA:              &sep2.CurrentRMS{Value: 50, Multiplier: -1},
+
+		RTGAbnormalCategory:    ptr(uint8(2)),
+		RTGNormalCategory:      ptr(uint8(1)),
+		RTGMaxAh:               &sep2.AmpereHour{Value: 200, Multiplier: 0},
+		RTGMaxWh:               &sep2.WattHour{Value: 13500, Multiplier: 1},
+		RTGMaxChargeRateVA:     &sep2.ApparentPower{Value: 11600, Multiplier: 0},
+		RTGMaxDischargeRateVA:  &sep2.ApparentPower{Value: 1160, Multiplier: 1},
+		RTGMaxVarNeg:           &sep2.ReactivePower{Value: -300, Multiplier: 1},
+		RTGMinV:                &sep2.VoltageRMS{Value: 208, Multiplier: 0},
+		RTGVNom:                &sep2.VoltageRMS{Value: 24, Multiplier: 1},
+		RTGOverExcitedW:        &sep2.ActivePower{Value: 9000, Multiplier: 0},
+		RTGUnderExcitedW:       &sep2.ActivePower{Value: -8000, Multiplier: 0},
+		RTGOverExcitedPF:       &sep2.PowerFactor{Displacement: 95, Multiplier: -2},
+		RTGUnderExcitedPF:      &sep2.PowerFactor{Displacement: 9, Multiplier: -1},
+		RTGMinPFOverExcited:    &sep2.PowerFactor{Displacement: 85, Multiplier: -2},
+		RTGMinPFUnderExcited:   &sep2.PowerFactor{Displacement: 80, Multiplier: -2},
+		RTGReactiveSusceptance: &sep2.ReactiveSusceptance{Value: 7, Multiplier: -3},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +239,11 @@ func TestDERReadOperatorValues(t *testing.T) {
 		{"operationalMode", []any{"status", "operationalMode"}, float64(2)},
 		{"stateOfCharge", []any{"status", "stateOfCharge"}, float64(8000)},
 		{"storageMode absent", []any{"status", "storageMode"}, nil},
+		{"localControlModeStatus", []any{"status", "localControlModeStatus"}, float64(1)},
+		{"manufacturerStatus", []any{"status", "manufacturerStatus"}, "F-07"},
+		{"status notStored empty", []any{"status", "notStored"}, []any{}},
+		{"localControlMode since", []any{"status", "since", "localControlModeStatus"}, float64(derReadT0.Unix())},
+		{"manufacturerStatus since", []any{"status", "since", "manufacturerStatus"}, float64(derReadT0.Unix())},
 		{"inverter absent", []any{"status", "inverter"}, nil},
 		{"alarm raw", []any{"status", "alarm", "raw"}, float64(0x805)},
 		{"alarm reserved", []any{"status", "alarm", "reservedBits"}, float64(0x800)},
@@ -238,7 +263,32 @@ func TestDERReadOperatorValues(t *testing.T) {
 		{"rtgMaxVA", []any{"capability", "rtgMaxVA", "value"}, float64(13000)},
 		{"rtgMaxVar negative kept", []any{"capability", "rtgMaxVar", "value"}, float64(-400)},
 		{"rtgMaxV", []any{"capability", "rtgMaxV", "value"}, float64(240)},
-		{"rtgMaxA", []any{"capability", "rtgMaxA"}, float64(50)},
+		{"rtgMaxA value", []any{"capability", "rtgMaxA", "value"}, float64(50)},
+		{"rtgMaxA multiplier", []any{"capability", "rtgMaxA", "multiplier"}, float64(-1)},
+		{"rtgAbnormalCategory", []any{"capability", "rtgAbnormalCategory"}, float64(2)},
+		{"rtgNormalCategory", []any{"capability", "rtgNormalCategory"}, float64(1)},
+		{"rtgMaxAh value", []any{"capability", "rtgMaxAh", "value"}, float64(200)},
+		{"rtgMaxAh multiplier", []any{"capability", "rtgMaxAh", "multiplier"}, float64(0)},
+		{"rtgMaxWh value", []any{"capability", "rtgMaxWh", "value"}, float64(13500)},
+		{"rtgMaxWh multiplier", []any{"capability", "rtgMaxWh", "multiplier"}, float64(1)},
+		{"rtgMaxChargeRateVA", []any{"capability", "rtgMaxChargeRateVA", "value"}, float64(11600)},
+		{"rtgMaxDischargeRateVA value", []any{"capability", "rtgMaxDischargeRateVA", "value"}, float64(1160)},
+		{"rtgMaxDischargeRateVA multiplier", []any{"capability", "rtgMaxDischargeRateVA", "multiplier"}, float64(1)},
+		{"rtgMaxVarNeg negative kept", []any{"capability", "rtgMaxVarNeg", "value"}, float64(-300)},
+		{"rtgMinV", []any{"capability", "rtgMinV", "value"}, float64(208)},
+		{"rtgVNom value", []any{"capability", "rtgVNom", "value"}, float64(24)},
+		{"rtgVNom multiplier", []any{"capability", "rtgVNom", "multiplier"}, float64(1)},
+		{"rtgOverExcitedW", []any{"capability", "rtgOverExcitedW", "value"}, float64(9000)},
+		{"rtgUnderExcitedW negative kept", []any{"capability", "rtgUnderExcitedW", "value"}, float64(-8000)},
+		{"rtgOverExcitedPF value", []any{"capability", "rtgOverExcitedPF", "value"}, float64(95)},
+		{"rtgOverExcitedPF multiplier", []any{"capability", "rtgOverExcitedPF", "multiplier"}, float64(-2)},
+		{"rtgUnderExcitedPF value", []any{"capability", "rtgUnderExcitedPF", "value"}, float64(9)},
+		{"rtgUnderExcitedPF multiplier", []any{"capability", "rtgUnderExcitedPF", "multiplier"}, float64(-1)},
+		{"rtgMinPFOverExcited", []any{"capability", "rtgMinPFOverExcited", "value"}, float64(85)},
+		{"rtgMinPFUnderExcited", []any{"capability", "rtgMinPFUnderExcited", "value"}, float64(80)},
+		{"rtgReactiveSusceptance value", []any{"capability", "rtgReactiveSusceptance", "value"}, float64(7)},
+		{"rtgReactiveSusceptance multiplier", []any{"capability", "rtgReactiveSusceptance", "multiplier"}, float64(-3)},
+		{"capability notStored empty", []any{"capability", "notStored"}, []any{}},
 		{"modesSupported raw", []any{"capability", "modesSupported", "raw"}, float64(1<<0 | 1<<1 | 1<<2 | 1<<26)},
 		{"modesSupported reserved", []any{"capability", "modesSupported", "reservedBits"}, float64(0)},
 
@@ -437,8 +487,8 @@ func storedAmong(typ reflect.Type, notStored []string) []string {
 func TestDERReadNotStoredNamesNoStoredElement(t *testing.T) {
 	// Control: the comparison flags a stored element and passes a dropped one.
 	capType := reflect.TypeOf(sep2.DERCapability{})
-	if got := storedAmong(capType, []string{"rtgMaxW", "rtgVNom"}); !reflect.DeepEqual(got, []string{"rtgMaxW"}) {
-		t.Fatalf("control: storedAmong = %v, want [rtgMaxW]", got)
+	if got := storedAmong(reflect.TypeOf(sep2.DERSettings{}), []string{"setMaxW", "setVNom"}); !reflect.DeepEqual(got, []string{"setMaxW"}) {
+		t.Fatalf("control: storedAmong = %v, want [setMaxW]", got)
 	}
 
 	f := newDERReadFixture(t)
@@ -456,11 +506,45 @@ func TestDERReadNotStoredNamesNoStoredElement(t *testing.T) {
 		for _, n := range at(t, der, c.section, "notStored").([]any) {
 			names = append(names, n.(string))
 		}
-		if len(names) == 0 {
+		if len(names) == 0 && c.section == "settings" {
 			t.Errorf("%s notStored is empty", c.section)
 		}
 		if got := storedAmong(c.typ, names); len(got) > 0 {
 			t.Errorf("%s notStored names %v, which the vendored struct stores", c.section, got)
+		}
+	}
+}
+
+// A stored capability and status that carry none of the elements added in
+// core v0.30.0 answer every one of them null, never 0 or an empty string.
+func TestDERReadNewElementsAbsentAreNull(t *testing.T) {
+	f := newDERReadFixture(t)
+	ctx := context.Background()
+	if err := f.caps.Create(ctx, "3/1", "default", sep2.DERCapability{Type: ptr(uint8(4))}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.statuses.Create(ctx, "3/1", "default", sep2.DERStatus{ReadingTime: derReadT0.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := serveDERRead(t, f.handler(), "3")
+	der := at(t, body, "ders", 0)
+	for _, name := range []string{
+		"rtgMaxA", "rtgMaxAh", "rtgMaxWh", "rtgMaxChargeRateVA", "rtgMaxDischargeRateVA",
+		"rtgMaxVarNeg", "rtgMinV", "rtgVNom", "rtgOverExcitedW", "rtgUnderExcitedW",
+		"rtgOverExcitedPF", "rtgUnderExcitedPF", "rtgMinPFOverExcited", "rtgMinPFUnderExcited",
+		"rtgReactiveSusceptance", "rtgAbnormalCategory", "rtgNormalCategory",
+	} {
+		m := der.(map[string]any)["capability"].(map[string]any)
+		v, present := m[name]
+		if !present || v != nil {
+			t.Errorf("capability %s = %v (present %v), want null", name, v, present)
+		}
+	}
+	for _, name := range []string{"localControlModeStatus", "manufacturerStatus"} {
+		m := der.(map[string]any)["status"].(map[string]any)
+		v, present := m[name]
+		if !present || v != nil {
+			t.Errorf("status %s = %v (present %v), want null", name, v, present)
 		}
 	}
 }

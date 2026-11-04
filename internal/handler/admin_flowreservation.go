@@ -576,7 +576,7 @@ func requestBody(frq sep2.FlowReservationRequest) frRequestBody {
 		RequestStatus:     requestStatusWord(frq.RequestStatus.RequestStatus),
 		IntervalRequested: intervalOf(frq.IntervalRequested),
 		EnergyRequested:   energyOf(frq.EnergyRequested),
-		PowerRequested:    powerOf(frq.PowerRequested),
+		PowerRequested:    signedScaled(frq.PowerRequested),
 		Direction:         directionOf(frq.EnergyRequested),
 	}
 }
@@ -600,13 +600,6 @@ func energyOf(e *sep2.SignedRealEnergy) *frScaled {
 		return nil
 	}
 	return newScaled(e.Value, e.Multiplier)
-}
-
-func powerOf(p *sep2.ActivePower) *frScaled {
-	if p == nil {
-		return nil
-	}
-	return newScaled(int64(p.Value), p.Multiplier)
 }
 
 // directionOf names the flow of an energy quantity from the one rule the
@@ -676,7 +669,7 @@ func (h *AdminFlowReservationHandler) responseView(ctx context.Context, edevID, 
 		CreationTime:    resp.CreationTime,
 		Interval:        intervalOf(resp.Interval),
 		EnergyAvailable: energyOf(resp.EnergyAvailable),
-		PowerAvailable:  powerOf(resp.PowerAvailable),
+		PowerAvailable:  signedScaled(resp.PowerAvailable),
 		Direction:       directionOf(resp.EnergyAvailable),
 		EventStatus:     eventStatusOf(resp.EventStatus),
 		Executions:      []FlowReservationExecutionView{},
@@ -768,7 +761,7 @@ func (h *AdminFlowReservationHandler) executionView(ctx context.Context, c commi
 	ev := FlowReservationExecutionView{
 		MRID:     c.MRID,
 		Interval: &frInterval{Start: c.Window.Start, Duration: c.Window.Duration},
-		TargetW:  powerOf(c.TargetW),
+		TargetW:  signedScaled(c.TargetW),
 	}
 	if h.Controls == nil {
 		return ev, nil

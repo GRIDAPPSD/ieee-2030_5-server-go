@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -163,7 +164,7 @@ func TestDERReadOperatorValues(t *testing.T) {
 		RTGMaxW:              &sep2.ActivePower{Value: 12000, Multiplier: 0},
 		RTGMaxChargeRateW:    &sep2.ActivePower{Value: 11520, Multiplier: 0},
 		RTGMaxDischargeRateW: &sep2.ActivePower{Value: 1152, Multiplier: 1},
-		RTGMaxVA:             &sep2.ApparentPower{Value: 13000, Multiplier: 0},
+		RTGMaxVA:             &sep2.ApparentPower{Value: 65000, Multiplier: 0},
 		RTGMaxVar:            &sep2.ReactivePower{Value: -400, Multiplier: 1},
 		RTGMaxV:              &sep2.VoltageRMS{Value: 240, Multiplier: 0},
 		RTGMaxA:              &sep2.CurrentRMS{Value: 50, Multiplier: -1},
@@ -260,7 +261,7 @@ func TestDERReadOperatorValues(t *testing.T) {
 		{"rtgMaxDischargeRateW value", []any{"capability", "rtgMaxDischargeRateW", "value"}, float64(1152)},
 		{"rtgMaxDischargeRateW multiplier", []any{"capability", "rtgMaxDischargeRateW", "multiplier"}, float64(1)},
 		{"rtgMaxW", []any{"capability", "rtgMaxW", "value"}, float64(12000)},
-		{"rtgMaxVA", []any{"capability", "rtgMaxVA", "value"}, float64(13000)},
+		{"rtgMaxVA", []any{"capability", "rtgMaxVA", "value"}, float64(65000)},
 		{"rtgMaxVar negative kept", []any{"capability", "rtgMaxVar", "value"}, float64(-400)},
 		{"rtgMaxV", []any{"capability", "rtgMaxV", "value"}, float64(240)},
 		{"rtgMaxA value", []any{"capability", "rtgMaxA", "value"}, float64(50)},
@@ -528,6 +529,10 @@ func TestDERReadNewElementsAbsentAreNull(t *testing.T) {
 	}
 	_, body := serveDERRead(t, f.handler(), "3")
 	der := at(t, body, "ders", 0)
+	if at(t, der, "capability", "reported") != true || at(t, der, "status", "reported") != true {
+		t.Errorf("reported: capability %v, status %v, want true for both",
+			at(t, der, "capability", "reported"), at(t, der, "status", "reported"))
+	}
 	for _, name := range []string{
 		"rtgMaxA", "rtgMaxAh", "rtgMaxWh", "rtgMaxChargeRateVA", "rtgMaxDischargeRateVA",
 		"rtgMaxVarNeg", "rtgMinV", "rtgVNom", "rtgOverExcitedW", "rtgUnderExcitedW",
@@ -545,6 +550,70 @@ func TestDERReadNewElementsAbsentAreNull(t *testing.T) {
 		v, present := m[name]
 		if !present || v != nil {
 			t.Errorf("status %s = %v (present %v), want null", name, v, present)
+		}
+	}
+}
+
+// elementNames lists the xml element names of the fields a struct declares
+// itself, leaving out the root name and attributes.
+func elementNames(typ reflect.Type) []string {
+	var out []string
+	for i := 0; i < typ.NumField(); i++ {
+		tag := strings.Split(typ.Field(i).Tag.Get("xml"), ",")
+		if tag[0] == "" || strings.Contains(tag[0], " ") || slices.Contains(tag[1:], "attr") {
+			continue
+		}
+		out = append(out, tag[0])
+	}
+	return out
+}
+
+// statusReplyKey is the reply key that carries each DERStatus element. A core
+// element with no entry here fails the test below until it is mapped.
+var statusReplyKey = map[string]string{
+	"alarmStatus":            "alarm",
+	"connectStatus":          "connect",
+	"genConnectStatus":       "connect",
+	"storConnectStatus":      "connect",
+	"inverterStatus":         "inverter",
+	"localControlModeStatus": "localControlModeStatus",
+	"manufacturerStatus":     "manufacturerStatus",
+	"operationalModeStatus":  "operationalMode",
+	"readingTime":            "readingTime",
+	"stateOfChargeStatus":    "stateOfCharge",
+	"storageModeStatus":      "storageMode",
+}
+
+// Every element a core struct declares is in the reply or in its notStored
+// list, so an element dropped from the reply fails here.
+func TestDERReadReplyCoversEveryCoreElement(t *testing.T) {
+	// Control: the enumeration finds a known element and skips the root name.
+	got := elementNames(reflect.TypeOf(sep2.DERCapability{}))
+	if !slices.Contains(got, "rtgMaxW") || slices.Contains(got, "DERCapability") {
+		t.Fatalf("control: elementNames = %v", got)
+	}
+
+	f := newDERReadFixture(t)
+	_, body := serveDERRead(t, f.handler(), "3")
+	der := at(t, body, "ders", 0)
+	for _, c := range []struct {
+		section string
+		typ     reflect.Type
+		key     func(string) string
+	}{
+		{"status", reflect.TypeOf(sep2.DERStatus{}), func(n string) string { return statusReplyKey[n] }},
+		{"capability", reflect.TypeOf(sep2.DERCapability{}), func(n string) string { return n }},
+	} {
+		reply := at(t, der, c.section).(map[string]any)
+		notStored := at(t, der, c.section, "notStored").([]any)
+		for _, name := range elementNames(c.typ) {
+			if slices.Contains(notStored, any(name)) {
+				continue
+			}
+			key := c.key(name)
+			if _, in := reply[key]; key == "" || !in {
+				t.Errorf("%s reply has no key %q for core element %q", c.section, key, name)
+			}
 		}
 	}
 }

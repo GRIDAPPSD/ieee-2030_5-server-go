@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert, type DeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY } from './platform';
 import { sendWire } from './fixtures/fsa_wire';
 
 // #1115: the Overview power card. A device posts real power over mutual TLS,
@@ -10,7 +10,6 @@ import { sendWire } from './fixtures/fsa_wire';
 // route reports them, plus the power now.
 
 const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
-const SERVER = join(__dirname, '..', 'sep2server');
 // Outside setup.ts's 18443-20442 range and the ranges of the other specs.
 const PROTOCOL_PORT = 25000 + Math.floor(Math.random() * 1000);
 const NS = 'urn:ieee:std:2030.5:ns';
@@ -23,8 +22,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer({ SEP2_ADDR: `:${PROTOCOL_PORT}`, SEP2_PEN: '12345' });
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {
@@ -48,7 +47,7 @@ test('the Overview power card shows a seeded device\'s discharged and charged en
     .poll(async () => (await request.get(`${baseUrl}/api/fsas`, { headers: AUTH }).catch(() => null))?.status(), { timeout: 15000 })
     .toBe(200);
 
-  const cert = mintDeviceCert(SERVER, getCertDir(), 'power-card');
+  const cert = mintDeviceCert(SERVER_BINARY, getCertDir(), 'power-card');
   const info = await request.post(`${baseUrl}/api/certs/info`, {
     headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },
     data: cert.certPEM,

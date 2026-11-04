@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY } from './platform';
 
 // #159: Add EndDevice flow.
 // Paste a freshly generated device cert -> Parse Cert auto-fills SFDI/LFDI ->
@@ -19,8 +19,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer();
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {
@@ -32,10 +32,7 @@ test.beforeEach(async ({ page }) => {
 test('add device from pasted certificate', async ({ page }) => {
   // Generate a fresh device cert (the sep2server binary built by setup.ts).
   const certDir = getCertDir();
-  const projectRoot = join(__dirname, '..');
-  const sep2server = join(projectRoot, 'sep2server');
-
-  const devicePEM = mintDeviceCert(sep2server, certDir, 'e2e-test-device', 'add-device-E2E').certPEM;
+  const devicePEM = mintDeviceCert(SERVER_BINARY, certDir, 'e2e-test-device', 'add-device-E2E').certPEM;
 
   await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');

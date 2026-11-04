@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { ADMIN_KEY } from './adminKey';
+import { SERVER_BINARY } from './platform';
 
 let serverProcess: ChildProcess | null = null;
 let adminUrl: string = '';
@@ -52,8 +53,11 @@ export async function startServer(
   pickPort: PortPicker = randomPort,
 ): Promise<string> {
   certDir = mkdtempSync(join(tmpdir(), 'sep2-e2e-'));
-  const projectRoot = join(__dirname, '..');
-  const sep2server = join(projectRoot, 'sep2server');
+  const sep2server = SERVER_BINARY;
+
+  // The previous server of this worker must be gone before another starts: on
+  // Windows a killed process can still hold its listening port and its cert files.
+  await pendingExit;
 
   // #209: the binary is built once in globalSetup (e2e/global-setup.ts)
   // before any worker starts, eliminating the ETXTBSY race that occurred when
@@ -110,17 +114,38 @@ export async function startServer(
       await waitForReady(serverProcess, new RegExp(`Admin server listening on \\S*:${adminPort} `), 20000);
       return adminUrl;
     } catch (err) {
-      stopServer();
+      await stopServer();
       if (!(err instanceof ServerExitedError) || attempt >= attempts) throw err;
     }
   }
 }
 
-export function stopServer() {
-  if (serverProcess) {
-    serverProcess.kill('SIGTERM');
-    serverProcess = null;
-  }
+// Resolves when the process of the last stopServer call has exited. startServer
+// awaits it, so a spec that calls stopServer without awaiting still cannot
+// start the next server over a live one.
+let pendingExit: Promise<void> = Promise.resolve();
+
+const EXIT_GRACE_MS = 10000;
+
+// stopServer asks the server to stop and resolves once it has exited. On
+// Windows kill() ends the process outright, so the server's graceful path does
+// not run; waiting for the exit is what frees the port. A server that outlasts
+// the grace period is killed with SIGKILL.
+export function stopServer(): Promise<void> {
+  const proc = serverProcess;
+  serverProcess = null;
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return pendingExit;
+
+  const exited = new Promise<void>((resolve) => {
+    const force = setTimeout(() => proc.kill('SIGKILL'), EXIT_GRACE_MS);
+    proc.once('exit', () => {
+      clearTimeout(force);
+      resolve();
+    });
+  });
+  proc.kill('SIGTERM');
+  pendingExit = Promise.all([pendingExit, exited]).then(() => undefined);
+  return pendingExit;
 }
 
 class ServerExitedError extends Error {}

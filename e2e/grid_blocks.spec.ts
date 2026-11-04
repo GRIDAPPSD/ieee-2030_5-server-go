@@ -13,8 +13,8 @@ test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders(AUTH);
 });
 
-test.afterEach(() => {
-  stopServer();
+test.afterEach(async () => {
+  await stopServer();
 });
 
 async function submitTwoBlocks(page: import('@playwright/test').Page) {

@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY } from './platform';
 import { readWire } from './fixtures/fsa_wire';
 
 // #1053: a device is taken off an FSA from its Programs drawer. The device
@@ -15,7 +15,6 @@ const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
 const FSA_MRID = 'e2e-fsa-unassign';
 const FSA_LABEL = 'unassign FSA';
 const TEMPLATE = 'unassign program';
-const SERVER = join(__dirname, '..', 'sep2server');
 // Outside the 18443-20442 range setup.ts picks its own ports from, and
 // apart from fsa_control.spec.ts's 21000 range.
 const PROTOCOL_PORT = 22000 + Math.floor(Math.random() * 1000);
@@ -26,8 +25,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer({ SEP2_ADDR: `:${PROTOCOL_PORT}`, SEP2_PEN: '12345' });
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {
@@ -39,7 +38,7 @@ test('Unassign from FSA in the Programs drawer takes the FSA programs off the de
     .poll(async () => (await request.get(`${baseUrl}/api/fsas`, { headers: AUTH }).catch(() => null))?.status(), { timeout: 15000 })
     .toBe(200);
 
-  const cert = mintDeviceCert(SERVER, getCertDir(), 'fsa-unassign');
+  const cert = mintDeviceCert(SERVER_BINARY, getCertDir(), 'fsa-unassign');
   const info = await request.post(`${baseUrl}/api/certs/info`, {
     headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },
     data: cert.certPEM,

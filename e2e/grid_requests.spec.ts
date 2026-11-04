@@ -15,8 +15,8 @@ test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders(AUTH);
 });
 
-test.afterEach(() => {
-  stopServer();
+test.afterEach(async () => {
+  await stopServer();
 });
 
 test('a two-row back-to-back batch is accepted, with each row split to the aggregator', async ({ page, request }) => {

@@ -12,8 +12,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer();
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 const columns = ['Time', 'Sender', 'Target', 'Payload', 'Bytes', 'Duration', 'Outcome'];

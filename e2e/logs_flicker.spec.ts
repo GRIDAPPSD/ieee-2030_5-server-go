@@ -5,7 +5,7 @@ import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
-import { SERVER_BINARY, skipOnWindows } from './platform';
+import { SERVER_BINARY } from './platform';
 import { readWire } from './fixtures/fsa_wire';
 
 // #1135: the dashboard pushes a frame every 5 s, and a tab with nothing
@@ -15,7 +15,6 @@ import { readWire } from './fixtures/fsa_wire';
 
 const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
 
-skipOnWindows(test, __filename);
 const PROTOCOL_PORT = 23000 + Math.floor(Math.random() * 1000);
 const FRAMES = 3;
 

@@ -486,11 +486,6 @@ jobs:
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
-      - name: Build sep2server.exe
-        # globalSetup rebuilds it, so this step only fails the job early and
-        # plainly when the binary does not build on Windows.
-        run: go build -o sep2server.exe ./cmd/sep2server/
-
       - name: Install e2e dependencies
         run: cd e2e && npm ci
 
@@ -498,11 +493,9 @@ jobs:
         run: cd e2e && npx playwright install chromium
 
       - name: Run Playwright e2e suite
-        # make test-e2e is not used: its VAR=x command line is bash syntax
-        # that a Windows runner's make may not run.
-        env:
-          NODE_TLS_REJECT_UNAUTHORIZED: '0'
-        run: cd e2e && npx playwright test --reporter=list
+        # make is not used here: a Windows runner may not have it. The npm
+        # script is the one owner of the command; globalSetup builds the binary.
+        run: cd e2e && npm run test:ci
 
   gofmt:
     name: gofmt check

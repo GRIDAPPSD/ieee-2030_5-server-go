@@ -252,7 +252,7 @@ func decodeChildren(d *xml.Decoder, start xml.StartElement, typeName string, wan
 			next++
 		case xml.CharData:
 			if len(bytes.TrimSpace(t)) > 0 {
-				return fmt.Errorf("sep2: %s: unexpected text %q", typeName, bytes.TrimSpace(t))
+				return errUnexpectedText(typeName, bytes.TrimSpace(t), "")
 			}
 		case xml.EndElement:
 			if next < len(want) {
@@ -275,7 +275,7 @@ func simpleText(d *xml.Decoder) (string, error) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			return "", fmt.Errorf("unexpected child element <%s>", t.Name.Local)
+			return "", errUnexpectedChild(t.Name.Local)
 		case xml.CharData:
 			text = append(text, t...)
 		case xml.EndElement:

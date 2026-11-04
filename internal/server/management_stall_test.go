@@ -1,3 +1,5 @@
+//go:build unix
+
 package server_test
 
 // #677 fix round item 1: durable-before-live must not cost every reader a

@@ -283,3 +283,36 @@ func TestPrepareDeviceLogExplicitCertDirStaysProtectedWithEveryPathExplicit(t *t
 		t.Error("the refused directory was created")
 	}
 }
+
+func TestPrepareDeviceLogWindowsDefaultStaysOff(t *testing.T) {
+	logs := captureLog(t)
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	cfg := deviceLogCfg(t, t.TempDir())
+	if err := prepareDeviceLogOn("windows", cfg, &certDirResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DeviceLogOff {
+		t.Error("DeviceLogOff not set for the default directory on windows")
+	}
+	if cfg.DeviceLogResolvedDir != "" {
+		t.Errorf("DeviceLogResolvedDir = %q; want empty", cfg.DeviceLogResolvedDir)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "etc")); err == nil {
+		t.Error("the default directory was created on windows")
+	}
+	if !strings.Contains(logs.String(), "SEP2_DEVICE_LOG_DIR") {
+		t.Errorf("log %q; want a line naming SEP2_DEVICE_LOG_DIR", logs.String())
+	}
+}
+
+func TestPrepareDeviceLogWindowsExplicitDirTurnsOn(t *testing.T) {
+	cfg := deviceLogCfg(t, t.TempDir())
+	cfg.DeviceLogDir = filepath.Join(t.TempDir(), "devices")
+	if err := prepareDeviceLogOn("windows", cfg, &certDirResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DeviceLogOff || cfg.DeviceLogResolvedDir == "" {
+		t.Errorf("off=%v resolved=%q; want enabled", cfg.DeviceLogOff, cfg.DeviceLogResolvedDir)
+	}
+}

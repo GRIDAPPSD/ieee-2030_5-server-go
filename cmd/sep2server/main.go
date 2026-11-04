@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -98,6 +99,13 @@ func prepareServe(resolver *certDirResolver) (*config.Config, *handler.AdminCert
 // default directory only turns the log off, so a deployment whose working
 // directory is read-only still starts.
 func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
+	return prepareDeviceLogOn(runtime.GOOS, cfg, r)
+}
+
+// prepareDeviceLogOn takes the platform so the Windows rule runs on any host.
+// Windows has no permission-bit guard on the directory (internal/modebits), so
+// the log stays off there unless the operator names the directory.
+func prepareDeviceLogOn(goos string, cfg *config.Config, r *certDirResolver) error {
 	if cfg.DeviceLogOff {
 		log.Printf("device log disabled: SEP2_DEVICE_LOG=false")
 		return nil
@@ -107,6 +115,11 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 		return fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %w", err)
 	}
 	dir, explicit := cfg.EffectiveDeviceLogDir()
+	if goos == "windows" && !explicit {
+		log.Printf("device log disabled: set SEP2_DEVICE_LOG_DIR to turn it on; the default directory cannot be permission-checked on windows")
+		cfg.DeviceLogOff = true
+		return nil
+	}
 	// Protect only the paths in use. The default certificate directory is in
 	// use only when some setting fell back to it; a server with every path
 	// set explicitly starts without a determinable home directory. A path

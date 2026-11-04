@@ -1,12 +1,15 @@
 {
   "private": true,
   "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json",
     "test": "npx playwright test",
     "test:ci": "playwright test --reporter=list",
     "test:headed": "npx playwright test --headed",
     "test:debug": "npx playwright test --debug"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.0"
+    "@playwright/test": "^1.58.0",
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3"
   }
 }

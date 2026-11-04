@@ -82,7 +82,7 @@ func PrepareDir(dir string, protected []string) (string, error) {
 	// Anyone who can write the directory can plant or swap a log file.
 	// World-writable is refused; group-writable is common on shared hosts
 	// and only warned about, since the writer never follows a symlink.
-	if modebits.Applies("device log directory permission check") {
+	if modebits.Applies("device log directory permission check", real) {
 		if fi.Mode().Perm()&0o002 != 0 {
 			return "", fmt.Errorf("%w: %s is writable by every user", ErrDirUnusable, real)
 		}

@@ -46,7 +46,7 @@ func secureDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s exists and is not a directory", dir)
 	}
-	if modebits.Applies("key directory permission narrowing") {
+	if modebits.Applies("key directory permission narrowing", dir) {
 		if narrowed := info.Mode().Perm() &^ 0077; narrowed != info.Mode().Perm() {
 			if err := os.Chmod(dir, narrowed); err != nil {
 				return fmt.Errorf("narrowing permissions on %s: %w", dir, err)

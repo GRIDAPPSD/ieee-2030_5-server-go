@@ -14,19 +14,23 @@ import (
 
 var noted sync.Map
 
+// Available reports whether permission bits mean anything on this platform,
+// silently. Tests use it to decide whether to skip a mode assertion.
+func Available() bool { return runtime.GOOS != "windows" }
+
 // Applies reports whether permission-bit checks mean anything here. Where
-// they do not it logs one line per check name per process saying the check
-// is skipped, so a skip is never a silent pass.
-func Applies(check string) bool {
-	return appliesOn(runtime.GOOS, check)
+// they do not it logs one line per check and directory saying the check is
+// skipped, so a skip is never a silent pass.
+func Applies(check, dir string) bool {
+	return appliesOn(runtime.GOOS, check, dir)
 }
 
-func appliesOn(goos, check string) bool {
+func appliesOn(goos, check, dir string) bool {
 	if goos != "windows" {
 		return true
 	}
-	if _, seen := noted.LoadOrStore(check, struct{}{}); !seen {
-		log.Printf("%s skipped on %s: unix permission bits do not describe access here; restrict the directory with ACLs", logsafe.Str(check), logsafe.Str(goos))
+	if _, seen := noted.LoadOrStore(check+"\x00"+dir, struct{}{}); !seen {
+		log.Printf("%s skipped on %s for %s: unix permission bits do not describe access here; restrict that directory with ACLs", logsafe.Str(check), logsafe.Str(goos), logsafe.Str(dir))
 	}
 	return false
 }

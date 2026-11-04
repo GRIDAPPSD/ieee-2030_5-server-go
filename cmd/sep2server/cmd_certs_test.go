@@ -3,18 +3,18 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/modebits"
 )
 
 // skipUnixModes skips a subtest that asserts unix permission bits, which
 // Windows does not report (internal/modebits).
 func skipUnixModes(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
+	if !modebits.Available() {
 		t.Skip("unix permission bits do not apply on Windows")
 	}
 }

@@ -7,9 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/modebits"
 )
 
 func evalDir(t *testing.T, p string) string {
@@ -173,7 +174,7 @@ func TestGitignoreShipsFolderAndIgnoresContents(t *testing.T) {
 }
 
 func TestPrepareDirWritableByOthers(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !modebits.Available() {
 		t.Skip("unix permission bits do not apply on Windows; see dir_windows_test.go")
 	}
 	base := evalDir(t, t.TempDir())

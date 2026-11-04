@@ -450,6 +450,9 @@ jobs:
         # the cache step restores a matching revision.
         run: cd e2e && npx playwright install --with-deps chromium
 
+      - name: Type-check the e2e suite
+        run: cd e2e && npm run check
+
       - name: Run Playwright e2e suite
         run: make test-e2e
 

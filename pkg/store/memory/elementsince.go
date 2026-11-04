@@ -219,6 +219,12 @@ func derStatusElements(s sep2.DERStatus) map[string]string {
 	if s.InverterStatus != nil {
 		m["inverterStatus"] = fmt.Sprint(s.InverterStatus.Value)
 	}
+	if s.LocalControlModeStatus != nil {
+		m["localControlModeStatus"] = fmt.Sprint(s.LocalControlModeStatus.Value)
+	}
+	if s.ManufacturerStatus != nil {
+		m["manufacturerStatus"] = fmt.Sprintf("%q", s.ManufacturerStatus.Value)
+	}
 	if s.OperationalModeStatus != nil {
 		m["operationalModeStatus"] = fmt.Sprint(s.OperationalModeStatus.Value)
 	}

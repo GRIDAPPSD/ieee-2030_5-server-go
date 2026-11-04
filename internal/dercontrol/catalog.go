@@ -461,18 +461,20 @@ type ActivePowerView struct {
 	Multiplier int8  `json:"multiplier"`
 }
 
-// powerParts is the shape core gives ActivePower and ReactivePower, so one
-// kind serves both.
-type powerParts = struct {
+// SignedScaled is the shape core gives ActivePower, ReactivePower and every
+// other signed power-of-ten quantity with a 16-bit value, so one body serves
+// them all. Conversion ignores struct tags.
+type SignedScaled = struct {
 	Multiplier int8  `xml:"multiplier"`
 	Value      int16 `xml:"value"`
 }
 
-type power interface{ ~powerParts }
+// SignedQty is any core type with the SignedScaled shape.
+type SignedQty interface{ ~SignedScaled }
 
 // powerKind is an ActivePower or ReactivePower element with its value within
 // value and its multiplier within multiplier.
-func powerKind[T power](value, multiplier intRange) kind[ActivePowerInput, T, ActivePowerView] {
+func powerKind[T SignedQty](value, multiplier intRange) kind[ActivePowerInput, T, ActivePowerView] {
 	return kind[ActivePowerInput, T, ActivePowerView]{
 		shape: shape{kind: kindObject, fields: []field{
 			{name: "value", required: true, shape: shape{kind: kindInteger, bounds: value}},
@@ -492,19 +494,19 @@ func powerKind[T power](value, multiplier intRange) kind[ActivePowerInput, T, Ac
 			if !multiplier.contains(m) {
 				return T{}, &fault{field: "multiplier", bounds: multiplier}
 			}
-			return T(powerParts{Value: int16(*in.Value), Multiplier: int8(m)}), nil
+			return T(SignedScaled{Value: int16(*in.Value), Multiplier: int8(m)}), nil
 		},
 		input: func(v T) ActivePowerInput {
-			p := powerParts(v)
+			p := SignedScaled(v)
 			x, m := int64(p.Value), int64(p.Multiplier)
 			return ActivePowerInput{Value: &x, Multiplier: &m}
 		},
 		baseView: func(v T) ActivePowerView {
-			p := powerParts(v)
+			p := SignedScaled(v)
 			return ActivePowerView{Value: p.Value, Multiplier: p.Multiplier}
 		},
 		log: func(v T) []LogAttr {
-			p := powerParts(v)
+			p := SignedScaled(v)
 			return []LogAttr{{"value", p.Value}, {"multiplier", p.Multiplier}}
 		},
 	}

@@ -352,3 +352,45 @@ func TestElementSince_BulkDeleteErrorStillClearsDeleted(t *testing.T) {
 		t.Fatalf("deleted resource keeps %d times", n)
 	}
 }
+
+// The two DERStatus elements core v0.30.0 added are fingerprinted like the
+// rest: a repeated value keeps its since time, a changed value resets it, and
+// the per-post dateTime is not part of the value.
+func TestElementSince_LocalControlModeAndManufacturerStatus(t *testing.T) {
+	clk := newClock()
+	st := memory.NewDERStatusSinceStore(memory.NewScopedStore[sep2.DERStatus](), clk.Now)
+	t0 := clk.now
+
+	post := func(mode uint8, manufacturer string, dateTime int64) sep2.DERStatus {
+		return sep2.DERStatus{
+			LocalControlModeStatus: &sep2.LocalControlModeStatusType{DateTime: dateTime, Value: mode},
+			ManufacturerStatus:     &sep2.ManufacturerStatusType{DateTime: dateTime, Value: manufacturer},
+		}
+	}
+	put(t, st, "1/1", post(1, "ok", 100))
+	clk.Advance(time.Hour)
+	put(t, st, "1/1", post(1, "ok", 200))
+	got := st.ElementSince("1/1", "status")
+	for _, name := range []string{"localControlModeStatus", "manufacturerStatus"} {
+		if !got[name].Equal(t0) {
+			t.Errorf("repeated post: %s since = %v, want %v", name, got[name], t0)
+		}
+	}
+
+	clk.Advance(time.Hour)
+	put(t, st, "1/1", post(2, "ok", 300))
+	got = st.ElementSince("1/1", "status")
+	if want := t0.Add(2 * time.Hour); !got["localControlModeStatus"].Equal(want) {
+		t.Errorf("changed mode: since = %v, want %v", got["localControlModeStatus"], want)
+	}
+	if !got["manufacturerStatus"].Equal(t0) {
+		t.Errorf("unchanged manufacturerStatus since = %v, want %v", got["manufacturerStatus"], t0)
+	}
+
+	clk.Advance(time.Hour)
+	put(t, st, "1/1", post(2, "fault 7", 400))
+	got = st.ElementSince("1/1", "status")
+	if want := t0.Add(3 * time.Hour); !got["manufacturerStatus"].Equal(want) {
+		t.Errorf("changed manufacturerStatus: since = %v, want %v", got["manufacturerStatus"], want)
+	}
+}

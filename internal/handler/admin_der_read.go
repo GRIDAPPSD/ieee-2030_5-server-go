@@ -36,22 +36,18 @@ const derReadFailed = "read failed, see server log"
 
 // notStored* name the IEEE 2030.5-2018 elements of each resource that the
 // vendored core structs do not model, so a PUT carrying them drops them on
-// receipt. A reader must not take their absence for "not reported".
+// receipt. A reader must not take their absence for "not reported". Status
+// and capability model every element, so their lists are empty.
 var (
-	notStoredCapability = []string{
-		"rtgAbnormalCategory", "rtgMaxAh", "rtgMaxChargeRateVA", "rtgMaxDischargeRateVA",
-		"rtgMaxVarNeg", "rtgMaxWh", "rtgMinPFOverExcited", "rtgMinPFUnderExcited",
-		"rtgMinV", "rtgNormalCategory", "rtgOverExcitedPF", "rtgOverExcitedW",
-		"rtgReactiveSusceptance", "rtgUnderExcitedPF", "rtgUnderExcitedW", "rtgVNom",
-	}
-	notStoredSettings = []string{
+	notStoredCapability = []string{}
+	notStoredSettings   = []string{
 		"setESDelay", "setESHighFreq", "setESHighVolt", "setESLowFreq", "setESLowVolt",
 		"setESRampTms", "setESRandomDelay", "setGradW", "setMaxA", "setMaxAh",
 		"setMaxChargeRateVA", "setMaxDischargeRateVA", "setMaxV", "setMaxVA",
 		"setMaxVarNeg", "setMaxWh", "setMinPFOverExcited", "setMinPFUnderExcited",
 		"setMinV", "setSoftGradW", "setVNom", "setVRef", "setVRefOfs",
 	}
-	notStoredStatus = []string{"localControlModeStatus", "manufacturerStatus"}
+	notStoredStatus = []string{}
 )
 
 // section is the part of every resource answer that says whether it was
@@ -70,10 +66,14 @@ type derStatusView struct {
 	Inverter    *derstatus.Inverter  `json:"inverter"`
 	// OperationalMode, StorageMode and StateOfCharge are the element values
 	// as posted: a code, and for the state of charge hundredths of a percent.
-	OperationalMode *uint8           `json:"operationalMode"`
-	StorageMode     *uint8           `json:"storageMode"`
-	StateOfCharge   *uint16          `json:"stateOfCharge"`
-	Alarm           *derstatus.Alarm `json:"alarm"`
+	OperationalMode *uint8  `json:"operationalMode"`
+	StorageMode     *uint8  `json:"storageMode"`
+	StateOfCharge   *uint16 `json:"stateOfCharge"`
+	// LocalControlMode and ManufacturerStatus are the element values as
+	// posted: a code, and the manufacturer's own string.
+	LocalControlMode   *uint8           `json:"localControlModeStatus"`
+	ManufacturerStatus *string          `json:"manufacturerStatus"`
+	Alarm              *derstatus.Alarm `json:"alarm"`
 	// Since maps an element's XML name to the Unix second its current value
 	// was first seen. It is {} when the store can record times and has none
 	// for this resource, and null when the resource is not reported or the
@@ -85,16 +85,32 @@ type derStatusView struct {
 
 type derCapabilityView struct {
 	section
-	Type                 *uint8            `json:"type"`
-	ModesSupported       *dercontrol.Modes `json:"modesSupported"`
-	RTGMaxA              *int32            `json:"rtgMaxA"`
-	RTGMaxW              *frScaled         `json:"rtgMaxW"`
-	RTGMaxVA             *frScaled         `json:"rtgMaxVA"`
-	RTGMaxVar            *frScaled         `json:"rtgMaxVar"`
-	RTGMaxV              *frScaled         `json:"rtgMaxV"`
-	RTGMaxChargeRateW    *frScaled         `json:"rtgMaxChargeRateW"`
-	RTGMaxDischargeRateW *frScaled         `json:"rtgMaxDischargeRateW"`
-	NotStored            []string          `json:"notStored"`
+	Type                   *uint8            `json:"type"`
+	ModesSupported         *dercontrol.Modes `json:"modesSupported"`
+	RTGAbnormalCategory    *uint8            `json:"rtgAbnormalCategory"`
+	RTGNormalCategory      *uint8            `json:"rtgNormalCategory"`
+	RTGMaxA                *frScaled         `json:"rtgMaxA"`
+	RTGMaxAh               *frScaled         `json:"rtgMaxAh"`
+	RTGMaxW                *frScaled         `json:"rtgMaxW"`
+	RTGMaxWh               *frScaled         `json:"rtgMaxWh"`
+	RTGMaxVA               *frScaled         `json:"rtgMaxVA"`
+	RTGMaxVar              *frScaled         `json:"rtgMaxVar"`
+	RTGMaxVarNeg           *frScaled         `json:"rtgMaxVarNeg"`
+	RTGMaxV                *frScaled         `json:"rtgMaxV"`
+	RTGMinV                *frScaled         `json:"rtgMinV"`
+	RTGVNom                *frScaled         `json:"rtgVNom"`
+	RTGMaxChargeRateW      *frScaled         `json:"rtgMaxChargeRateW"`
+	RTGMaxDischargeRateW   *frScaled         `json:"rtgMaxDischargeRateW"`
+	RTGMaxChargeRateVA     *frScaled         `json:"rtgMaxChargeRateVA"`
+	RTGMaxDischargeRateVA  *frScaled         `json:"rtgMaxDischargeRateVA"`
+	RTGOverExcitedW        *frScaled         `json:"rtgOverExcitedW"`
+	RTGUnderExcitedW       *frScaled         `json:"rtgUnderExcitedW"`
+	RTGOverExcitedPF       *frScaled         `json:"rtgOverExcitedPF"`
+	RTGUnderExcitedPF      *frScaled         `json:"rtgUnderExcitedPF"`
+	RTGMinPFOverExcited    *frScaled         `json:"rtgMinPFOverExcited"`
+	RTGMinPFUnderExcited   *frScaled         `json:"rtgMinPFUnderExcited"`
+	RTGReactiveSusceptance *frScaled         `json:"rtgReactiveSusceptance"`
+	NotStored              []string          `json:"notStored"`
 }
 
 type derSettingsView struct {
@@ -238,6 +254,12 @@ func (h *AdminDERReadHandler) status(ctx context.Context, key string, now int64)
 	if s.StateOfChargeStatus != nil {
 		v.StateOfCharge = &s.StateOfChargeStatus.Value
 	}
+	if s.LocalControlModeStatus != nil {
+		v.LocalControlMode = &s.LocalControlModeStatus.Value
+	}
+	if s.ManufacturerStatus != nil {
+		v.ManufacturerStatus = &s.ManufacturerStatus.Value
+	}
 	v.Since = sinceOf(h.DERStatuses, key)
 	return v
 }
@@ -250,13 +272,29 @@ func (h *AdminDERReadHandler) capability(ctx context.Context, key string) derCap
 	}
 	v.Type = c.Type
 	v.ModesSupported = modesOf(c.ModesSupported)
-	v.RTGMaxA = c.RTGMaxA
-	v.RTGMaxW = powerOf(c.RTGMaxW)
-	v.RTGMaxVA = apparentPower(c.RTGMaxVA)
-	v.RTGMaxVar = repowerOf(c.RTGMaxVar)
-	v.RTGMaxV = voltage(c.RTGMaxV)
-	v.RTGMaxChargeRateW = powerOf(c.RTGMaxChargeRateW)
-	v.RTGMaxDischargeRateW = powerOf(c.RTGMaxDischargeRateW)
+	v.RTGAbnormalCategory = c.RTGAbnormalCategory
+	v.RTGNormalCategory = c.RTGNormalCategory
+	v.RTGMaxA = unsignedScaled(c.RTGMaxA)
+	v.RTGMaxAh = unsignedScaled(c.RTGMaxAh)
+	v.RTGMaxW = signedScaled(c.RTGMaxW)
+	v.RTGMaxWh = unsignedScaled(c.RTGMaxWh)
+	v.RTGMaxVA = unsignedScaled(c.RTGMaxVA)
+	v.RTGMaxVar = signedScaled(c.RTGMaxVar)
+	v.RTGMaxVarNeg = signedScaled(c.RTGMaxVarNeg)
+	v.RTGMaxV = unsignedScaled(c.RTGMaxV)
+	v.RTGMinV = unsignedScaled(c.RTGMinV)
+	v.RTGVNom = unsignedScaled(c.RTGVNom)
+	v.RTGMaxChargeRateW = signedScaled(c.RTGMaxChargeRateW)
+	v.RTGMaxDischargeRateW = signedScaled(c.RTGMaxDischargeRateW)
+	v.RTGMaxChargeRateVA = unsignedScaled(c.RTGMaxChargeRateVA)
+	v.RTGMaxDischargeRateVA = unsignedScaled(c.RTGMaxDischargeRateVA)
+	v.RTGOverExcitedW = signedScaled(c.RTGOverExcitedW)
+	v.RTGUnderExcitedW = signedScaled(c.RTGUnderExcitedW)
+	v.RTGOverExcitedPF = powerFactorOf(c.RTGOverExcitedPF)
+	v.RTGUnderExcitedPF = powerFactorOf(c.RTGUnderExcitedPF)
+	v.RTGMinPFOverExcited = powerFactorOf(c.RTGMinPFOverExcited)
+	v.RTGMinPFUnderExcited = powerFactorOf(c.RTGMinPFUnderExcited)
+	v.RTGReactiveSusceptance = unsignedScaled(c.RTGReactiveSusceptance)
 	return v
 }
 
@@ -270,10 +308,10 @@ func (h *AdminDERReadHandler) settings(ctx context.Context, key string) derSetti
 		v.UpdatedTime = &s.UpdatedTime
 	}
 	v.ModesEnabled = modesOf(s.ModesEnabled)
-	v.SetMaxW = powerOf(s.SetMaxW)
-	v.SetMaxVar = repowerOf(s.SetMaxVar)
-	v.SetMaxChargeRateW = powerOf(s.SetMaxChargeRateW)
-	v.SetMaxDischargeRateW = powerOf(s.SetMaxDischargeRateW)
+	v.SetMaxW = signedScaled(s.SetMaxW)
+	v.SetMaxVar = signedScaled(s.SetMaxVar)
+	v.SetMaxChargeRateW = signedScaled(s.SetMaxChargeRateW)
+	v.SetMaxDischargeRateW = signedScaled(s.SetMaxDischargeRateW)
 	return v
 }
 
@@ -296,8 +334,8 @@ func (h *AdminDERReadHandler) availability(ctx context.Context, key string, now 
 		p := uint16(*a.ReserveChargePercent)
 		v.ReserveChargePercent = &p
 	}
-	v.StatWAvail = powerOf(a.StatWAvail)
-	v.StatVarAvail = repowerOf(a.StatVarAvail)
+	v.StatWAvail = signedScaled(a.StatWAvail)
+	v.StatVarAvail = signedScaled(a.StatVarAvail)
 	v.Since = sinceOf(h.DERAvailabilities, key)
 	return v
 }
@@ -310,25 +348,42 @@ func modesOf(t *sep2.DERControlType) *dercontrol.Modes {
 	return &m
 }
 
-func repowerOf(p *sep2.ReactivePower) *frScaled {
-	if p == nil {
-		return nil
+// unsignedQty is the core quantity types that carry a power-of-ten multiplier
+// and an unsigned 16-bit value; the signed shape is dercontrol.SignedQty.
+// Conversion ignores struct tags, so one body serves every type.
+type unsignedQty interface {
+	~struct {
+		Multiplier int8   `xml:"multiplier"`
+		Value      uint16 `xml:"value"`
 	}
-	return newScaled(int64(p.Value), p.Multiplier)
 }
 
-func apparentPower(p *sep2.ApparentPower) *frScaled {
+// signedScaled and unsignedScaled are nil for an absent quantity, never 0.
+func signedScaled[T dercontrol.SignedQty](p *T) *frScaled {
 	if p == nil {
 		return nil
 	}
-	return newScaled(int64(p.Value), p.Multiplier)
+	q := dercontrol.SignedScaled(*p)
+	return newScaled(int64(q.Value), q.Multiplier)
 }
 
-func voltage(p *sep2.VoltageRMS) *frScaled {
+func unsignedScaled[T unsignedQty](p *T) *frScaled {
 	if p == nil {
 		return nil
 	}
-	return newScaled(int64(p.Value), p.Multiplier)
+	q := struct {
+		Multiplier int8
+		Value      uint16
+	}(*p)
+	return newScaled(int64(q.Value), q.Multiplier)
+}
+
+// powerFactorOf serves a power factor as its displacement and multiplier.
+func powerFactorOf(p *sep2.PowerFactor) *frScaled {
+	if p == nil {
+		return nil
+	}
+	return newScaled(int64(p.Displacement), p.Multiplier)
 }
 
 // readingTimeOf is nil for a resource that carries no readingTime, which is

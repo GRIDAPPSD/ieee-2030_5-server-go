@@ -41,6 +41,34 @@ type VoltageRMS struct {
 	Value      uint16 `xml:"value"`
 }
 
+// CurrentRMS is an rms current in amperes (uom 5). sep.xsd types its value
+// UInt16.
+type CurrentRMS struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// AmpereHour is available electric charge in ampere-hours (uom 106). sep.xsd
+// types its value UInt16.
+type AmpereHour struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// WattHour is active energy in watt-hours (uom 72). sep.xsd types its value
+// UInt16.
+type WattHour struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// ReactiveSusceptance is reactive susceptance in siemens (uom 53). sep.xsd
+// types its value UInt16.
+type ReactiveSusceptance struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
 // PerCent is a percentage in hundredths of a percent (10000 = 100%).
 // IEEE 2030.5-2018 Annex B.2.3.4 "Types package", "PerCent object
 // (UInt16)": range 0 to 10000. Unlike ActivePower/ReactivePower, PerCent
@@ -112,13 +140,13 @@ func parseBounded[T int16 | uint16](name, text string, lo, hi int64, narrow narr
 	return narrow(name, n, lo, hi)
 }
 
-// decodeBoundedXML reads element text only. Without that, encoding/xml's
-// default scalar decode skips unrecognized child elements (the pre-fix
-// ActivePower multiplier+value shape) and silently yields a zero value with
-// a nil error.
+// decodeBoundedXML reads element text only, through simpleText: encoding/xml's
+// default scalar decode skips child elements (the pre-fix ActivePower
+// multiplier+value shape, or <v><x/>5</v>) and yields a wrong value with a
+// nil error.
 func decodeBoundedXML[T int16 | uint16](d *xml.Decoder, start xml.StartElement, name string, lo, hi int64, narrow narrowFunc[T]) (T, error) {
-	var text string
-	if err := d.DecodeElement(&text, &start); err != nil {
+	text, err := simpleText(d)
+	if err != nil {
 		return 0, fmt.Errorf("sep2: %s: %w", name, err)
 	}
 	return parseBounded(name, text, lo, hi, narrow)

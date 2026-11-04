@@ -348,17 +348,9 @@ func modesOf(t *sep2.DERControlType) *dercontrol.Modes {
 	return &m
 }
 
-// signedQty and unsignedQty are the core quantity types that carry a
-// power-of-ten multiplier and a 16-bit value. Conversion ignores struct tags,
-// so one body serves every type; a new core quantity of either shape needs
-// only an entry here.
-type signedQty interface {
-	~struct {
-		Multiplier int8  `xml:"multiplier"`
-		Value      int16 `xml:"value"`
-	}
-}
-
+// unsignedQty is the core quantity types that carry a power-of-ten multiplier
+// and an unsigned 16-bit value; the signed shape is dercontrol.SignedQty.
+// Conversion ignores struct tags, so one body serves every type.
 type unsignedQty interface {
 	~struct {
 		Multiplier int8   `xml:"multiplier"`
@@ -367,14 +359,11 @@ type unsignedQty interface {
 }
 
 // signedScaled and unsignedScaled are nil for an absent quantity, never 0.
-func signedScaled[T signedQty](p *T) *frScaled {
+func signedScaled[T dercontrol.SignedQty](p *T) *frScaled {
 	if p == nil {
 		return nil
 	}
-	q := struct {
-		Multiplier int8
-		Value      int16
-	}(*p)
+	q := dercontrol.SignedScaled(*p)
 	return newScaled(int64(q.Value), q.Multiplier)
 }
 

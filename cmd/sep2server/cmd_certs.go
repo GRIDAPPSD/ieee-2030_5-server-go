@@ -11,6 +11,7 @@ import (
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/modebits"
 )
 
 // validDeviceNamePattern is the strict allowlist for the --name flag on
@@ -45,9 +46,11 @@ func secureDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s exists and is not a directory", dir)
 	}
-	if narrowed := info.Mode().Perm() &^ 0077; narrowed != info.Mode().Perm() {
-		if err := os.Chmod(dir, narrowed); err != nil {
-			return fmt.Errorf("narrowing permissions on %s: %w", dir, err)
+	if modebits.Applies("key directory permission narrowing") {
+		if narrowed := info.Mode().Perm() &^ 0077; narrowed != info.Mode().Perm() {
+			if err := os.Chmod(dir, narrowed); err != nil {
+				return fmt.Errorf("narrowing permissions on %s: %w", dir, err)
+			}
 		}
 	}
 	return nil

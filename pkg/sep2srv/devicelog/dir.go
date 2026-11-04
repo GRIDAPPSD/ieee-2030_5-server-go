@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/modebits"
 )
 
 var (
@@ -81,11 +82,13 @@ func PrepareDir(dir string, protected []string) (string, error) {
 	// Anyone who can write the directory can plant or swap a log file.
 	// World-writable is refused; group-writable is common on shared hosts
 	// and only warned about, since the writer never follows a symlink.
-	if fi.Mode().Perm()&0o002 != 0 {
-		return "", fmt.Errorf("%w: %s is writable by every user", ErrDirUnusable, real)
-	}
-	if fi.Mode().Perm()&0o020 != 0 {
-		log.Printf("device log: %s is group-writable; members of its group can replace or remove log files", logsafe.Str(real))
+	if modebits.Applies("device log directory permission check") {
+		if fi.Mode().Perm()&0o002 != 0 {
+			return "", fmt.Errorf("%w: %s is writable by every user", ErrDirUnusable, real)
+		}
+		if fi.Mode().Perm()&0o020 != 0 {
+			log.Printf("device log: %s is group-writable; members of its group can replace or remove log files", logsafe.Str(real))
+		}
 	}
 	probe, err := os.CreateTemp(real, ".probe-*")
 	if err != nil {

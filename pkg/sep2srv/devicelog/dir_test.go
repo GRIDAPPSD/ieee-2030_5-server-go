@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -172,6 +173,9 @@ func TestGitignoreShipsFolderAndIgnoresContents(t *testing.T) {
 }
 
 func TestPrepareDirWritableByOthers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits do not apply on Windows; see dir_windows_test.go")
+	}
 	base := evalDir(t, t.TempDir())
 	world := filepath.Join(base, "world")
 	group := filepath.Join(base, "group")

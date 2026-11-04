@@ -48,3 +48,33 @@ func TestExpandHome(t *testing.T) {
 		})
 	}
 }
+
+func TestExpandHomeBackslash(t *testing.T) {
+	t.Setenv("HOME", "/home/op")
+	t.Setenv("USERPROFILE", "/home/op")
+
+	t.Run("windows expands tilde backslash like tilde slash", func(t *testing.T) {
+		old := backslashIsSeparator
+		backslashIsSeparator = true
+		t.Cleanup(func() { backslashIsSeparator = old })
+		for in, want := range map[string]string{
+			`~\tls`: "/home/op/tls",
+			`~\`:    "/home/op",
+			"~/tls": "/home/op/tls",
+		} {
+			got, err := ExpandHome(in)
+			if err != nil || got != want {
+				t.Errorf("ExpandHome(%q) = %q, %v; want %q", in, got, err, want)
+			}
+		}
+	})
+
+	t.Run("unix keeps tilde backslash an error", func(t *testing.T) {
+		old := backslashIsSeparator
+		backslashIsSeparator = false
+		t.Cleanup(func() { backslashIsSeparator = old })
+		if got, err := ExpandHome(`~\tls`); err == nil {
+			t.Errorf("ExpandHome(%q) = %q, nil; want an error on unix", `~\tls`, got)
+		}
+	})
+}

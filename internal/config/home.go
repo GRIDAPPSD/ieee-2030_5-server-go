@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -26,7 +27,7 @@ func ExpandHome(path string) (string, error) {
 	if path == "~" {
 		return os.UserHomeDir()
 	}
-	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+	if rest, ok := cutHomePrefix(path); ok {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
@@ -37,4 +38,20 @@ func ExpandHome(path string) (string, error) {
 		return "", fmt.Errorf("path %q uses the ~user form, which is not supported: use an absolute path, or ~/... for the current user's home", path)
 	}
 	return path, nil
+}
+
+// backslashIsSeparator is a variable so a test can exercise the Windows form
+// on any host. On unix a backslash is an ordinary filename character, so
+// "~\x" stays a ~user-style error there.
+var backslashIsSeparator = runtime.GOOS == "windows"
+
+// cutHomePrefix strips the leading "~/" (and "~\" on Windows) from path.
+func cutHomePrefix(path string) (string, bool) {
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		return rest, true
+	}
+	if backslashIsSeparator {
+		return strings.CutPrefix(path, `~\`)
+	}
+	return "", false
 }

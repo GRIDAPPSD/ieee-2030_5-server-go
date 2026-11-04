@@ -3,11 +3,21 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
+
+// skipUnixModes skips a subtest that asserts unix permission bits, which
+// Windows does not report (internal/modebits).
+func skipUnixModes(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits do not apply on Windows")
+	}
+}
 
 // TestSecureDir pins the mode guarantee item 1 (#601 review) establishes:
 // a fresh directory is created 0700, an existing wider one is narrowed to
@@ -15,6 +25,7 @@ import (
 // symlinked path is refused rather than followed.
 func TestSecureDir(t *testing.T) {
 	t.Run("absent directory is created 0700", func(t *testing.T) {
+		skipUnixModes(t)
 		base := t.TempDir()
 		dir := filepath.Join(base, "tls")
 		if err := secureDir(dir); err != nil {
@@ -30,6 +41,7 @@ func TestSecureDir(t *testing.T) {
 	})
 
 	t.Run("existing wider directory is narrowed to 0700", func(t *testing.T) {
+		skipUnixModes(t)
 		dir := t.TempDir()
 		if err := os.Chmod(dir, 0755); err != nil {
 			t.Fatalf("chmod setup: %v", err)
@@ -47,6 +59,7 @@ func TestSecureDir(t *testing.T) {
 	})
 
 	t.Run("existing narrower directory is left unchanged, never widened", func(t *testing.T) {
+		skipUnixModes(t)
 		dir := t.TempDir()
 		if err := os.Chmod(dir, 0500); err != nil {
 			t.Fatalf("chmod setup: %v", err)

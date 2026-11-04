@@ -459,8 +459,7 @@ jobs:
     timeout-minutes: 25
     # Not the Go test suite: several of its tests use mkfifo, kill or bash.
     # The UI suite runs the real sep2server.exe, which is what a Windows user
-    # runs. Specs that cannot run here are listed in e2e/platform.ts and are
-    # reported as skipped there, not dropped.
+    # runs. Every spec runs here; a failure fails the job.
     defaults:
       run:
         shell: bash

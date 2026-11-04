@@ -5,7 +5,7 @@ import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
-import { SERVER_BINARY, skipOnWindows } from './platform';
+import { SERVER_BINARY } from './platform';
 import { readWire } from './fixtures/fsa_wire';
 
 // #1067, #1083: the Logs tab of a device. The device makes real requests over
@@ -14,7 +14,6 @@ import { readWire } from './fixtures/fsa_wire';
 
 const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
 
-skipOnWindows(test, __filename);
 // Outside setup.ts's 18443-20442 range and the 21000 and 22000 ranges of
 // fsa_control.spec.ts and fsa_unassign.spec.ts.
 const PROTOCOL_PORT = 23000 + Math.floor(Math.random() * 1000);

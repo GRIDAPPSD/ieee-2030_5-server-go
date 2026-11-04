@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process';
 import { join } from 'path';
+import { SERVER_BINARY } from './platform';
 
 /**
  * Playwright globalSetup — runs once before any worker starts.
@@ -14,9 +15,7 @@ import { join } from 'path';
  */
 export default function globalSetup(): void {
   const projectRoot = join(__dirname, '..');
-  const sep2server = join(projectRoot, 'sep2server');
-
-  execFileSync('go', ['build', '-o', sep2server, './cmd/sep2server/'], {
+  execFileSync('go', ['build', '-o', SERVER_BINARY, './cmd/sep2server/'], {
     cwd: projectRoot,
     stdio: 'pipe',
   });

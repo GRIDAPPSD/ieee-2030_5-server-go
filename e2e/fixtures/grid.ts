@@ -1,7 +1,7 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
-import { join } from 'path';
 import { getCertDir } from '../setup';
 import { ADMIN_KEY } from '../adminKey';
+import { SERVER_BINARY } from '../platform';
 import { mintDeviceCert } from './device_cert';
 
 // Shared by the grid block specs: an aggregator with two managed devices
@@ -9,10 +9,9 @@ import { mintDeviceCert } from './device_cert';
 // tab opened, and a block typed into the entry form.
 
 export const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
-const SERVER = join(__dirname, '..', '..', 'sep2server');
 
 async function register(request: APIRequestContext, baseUrl: string, name: string, kind: string): Promise<string> {
-  const cert = mintDeviceCert(SERVER, getCertDir(), name);
+  const cert = mintDeviceCert(SERVER_BINARY, getCertDir(), name);
   const info = await request.post(`${baseUrl}/api/certs/info`, {
     headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },
     data: cert.certPEM,

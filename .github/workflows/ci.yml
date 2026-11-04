@@ -453,6 +453,45 @@ jobs:
       - name: Run Playwright e2e suite
         run: make test-e2e
 
+  e2e-windows:
+    name: Playwright e2e suite (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    # Not the Go test suite: several of its tests use mkfifo, kill or bash.
+    # The UI suite runs the real sep2server.exe, which is what a Windows user
+    # runs. Specs that cannot run here are listed in e2e/platform.ts and are
+    # reported as skipped there, not dropped.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install e2e dependencies
+        run: cd e2e && npm ci
+
+      - name: Install Playwright browsers
+        run: cd e2e && npx playwright install chromium
+
+      - name: Run Playwright e2e suite
+        # make is not used here: a Windows runner may not have it. The npm
+        # script is the one owner of the command; globalSetup builds the binary.
+        run: cd e2e && npm run test:ci
+
   gofmt:
     name: gofmt check
     runs-on: ubuntu-latest

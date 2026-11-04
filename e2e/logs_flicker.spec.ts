@@ -5,6 +5,7 @@ import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY, skipOnWindows } from './platform';
 import { readWire } from './fixtures/fsa_wire';
 
 // #1135: the dashboard pushes a frame every 5 s, and a tab with nothing
@@ -13,7 +14,8 @@ import { readWire } from './fixtures/fsa_wire';
 // or arrived without one was replaced by a frame.
 
 const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
-const SERVER = join(__dirname, '..', 'sep2server');
+
+skipOnWindows(test, __filename);
 const PROTOCOL_PORT = 23000 + Math.floor(Math.random() * 1000);
 const FRAMES = 3;
 
@@ -29,7 +31,7 @@ test.beforeAll(async ({ request }) => {
   await expect
     .poll(async () => (await request.get(`${baseUrl}/api/fsas`, { headers: AUTH }).catch(() => null))?.status(), { timeout: 15000 })
     .toBe(200);
-  const cert = mintDeviceCert(SERVER, getCertDir(), 'logs-flicker');
+  const cert = mintDeviceCert(SERVER_BINARY, getCertDir(), 'logs-flicker');
   const info = await request.post(`${baseUrl}/api/certs/info`, {
     headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },
     data: cert.certPEM,
@@ -47,8 +49,8 @@ test.beforeAll(async ({ request }) => {
   }
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {

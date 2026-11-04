@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { join } from 'path';
 import { startServer, stopServer, getCertDir, getProtocolPort } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert, type DeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY } from './platform';
 import { readWire } from './fixtures/fsa_wire';
 import { localInput } from './fixtures/local_input';
 
@@ -17,7 +17,6 @@ const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
 const FSA_MRID = 'e2e-fsa-control';
 const FSA_LABEL = 'fsa control FSA';
 const TEMPLATE = 'fsa control program';
-const SERVER = join(__dirname, '..', 'sep2server');
 
 let baseUrl: string;
 
@@ -25,8 +24,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer({ SEP2_PEN: '12345' });
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {
@@ -42,7 +41,7 @@ test('an FSA control from the Control tab is on both devices\' wire lists, and c
   // and both devices assigned.
   const devices: { cert: DeviceCert; id: string }[] = [];
   for (const name of ['fsa-control-a', 'fsa-control-b']) {
-    const cert = mintDeviceCert(SERVER, getCertDir(), name);
+    const cert = mintDeviceCert(SERVER_BINARY, getCertDir(), name);
     const info = await request.post(`${baseUrl}/api/certs/info`, {
       headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },
       data: cert.certPEM,

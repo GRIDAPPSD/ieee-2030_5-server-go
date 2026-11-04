@@ -2,6 +2,7 @@
   "private": true,
   "scripts": {
     "test": "npx playwright test",
+    "test:ci": "playwright test --reporter=list",
     "test:headed": "npx playwright test --headed",
     "test:debug": "npx playwright test --debug"
   },

@@ -1,8 +1,8 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
-import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY } from './platform';
 
 // #926, #1035: add an aggregator from the Devices tab, picking its devices,
 // then read the pairs back through GET /api/management-pairs, the endpoint a
@@ -18,8 +18,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer();
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {
@@ -44,7 +44,7 @@ async function registerDevice(
 }
 
 function mintPEM(name: string): string {
-  return mintDeviceCert(join(__dirname, '..', 'sep2server'), getCertDir(), name).certPEM;
+  return mintDeviceCert(SERVER_BINARY, getCertDir(), name).certPEM;
 }
 
 async function deriveIdentity(request: APIRequestContext, pem: string): Promise<{ sfdi: string; lfdi: string }> {

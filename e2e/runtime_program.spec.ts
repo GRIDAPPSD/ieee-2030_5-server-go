@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
-import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { SERVER_BINARY } from './platform';
 import { localInput } from './fixtures/local_input';
 
 // #929: the operator's whole flow from an empty server, UI only. Every write
@@ -21,8 +21,8 @@ test.beforeAll(async () => {
   baseUrl = await startServer({ SEP2_PEN: '12345' });
 });
 
-test.afterAll(() => {
-  stopServer();
+test.afterAll(async () => {
+  await stopServer();
 });
 
 test.beforeEach(async ({ page }) => {
@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 function mintCert(name: string): string {
-  return mintDeviceCert(join(__dirname, '..', 'sep2server'), getCertDir(), name).certPEM;
+  return mintDeviceCert(SERVER_BINARY, getCertDir(), name).certPEM;
 }
 
 // addDeviceInUI pastes a certificate into the Add End Device card and

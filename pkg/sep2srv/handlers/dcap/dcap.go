@@ -31,10 +31,12 @@ func HandleDeviceCapability() http.HandlerFunc {
 		PollRate: 900,
 
 		// FunctionSetAssignmentsBase elements (XSD order)
-		MessagingProgramListLink: &sep2.ListLink{Href: "/msg"},
-		ResponseSetListLink:      &sep2.ListLink{Href: "/rsps"},
-		TimeLink:                 &sep2.Link{Href: "/tm"},
-		UsagePointListLink:       &sep2.ListLink{Href: "/upt"},
+		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+			MessagingProgramListLink: &sep2.ListLink{Href: "/msg"},
+			ResponseSetListLink:      &sep2.ListLink{Href: "/rsps"},
+			TimeLink:                 &sep2.Link{Href: "/tm"},
+			UsagePointListLink:       &sep2.ListLink{Href: "/upt"},
+		},
 
 		// DeviceCapability extension elements (XSD order)
 		EndDeviceListLink:        &sep2.ListLink{Href: "/edev"},

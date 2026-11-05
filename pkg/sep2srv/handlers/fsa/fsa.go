@@ -46,8 +46,10 @@ func HandleFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) http.Han
 			if errors.Is(err, store.ErrNotFound) {
 				// Return empty default FSA with DERProgramListLink
 				defaultFSA := sep2.FunctionSetAssignments{
-					Resource:           sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
-					DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
+					Resource: sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
+					FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+						DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
+					},
 				}
 				encoding.WriteXML(w, http.StatusOK, &defaultFSA)
 				return
@@ -79,10 +81,12 @@ func HandleCreateFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) ht
 
 		fsaID := idmint.Prefixed("fsa")
 		fsa := sep2.FunctionSetAssignments{
-			Resource:           sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
-			MRID:               fsaID,
-			Description:        "Function Set Assignment",
-			DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
+			Resource:    sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
+			MRID:        fsaID,
+			Description: "Function Set Assignment",
+			FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+				DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
+			},
 		}
 
 		if err := fsaStore.Create(r.Context(), edevID, fsaID, fsa); err != nil {

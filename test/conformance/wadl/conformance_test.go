@@ -19,7 +19,7 @@ import (
 //
 // Measured against the server csiptest boots, with the route set core's
 // assembly registers, on 2026-11-04.
-const mandatoryUnroutedCeiling = 179
+const mandatoryUnroutedCeiling = 177
 
 // EnvArtifact names an optional file to write the full row-by-row sweep to.
 //
@@ -46,6 +46,7 @@ func bootTarget(t *testing.T) *wadl.Target {
 		BaseURL:         srv.BaseURL,
 		Client:          srv.HTTPClient(),
 		MountedPatterns: srv.MountedPatterns,
+		Stores:          srv.Stores,
 	}
 }
 
@@ -89,8 +90,17 @@ func TestWADLConformanceSweep(t *testing.T) {
 	for _, row := range res.Filter(func(r wadl.Row) bool {
 		return r.Phase == wadl.PhaseSeed && r.Verdict != wadl.VerdictSeeded
 	}) {
-		t.Errorf("seed failed: %s %s (%s) returned status %d, verdict %q",
-			row.Method, row.Path, row.Element, row.Status, row.Verdict)
+		t.Errorf("seed failed: %s %s (%s) returned status %d, verdict %q: %s",
+			row.Method, row.Path, row.Element, row.Status, row.Verdict, row.TransportError)
+	}
+
+	// 2b. Unseeded probes. A routed row that answers 404 means the sweep
+	//     probed a resource nothing created, so it tested the store and not
+	//     the handler. Every probed resource has a seed in seedSet; a new
+	//     fixture goes there.
+	for _, row := range res.Filter(func(r wadl.Row) bool { return r.Verdict == wadl.VerdictRoutedNotFound }) {
+		t.Errorf("routed but not found: %s %s (WADL path %s, mode %s) has no seeded instance",
+			row.Method, row.Path, row.WADLPath, row.Mode)
 	}
 
 	// 3. Transport failures. A request that never completed is not a

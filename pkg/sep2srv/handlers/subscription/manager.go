@@ -450,7 +450,7 @@ func (m *Manager) logWithheld(sub sep2.Subscription, err error) {
 	if errors.Is(err, ErrWithholdRecorded) {
 		return
 	}
-	log.Printf("notification: not notifying subscription \"%s\" for \"%s\": %s", logsafe.Str(sub.Href), logsafe.Str(loggedResource(sub.SubscribedResource)), logsafe.Err(err))
+	log.Printf("notification: not notifying subscription %s for %s: %s", logsafe.Quote(sub.Href), logsafe.Quote(loggedResource(sub.SubscribedResource)), logsafe.Err(err))
 }
 
 func (m *Manager) worker(ctx context.Context) {
@@ -477,14 +477,14 @@ func (m *Manager) worker(ctx context.Context) {
 			m.observe("success")
 		case errors.Is(err, errDeleteAfter4xx):
 			m.observe("client_error")
-			log.Printf("notification: %s receiver returned 4xx, subscription \"%s\" deleted",
-				logsafe.Str(redactURI(task.notificationURI)), logsafe.Str(task.subscriptionID))
+			log.Printf("notification: %s receiver returned 4xx, subscription %s deleted",
+				logsafe.Str(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID))
 		case errors.Is(err, ErrDestinationUnresolved):
-			log.Printf("notification: cannot resolve destination \"%s\" for subscription \"%s\": %s",
-				logsafe.Str(redactURI(task.notificationURI)), logsafe.Str(task.subscriptionID), logsafe.Err(err))
+			log.Printf("notification: cannot resolve destination %s for subscription %s: %s",
+				logsafe.Quote(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID), logsafe.Err(err))
 		case errors.Is(err, ErrRefusedDestination):
-			log.Printf("notification: refused destination \"%s\" for subscription \"%s\": %s",
-				logsafe.Str(redactURI(task.notificationURI)), logsafe.Str(task.subscriptionID), logsafe.Err(err))
+			log.Printf("notification: refused destination %s for subscription %s: %s",
+				logsafe.Quote(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID), logsafe.Err(err))
 		default:
 			log.Printf("notification: deliver to %s: %s", logsafe.Str(redactURI(task.notificationURI)), logsafe.Err(err))
 		}
@@ -522,8 +522,8 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 		// caller still needs to know this was a 4xx outcome.
 		if writer, ok := m.store.(SubscriptionWriter); ok && task.subscriptionID != "" {
 			if delErr := writer.Delete(ctx, task.subscriptionID); delErr != nil {
-				log.Printf("notification: delete subscription \"%s\" after 4xx from %s: %s",
-					logsafe.Str(task.subscriptionID), logsafe.Str(target), logsafe.Err(delErr))
+				log.Printf("notification: delete subscription %s after 4xx from %s: %s",
+					logsafe.Quote(task.subscriptionID), logsafe.Str(target), logsafe.Err(delErr))
 			}
 		}
 		return fmt.Errorf("POST notification to %s: status %d: %w",

@@ -152,3 +152,50 @@ func TestTruncateOctetsCutsAtACharacterBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestQuote(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"plain", "abc", `"abc"`},
+		{"quote closes nothing", `a" field="forged`, `"a\" field=\"forged"`},
+		{"backslash then quote", `a\"b`, `"a\\\"b"`},
+		{"line break", "a\nb", `"a\nb"`},
+		{"empty", "", `""`},
+	}
+	for _, c := range cases {
+		if got := Quote(c.in); got != c.want {
+			t.Errorf("%s: Quote(%q) = %s, want %s", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+type stringerVal struct{ s string }
+
+func (v stringerVal) String() string { return v.s }
+
+func TestAny(t *testing.T) {
+	if got := Any("a\nb"); got != `a\nb` {
+		t.Errorf("string: got %v", got)
+	}
+	if got := Any(errors.New("e\r\nx")); got != `e\r\nx` {
+		t.Errorf("error: got %v", got)
+	}
+	got, ok := Any([]string{"ok", "a\nb"}).([]string)
+	if !ok || len(got) != 2 || got[0] != "ok" || got[1] != `a\nb` {
+		t.Errorf("[]string: got %#v", got)
+	}
+	if got := Any(stringerVal{"s\nt"}); got != `s\nt` {
+		t.Errorf("Stringer: got %v", got)
+	}
+	if got := Any(int64(7)); got != int64(7) {
+		t.Errorf("int64: got %#v", got)
+	}
+	if got := Any(true); got != true {
+		t.Errorf("bool: got %#v", got)
+	}
+	if got := Any(struct{ A string }{"x\ny"}); got != `{x\ny}` {
+		t.Errorf("struct: got %#v", got)
+	}
+	if got := Any(nil); got != nil {
+		t.Errorf("nil: got %#v", got)
+	}
+}

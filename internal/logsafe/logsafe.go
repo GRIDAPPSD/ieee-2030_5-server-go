@@ -64,6 +64,40 @@ func Str(s string) string {
 	return strings.ReplaceAll(out, "\r", `\r`)
 }
 
+// Quote returns s as one double-quoted log field: escaped as Str does, with
+// every double quote written \" so a quote inside the value cannot end the
+// field and start a forged neighbour. Use it for a value inside a text
+// message; never put it under %q, which would escape it a second time.
+func Quote(s string) string {
+	return `"` + strings.ReplaceAll(Str(s), `"`, `\"`) + `"`
+}
+
+// Any returns v made safe to hand to a structured log call as a value: text,
+// errors, string slices and anything with a String method come back as
+// escaped strings (the slice elementwise), numbers and bools unchanged, and
+// every other type as the escaped text fmt prints for it.
+func Any(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case string:
+		return Str(x)
+	case error:
+		return Err(x)
+	case []string:
+		out := make([]string, len(x))
+		for i, e := range x {
+			out[i] = Str(e)
+		}
+		return out
+	case fmt.Stringer:
+		return Str(fmt.Sprint(x))
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return x
+	}
+	return Str(fmt.Sprint(v))
+}
+
 // Err returns Str of the error as fmt prints it, so a nil error and a typed
 // nil whose Error method panics both read "<nil>" instead of panicking.
 func Err(err error) string {

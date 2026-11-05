@@ -221,7 +221,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 				srverr.Internal(w, r, fmt.Errorf("checking subscribedResource: %w", err))
 				return
 			}
-			log.Printf("subscription: refused subscribedResource \"%s\" for EndDevice \"%s\": %s", logsafe.Str(loggedResource(sub.SubscribedResource)), logsafe.Str(edevID), logsafe.Err(err))
+			log.Printf("subscription: refused subscribedResource %s for EndDevice %s: %s", logsafe.Quote(loggedResource(sub.SubscribedResource)), logsafe.Quote(edevID), logsafe.Err(err))
 			// IEEE 2030.5-2018 8.7.3.4 rule m: a Subscription the server
 			// cannot accept is answered 400. One body for an unreadable and a
 			// nonexistent resource, so the answer does not reveal which.
@@ -234,15 +234,15 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 			var dnsErr *net.DNSError
 			switch {
 			case errors.Is(err, ErrRefusedDestination):
-				log.Printf("subscription: refused notificationURI \"%s\" for EndDevice \"%s\": %s", logsafe.Str(target), logsafe.Str(edevID), logsafe.Err(err))
+				log.Printf("subscription: refused notificationURI %s for EndDevice %s: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
 			case errors.Is(err, ErrDestinationUnresolved) && r.Context().Err() != nil:
-				log.Printf("subscription: request ended while resolving notificationURI \"%s\" for EndDevice \"%s\", refusing: %s", logsafe.Str(target), logsafe.Str(edevID), logsafe.Err(err))
+				log.Printf("subscription: request ended while resolving notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
 			case errors.Is(err, ErrDestinationUnresolved) && errors.As(err, &dnsErr) && dnsErr.IsNotFound:
-				log.Printf("subscription: no such host for notificationURI \"%s\" for EndDevice \"%s\", refusing: %s", logsafe.Str(target), logsafe.Str(edevID), logsafe.Err(err))
+				log.Printf("subscription: no such host for notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
 			case errors.Is(err, ErrDestinationUnresolved):
-				log.Printf("subscription: could not resolve notificationURI \"%s\" for EndDevice \"%s\", refusing: %s", logsafe.Str(target), logsafe.Str(edevID), logsafe.Err(err))
+				log.Printf("subscription: could not resolve notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
 			default:
-				log.Printf("subscription: validating notificationURI \"%s\" for EndDevice \"%s\": %s", logsafe.Str(target), logsafe.Str(edevID), logsafe.Err(err))
+				log.Printf("subscription: validating notificationURI %s for EndDevice %s: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
 				srverr.Internal(w, r, err)
 				return
 			}
@@ -336,7 +336,7 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		if sub.Href != subscriptionHref(edevID, subID) {
 			// Path id and subId only: sub.Href would name the other
 			// EndDevice this subId actually belongs to.
-			log.Printf("subscription: refused cross-device delete for EndDevice \"%s\" subId \"%s\"", logsafe.Str(edevID), logsafe.Str(subID))
+			log.Printf("subscription: refused cross-device delete for EndDevice %s subId %s", logsafe.Quote(edevID), logsafe.Quote(subID))
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -356,8 +356,8 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		// deleted from authoritative state.
 		if notifyRemoved != nil {
 			if err := notifyRemoved(r.Context(), sub); err != nil {
-				log.Printf("subscription: notify removed for \"%s\" to \"%s\": %s",
-					logsafe.Str(sub.Href), logsafe.Str(redactURI(sub.NotificationURI)), logsafe.Err(err))
+				log.Printf("subscription: notify removed for %s to %s: %s",
+					logsafe.Quote(sub.Href), logsafe.Quote(redactURI(sub.NotificationURI)), logsafe.Err(err))
 			}
 		}
 

@@ -402,13 +402,7 @@ type derControlLog struct {
 }
 
 func (l *derControlLog) add(key string, value any) {
-	switch v := value.(type) {
-	case string:
-		value = logsafe.Str(v)
-	case error:
-		value = logsafe.Err(v)
-	}
-	l.attrs = append(l.attrs, key, value)
+	l.attrs = append(l.attrs, key, logsafe.Any(value))
 }
 
 func (l *derControlLog) addControl(scope dercontrol.Scope, ctrl sep2.DERControl) {
@@ -528,7 +522,7 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 		if supersedes == nil {
 			supersedes = []string{}
 		}
-		h.logSuccess(r, "der_control_created", "admin: DER control created", res.Scope, res.Control, "supersedes", supersedes, "executes_grant", logsafe.Str(req.ExecutesGrant))
+		h.logSuccess(r, "der_control_created", "admin: DER control created", res.Scope, res.Control, "supersedes", supersedes, "executes_grant", req.ExecutesGrant)
 
 		now := sep2time.Now().Unix()
 		w.Header().Set("Location", res.Href)
@@ -782,7 +776,11 @@ func (h *AdminDERControlHandler) logSuccess(r *http.Request, event, msg string, 
 	var l derControlLog
 	l.addControl(scope, ctrl)
 	addBaseToLog(&l, ctrl)
-	h.log(r, slog.LevelInfo, msg, event, append(l.attrs, extra...))
+	for i := 0; i+1 < len(extra); i += 2 {
+		key, _ := extra[i].(string)
+		l.add(key, extra[i+1])
+	}
+	h.log(r, slog.LevelInfo, msg, event, l.attrs)
 }
 
 // HandleCancel returns the handler for POST /api/der/controls/{mrid}/cancel.

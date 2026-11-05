@@ -87,7 +87,7 @@ func (q *streamQueue) send(panelID string) sep2admin.StreamSendFunc {
 		}
 		frame, err := encodeStreamEvent(ev)
 		if err != nil {
-			log.Printf("admin: panel \"%s\": stream event refused: %s", logsafe.Str(panelID), logsafe.Err(err))
+			log.Printf("admin: panel %s: stream event refused: %s", logsafe.Quote(panelID), logsafe.Err(err))
 			q.finishLocked(streamInvalidEventText)
 			return false
 		}
@@ -287,12 +287,12 @@ func (ps *panelSet) openStream(ctx context.Context, w http.ResponseWriter, r *ht
 	case err == nil:
 		return true
 	case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
-		log.Printf("admin: panel \"%s\": stream open: %s", logsafe.Str(p.ID), logsafe.Err(err))
+		log.Printf("admin: panel %s: stream open: %s", logsafe.Quote(p.ID), logsafe.Err(err))
 		writePanelError(w, http.StatusGatewayTimeout, "panel did not answer in time")
 	case errors.Is(err, sep2admin.ErrViewCanceled):
 		writePanelError(w, http.StatusServiceUnavailable, "request canceled")
 	default:
-		log.Printf("admin: panel \"%s\": stream open: %s", logsafe.Str(p.ID), logsafe.Err(err))
+		log.Printf("admin: panel %s: stream open: %s", logsafe.Quote(p.ID), logsafe.Err(err))
 		writePanelError(w, http.StatusInternalServerError, "panel failed")
 	}
 	return false

@@ -89,8 +89,8 @@ func HostAllowlistMiddleware(allowed []string) func(http.Handler) http.Handler {
 				return
 			}
 
-			log.Printf("admin: rejecting request with disallowed Host header %q from %s %s %s (allowlist: %v)",
-				logsafe.Str(host), logsafe.Str(r.RemoteAddr), logsafe.Str(r.Method), logsafe.Str(r.URL.Path), allowedKeys(allowSet))
+			log.Printf("admin: rejecting request with disallowed Host header %s from %s %s %s (allowlist: %v)",
+				logsafe.Quote(host), logsafe.Str(r.RemoteAddr), logsafe.Str(r.Method), logsafe.Str(r.URL.Path), allowedKeys(allowSet))
 			http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
 		})
 	}

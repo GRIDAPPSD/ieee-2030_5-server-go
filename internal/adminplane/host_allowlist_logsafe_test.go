@@ -2,6 +2,7 @@ package adminplane
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -39,5 +40,31 @@ func TestHostAllowlistRefusalLogsOneEscapedLine(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("log line lacks the visible escape %q:\n%s", want, out)
 		}
+	}
+}
+
+// The refused Host is escaped once and quoted once: a backslash and a quote
+// in it come out as the escapes logsafe.Quote writes, and the quote cannot
+// close the field (#1236).
+func TestHostAllowlistRefusalEscapesOnceAndKeepsQuotesClosed(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	h := HostAllowlistMiddleware([]string{"localhost"})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Host = `a\b" from 1.2.3.4`
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	var rec struct {
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("log line is not JSON: %v\n%s", err, buf.String())
+	}
+	want := `Host header "a\\b\" from 1.2.3.4" from `
+	if !strings.Contains(rec.Msg, want) {
+		t.Errorf("message lacks %s:\n%s", want, rec.Msg)
 	}
 }

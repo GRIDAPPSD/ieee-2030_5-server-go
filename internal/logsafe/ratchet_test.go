@@ -383,7 +383,7 @@ func checkValue(info *types.Info, a ast.Expr, at func(ast.Node, string)) {
 	}
 	if c, ok := ast.Unparen(a).(*ast.CallExpr); ok {
 		obj := calleeObj(info, c)
-		if isOwnFunc(obj, "Str", "Err") {
+		if isOwnFunc(obj, "Str", "Err", "Quote", "Any") {
 			return
 		}
 		if fn, ok := obj.(*types.Func); ok && fn.Pkg() != nil && fn.Pkg().Path() == "log/slog" && slices.Contains(attrFuncs, fn.Name()) {

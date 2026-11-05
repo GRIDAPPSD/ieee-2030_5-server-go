@@ -10,11 +10,11 @@ type Configuration struct {
 	SubscribableResource
 	PollRate uint32 `xml:"pollRate,attr,omitempty"`
 
-	CurrentLocale      string              `xml:"currentLocale,omitempty"` // RFC 5646 locale
-	PowerConfiguration *PowerConfiguration `xml:"PowerConfiguration,omitempty"`
-	// PriceResponseCfgListLink omitted (Pricing function set)
-	TimeConfiguration *TimeConfiguration `xml:"TimeConfiguration,omitempty"`
-	UserDeviceName    string             `xml:"userDeviceName,omitempty"`
+	CurrentLocale            string              `xml:"currentLocale,omitempty"` // RFC 5646 locale
+	PowerConfiguration       *PowerConfiguration `xml:"PowerConfiguration,omitempty"`
+	PriceResponseCfgListLink *ListLink           `xml:"PriceResponseCfgListLink,omitempty"`
+	TimeConfiguration        *TimeConfiguration  `xml:"TimeConfiguration,omitempty"`
+	UserDeviceName           string              `xml:"userDeviceName,omitempty"`
 }
 
 // PowerConfiguration holds battery/power settings.
@@ -44,6 +44,7 @@ func (c Configuration) Copy() Configuration {
 	cp := c
 	cp.SubscribableResource = c.SubscribableResource.Copy()
 	cp.PowerConfiguration = cloneCopyPtr(c.PowerConfiguration)
+	cp.PriceResponseCfgListLink = clonePtr(c.PriceResponseCfgListLink)
 	cp.TimeConfiguration = clonePtr(c.TimeConfiguration)
 	return cp
 }

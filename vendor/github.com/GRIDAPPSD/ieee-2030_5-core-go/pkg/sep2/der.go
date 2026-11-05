@@ -168,6 +168,8 @@ type DER struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DER"`
 	SubscribableResource
 	AssociatedDERProgramListLink *ListLink `xml:"AssociatedDERProgramListLink,omitempty"`
+	AssociatedUsagePointLink     *Link     `xml:"AssociatedUsagePointLink,omitempty"`
+	CurrentDERProgramLink        *Link     `xml:"CurrentDERProgramLink,omitempty"`
 	DERAvailabilityLink          *Link     `xml:"DERAvailabilityLink,omitempty"`
 	DERCapabilityLink            *Link     `xml:"DERCapabilityLink,omitempty"`
 	DERSettingsLink              *Link     `xml:"DERSettingsLink,omitempty"`
@@ -179,6 +181,8 @@ func (d DER) Copy() DER {
 	c := d
 	c.SubscribableResource = d.SubscribableResource.Copy()
 	c.AssociatedDERProgramListLink = clonePtr(d.AssociatedDERProgramListLink)
+	c.AssociatedUsagePointLink = clonePtr(d.AssociatedUsagePointLink)
+	c.CurrentDERProgramLink = clonePtr(d.CurrentDERProgramLink)
 	c.DERAvailabilityLink = clonePtr(d.DERAvailabilityLink)
 	c.DERCapabilityLink = clonePtr(d.DERCapabilityLink)
 	c.DERSettingsLink = clonePtr(d.DERSettingsLink)

@@ -2,13 +2,18 @@ package wadl
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // This file walks a live IEEE 2030.5 server against the normative WADL.
@@ -151,6 +156,9 @@ type Target struct {
 	// allowed: the sweep then relies on the wire discriminator alone and
 	// says so rather than pretending to a corroboration it does not have.
 	MountedPatterns []string
+	// Stores are the stores the target serves. They are read by the seeds that
+	// write server-authored state directly; nil makes those seeds fail.
+	Stores *server.Stores
 }
 
 // ---- HTTP ---------------------------------------------------------------
@@ -367,7 +375,25 @@ func concretize(path string, discovered []string) (string, string) {
 			}
 		}
 	}
+	// A path under a device keeps the discovered device id, so the child
+	// answers for the device the sweep seeded rather than for a device 0 that
+	// does not exist.
+	if dev := discoveredDevice(discovered); dev != "" && strings.HasPrefix(path, "/edev/{id1}") {
+		path = strings.Replace(path, "{id1}", dev, 1)
+	}
 	return idSlotPlain.ReplaceAllString(path, "0"), "synthetic"
+}
+
+var devicePath = regexp.MustCompile(`^/edev/([^/]+)$`)
+
+// discoveredDevice is the id of the first EndDevice discovery returned, or "".
+func discoveredDevice(discovered []string) string {
+	for _, u := range discovered {
+		if m := devicePath.FindStringSubmatch(u); m != nil {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 // ---- classification -----------------------------------------------------
@@ -560,11 +586,20 @@ const sepNS = "urn:ieee:std:2030.5:ns"
 
 // The seed mRIDs are public identifiers, not credentials.
 
+// devToken in a seed path stands for the EndDevice the first seed created,
+// so every child seed addresses the discovered device and not a guessed id.
+const devToken = "{dev}"
+
 type seed struct {
 	method  string
 	path    string
 	element string
 	body    string
+	// direct writes state no protocol route can create (a Registration, a
+	// MessagingProgram, which the server authors itself). It runs in seedSet's
+	// order, against the stores the target serves, and gets the device id the
+	// first seed created. method and path are for the row only.
+	direct func(ctx context.Context, s *server.Stores, dev string) error
 }
 
 // seeds create a minimum of real server state before the read phases.
@@ -577,6 +612,9 @@ type seed struct {
 // for classifying ROUTING in the WADL walk, but a seed that gets rejected
 // leaves a whole subtree unwalked, and an unwalked subtree silently
 // understates the defect count.
+//
+// This is the one place a fixture is added: a resource the walk probes and the
+// server does not create on its own gets a seed here, never a second list.
 func seedSet() []seed {
 	return []seed{
 		{
@@ -604,19 +642,103 @@ func seedSet() []seed {
 				`<serviceCategoryKind>0</serviceCategoryKind><status>1</status>` +
 				`</UsagePoint>`,
 		},
+		{
+			method: http.MethodPost, path: "/edev/" + devToken + "/lel", element: "LogEvent",
+			body: `<LogEvent xmlns="` + sepNS + `"><createdDateTime>1785700000</createdDateTime>` +
+				`<logEventCode>1</logEventCode><logEventID>42</logEventID>` +
+				`<logEventPEN>37244</logEventPEN><profileID>2</profileID></LogEvent>`,
+		},
+		{
+			method: http.MethodPost, path: "/edev/" + devToken + "/sub", element: "Subscription",
+			body: `<Subscription xmlns="` + sepNS + `"><subscribedResource>/edev/` + devToken + `/fsa</subscribedResource>` +
+				`<encoding>0</encoding><level>+S1</level><limit>1</limit>` +
+				`<notificationURI>http://192.0.2.1/n</notificationURI></Subscription>`,
+		},
+		{
+			method: http.MethodPost, path: "/edev/" + devToken + "/frq", element: "FlowReservationRequest",
+			body: `<FlowReservationRequest xmlns="` + sepNS + `"><mRID>0102030405060708090A0B0C0D0E0F10</mRID>` +
+				`<creationTime>1785700000</creationTime>` +
+				`<energyRequested><multiplier>3</multiplier><value>15</value></energyRequested>` +
+				`<intervalRequested><duration>10800</duration><start>1785700000</start></intervalRequested>` +
+				`<powerRequested><multiplier>3</multiplier><value>7</value></powerRequested>` +
+				`<RequestStatus><dateTime>1785700000</dateTime><requestStatus>0</requestStatus></RequestStatus>` +
+				`</FlowReservationRequest>`,
+		},
+		{
+			// The server answers Response POSTs from any device, and one stored
+			// Response serves every Response type the WADL lists at this path.
+			method: http.MethodPost, path: "/rsps/1/rsp", element: "Response",
+			body: `<Response xmlns="` + sepNS + `"><createdDateTime>1785700000</createdDateTime>` +
+				`<status>1</status><subject>0123456789ABCDEF0123456789ABCDEF</subject></Response>`,
+		},
+		{
+			// Registration PINs are server-authored and the policy is fail-closed,
+			// so no route creates one. The PIN is a public test constant.
+			method: http.MethodGet, path: "/edev/" + devToken + "/rg", element: "Registration",
+			direct: func(ctx context.Context, s *server.Stores, dev string) error {
+				reg := sep2.Registration{DateTimeRegistered: 1785700000, PIN: 123455, PollRate: 900}
+				reg.Href = "/edev/" + dev + "/rg"
+				return s.Registrations.Create(ctx, dev, reg)
+			},
+		},
+		{
+			method: http.MethodGet, path: "/msg/1", element: "MessagingProgram",
+			direct: func(ctx context.Context, s *server.Stores, _ string) error {
+				mp := sep2.MessagingProgram{
+					MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FCC", Description: "wadl sweep msg", Primacy: 1,
+					TextMessageListLink: &sep2.ListLink{Href: "/msg/1/tm"},
+				}
+				mp.Href = "/msg/1"
+				return s.MessagingPrograms.Create(ctx, "1", mp)
+			},
+		},
+		{
+			method: http.MethodPost, path: "/msg/1/tm", element: "TextMessage",
+			body: `<TextMessage xmlns="` + sepNS + `"><mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FDD</mRID>` +
+				`<interval><duration>3600</duration><start>1785700000</start></interval>` +
+				`<priority>0</priority><textMessage>wadl sweep</textMessage></TextMessage>`,
+		},
 	}
 }
 
-func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) {
+var seededDevice = regexp.MustCompile(`^/edev/([^/]+)$`)
+
+// phaseSeed returns the hrefs the seeds minted, for resources no advertised
+// link reaches (a Subscription is listed under no EndDevice link).
+//
+// It runs seedSet in order. A seed that names the device before the
+// device seed produced an id is recorded as failed, never sent with the token
+// unresolved.
+func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
+	dev := ""
+	var minted []string
 	for _, s := range seedSet() {
-		r := t.do(s.method, s.path, []byte(s.body))
+		path := s.path
+		var r response
+		var directErr error
+		unresolved := strings.Contains(path, devToken) && dev == ""
+		path = strings.ReplaceAll(path, devToken, dev)
+		body := strings.ReplaceAll(s.body, devToken, dev)
+
+		switch {
+		case unresolved:
+			directErr = errors.New("the EndDevice seed produced no device id")
+		case s.direct != nil && t.Stores == nil:
+			directErr = errors.New("the target carries no stores to seed")
+		case s.direct != nil:
+			directErr = s.direct(context.Background(), t.Stores, dev)
+			r.status = http.StatusOK
+		default:
+			r = t.do(s.method, path, []byte(body))
+		}
+
 		v := Verdict(fmt.Sprintf("%s_%d", VerdictSeedFailed, r.status))
-		if r.status == http.StatusOK || r.status == http.StatusCreated {
+		if directErr == nil && (r.status == http.StatusOK || r.status == http.StatusCreated) {
 			v = VerdictSeeded
 		}
 		row := Row{
 			Phase:           PhaseSeed,
-			Path:            s.path,
+			Path:            path,
 			Method:          s.method,
 			Element:         s.element,
 			Status:          r.status,
@@ -626,13 +748,21 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) {
 			BodyBytes:       len(r.body),
 			Verdict:         v,
 			TransportError:  r.transportError,
-			MountedByRouter: ri.mounted(s.method, s.path),
+			MountedByRouter: ri.mounted(s.method, path),
+		}
+		if directErr != nil {
+			row.TransportError = directErr.Error()
 		}
 		*rows = append(*rows, row)
+		if m := seededDevice.FindStringSubmatch(r.location); m != nil && dev == "" {
+			dev = m[1]
+		}
 		if r.location != "" {
-			t.followLocation(rows, ri, r.location, s.method+" "+s.path, s.path)
+			t.followLocation(rows, ri, r.location, s.method+" "+path, path)
+			minted = append(minted, schemeAuthority.ReplaceAllString(r.location, ""))
 		}
 	}
+	return minted
 }
 
 const maxDiscoveryURLs = 600
@@ -704,19 +834,31 @@ func (t *Target) phaseWADL(m *Model, discovered []string, rows *[]Row, ri *route
 	// HEAD's 404 classification borrows the body evidence only a GET supplies.
 	// Mutating methods run last so discovery-derived ids are still valid when
 	// the read phases use them.
-	order := map[string]int{http.MethodGet: 0, http.MethodHead: 1}
+	// Writes run PUT, POST, then DELETE, and DELETE runs deepest path first. A
+	// DELETE that ran before a PUT on the same resource turned the PUT's 404
+	// into a harness artifact, and a parent DELETE before a child DELETE did
+	// the same to the child.
+	order := map[string]int{
+		http.MethodGet: 0, http.MethodHead: 1, http.MethodPut: 2, http.MethodPost: 3, http.MethodDelete: 4,
+	}
 	ordered := make([]Method, len(m.Methods))
 	copy(ordered, m.Methods)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		oi, ok := order[ordered[i].Verb]
 		if !ok {
-			oi = 2
+			oi = 5
 		}
 		oj, ok := order[ordered[j].Verb]
 		if !ok {
-			oj = 2
+			oj = 5
 		}
-		return oi < oj
+		if oi != oj {
+			return oi < oj
+		}
+		if oi == order[http.MethodDelete] {
+			return strings.Count(ordered[i].Path, "/") > strings.Count(ordered[j].Path, "/")
+		}
+		return false
 	})
 
 	muxByPath := map[string]bool{}
@@ -828,10 +970,15 @@ func Sweep(t *Target, m *Model) *Results {
 	ri := newRouteIndex(t.MountedPatterns)
 	res := &Results{MountedPatterns: t.MountedPatterns}
 
-	t.phaseSeed(&res.Rows, ri)
+	minted := t.phaseSeed(&res.Rows, ri)
 
 	bodies := map[string][]byte{}
 	discovered := t.phaseDiscovery(&res.Rows, ri, bodies)
+	for _, h := range minted {
+		if !containsStr(discovered, h) {
+			discovered = append(discovered, h)
+		}
+	}
 
 	// Field checks operate on bodies discovery already retrieved, so they add
 	// no requests and cannot perturb server state.

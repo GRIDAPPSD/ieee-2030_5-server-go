@@ -153,6 +153,19 @@ func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
 	return adminplane.CompleteFSAControlReplicas(ctx, stores, log.Printf)
 }
 
+// NewInMemoryStores is the store set Run serves when no data directory is
+// configured: newRunStores over an empty config, with the EndDevice index
+// seeded the way Run seeds it. In-process harnesses call it so they serve the
+// same route surface the binary does instead of a hand-listed copy.
+func NewInMemoryStores() (*Stores, error) {
+	stores, endDevices, err := newRunStores(&config.Config{})
+	if err != nil {
+		return nil, err
+	}
+	stores.EndDeviceIndexes = memory.NewEndDeviceIndexFromStore(endDevices)
+	return stores, nil
+}
+
 // newRunStores builds the stores Run serves, with the one commitment ledger
 // over them. The EndDevice store is also returned undecorated, because the
 // index is seeded from it only after the boot fixture has run.

@@ -10,7 +10,8 @@ import (
 )
 
 // mandatoryUnroutedCeiling is the number of Mandatory (wx:mode="M") methods
-// the WADL declares that this server does not route today.
+// the sweep does not find at a routed handler: methods answered by no route,
+// plus methods of a resource no link from /dcap leads to, which are not probed.
 //
 // It is a RATCHET, not a target. The conformance gap it records is real and
 // tracked; pinning it here keeps the gap from widening unnoticed while route
@@ -18,8 +19,17 @@ import (
 // it: TestMandatoryRouteCoverageRatchet logs the new value to use.
 //
 // Measured against the server csiptest boots, with the route set core's
-// assembly registers, on 2026-11-04.
-const mandatoryUnroutedCeiling = 177
+// assembly registers, on 2026-11-05.
+const mandatoryUnroutedCeiling = 190
+
+// notReachedCeiling is the number of WADL resources with a Mandatory or Optional
+// method that the crawl from /dcap misses though the schema names a link for
+// them, and crawlReachedFloor is how many it finds. A resource served without a
+// link to it counts against the first and cannot raise the second.
+const (
+	notReachedCeiling = 92
+	crawlReachedFloor = 32
+)
 
 // EnvArtifact names an optional file to write the full row-by-row sweep to.
 //
@@ -35,7 +45,7 @@ const EnvArtifact = "SEP2_WADL_SWEEP_OUT"
 // so this harness measures the same server the rest of the conformance tests
 // measure. It listens on a kernel-assigned loopback port and is torn down by
 // t.Cleanup, so nothing is left running and no port is chosen by hand.
-func bootTarget(t *testing.T) *wadl.Target {
+func bootTarget(t *testing.T, links *wadl.LinkSchema) *wadl.Target {
 	t.Helper()
 
 	srv := csiptest.BootServer(t)
@@ -46,6 +56,7 @@ func bootTarget(t *testing.T) *wadl.Target {
 		BaseURL:         srv.BaseURL,
 		Client:          srv.HTTPClient(),
 		MountedPatterns: srv.MountedPatterns,
+		Links:           links,
 		Stores:          srv.Stores,
 	}
 }
@@ -61,7 +72,7 @@ func bootTarget(t *testing.T) *wadl.Target {
 // ratchet below keeps it from silently widening.
 func TestWADLConformanceSweep(t *testing.T) {
 	model := wadl.MustLoadModel(t)
-	target := bootTarget(t)
+	target := bootTarget(t, wadl.SchemaForTest(t))
 
 	res := wadl.Sweep(target, model)
 
@@ -83,6 +94,12 @@ func TestWADLConformanceSweep(t *testing.T) {
 				row.Method, row.Path, row.Verdict, *row.MountedByRouter)
 		}
 		t.Fatal("the wire evidence and the router's route enumeration disagree, so the routing verdicts in this run cannot be trusted")
+	}
+
+	// 1b. The crawl itself. A walk from /dcap that reaches no resource has
+	//     found nothing, and every row after it measures sample paths only.
+	if res.CrawlReached == 0 {
+		t.Fatal("the link crawl from /dcap reached no WADL resource, so the sweep scored sample paths and not what a client finds")
 	}
 
 	// 2. Seed failures. A refused seed leaves the subtree hanging off it
@@ -130,11 +147,12 @@ func TestWADLConformanceSweep(t *testing.T) {
 // WADL, which is not distributed with this project.
 func TestMandatoryRouteCoverageRatchet(t *testing.T) {
 	model := wadl.MustLoadModel(t)
-	target := bootTarget(t)
+	target := bootTarget(t, wadl.SchemaForTest(t))
 
 	res := wadl.Sweep(target, model)
 
-	unrouted := res.CountMode(wadl.ModeMandatory, wadl.VerdictUnrouted)
+	unrouted := res.CountMode(wadl.ModeMandatory, wadl.VerdictUnrouted) +
+		res.NotReachedMethods(model, wadl.ModeMandatory)
 	total := 0
 	for _, m := range model.Methods {
 		if m.Mode == wadl.ModeMandatory {
@@ -142,18 +160,49 @@ func TestMandatoryRouteCoverageRatchet(t *testing.T) {
 		}
 	}
 
-	t.Logf("mandatory methods: %d declared, %d unrouted, %d reached a handler",
+	t.Logf("mandatory methods: %d declared, %d unrouted or not reached, %d reached a handler",
 		total, unrouted, total-unrouted)
 
 	if unrouted > mandatoryUnroutedCeiling {
-		t.Errorf("unrouted mandatory methods = %d, which exceeds the ceiling of %d: "+
-			"a route that used to be mounted is no longer reachable",
+		t.Errorf("unrouted or not reached mandatory methods = %d, which exceeds the ceiling of %d: "+
+			"a route or a link that used to be served is gone",
 			unrouted, mandatoryUnroutedCeiling)
 	}
 	if unrouted < mandatoryUnroutedCeiling {
-		t.Logf("unrouted mandatory methods = %d, below the ceiling of %d; "+
+		t.Logf("unrouted or not reached mandatory methods = %d, below the ceiling of %d; "+
 			"lower mandatoryUnroutedCeiling to %d to lock the improvement in",
 			unrouted, mandatoryUnroutedCeiling, unrouted)
+	}
+}
+
+// TestCrawlReachRatchet keeps the crawl from finding fewer resources, and the
+// schema-named resources it misses from growing. Without a schema the missed set
+// is not comparable, so the ceiling is checked only when one is supplied.
+func TestCrawlReachRatchet(t *testing.T) {
+	model := wadl.MustLoadModel(t)
+	links := wadl.SchemaForTest(t)
+	res := wadl.Sweep(bootTarget(t, links), model)
+
+	missed := len(res.Filter(func(r wadl.Row) bool { return r.Verdict == wadl.VerdictNotReached }))
+	t.Logf("crawl reached %d resources, %d not reached", res.CrawlReached, missed)
+
+	if res.CrawlReached < crawlReachedFloor {
+		t.Errorf("crawl reached %d resources, below the floor of %d: a link the server used to emit is gone",
+			res.CrawlReached, crawlReachedFloor)
+	}
+	if res.CrawlReached > crawlReachedFloor {
+		t.Logf("crawl reached %d, above the floor of %d; raise crawlReachedFloor to %d to lock the improvement in",
+			res.CrawlReached, crawlReachedFloor, res.CrawlReached)
+	}
+	if links == nil {
+		t.Skip("no sep.xsd: the not_reached ceiling needs the schema to tell unlinked resources from missed ones")
+	}
+	if missed > notReachedCeiling {
+		t.Errorf("not_reached resources = %d, which exceeds the ceiling of %d", missed, notReachedCeiling)
+	}
+	if missed < notReachedCeiling {
+		t.Logf("not_reached resources = %d, below the ceiling of %d; lower notReachedCeiling to %d to lock the improvement in",
+			missed, notReachedCeiling, missed)
 	}
 }
 

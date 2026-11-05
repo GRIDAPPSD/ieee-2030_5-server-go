@@ -153,6 +153,25 @@ func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
 	return adminplane.CompleteFSAControlReplicas(ctx, stores, log.Printf)
 }
 
+// NewInMemoryStores is the store set Run serves when no data directory is
+// configured: newRunStores over an empty config, with the EndDevice index
+// seeded the way Run seeds it. In-process harnesses call it so they serve the
+// same route surface the binary does instead of a hand-listed copy.
+func NewInMemoryStores() (*Stores, error) {
+	stores, endDevices, err := newRunStores(&config.Config{})
+	if err != nil {
+		return nil, err
+	}
+	seedEndDeviceIndex(stores, endDevices)
+	return stores, nil
+}
+
+// seedEndDeviceIndex is the one place the EndDevice index is built from the
+// store, so Run and NewInMemoryStores cannot seed it differently.
+func seedEndDeviceIndex(stores *Stores, endDevices *memory.EndDeviceStore) {
+	stores.EndDeviceIndexes = memory.NewEndDeviceIndexFromStore(endDevices)
+}
+
 // newRunStores builds the stores Run serves, with the one commitment ledger
 // over them. The EndDevice store is also returned undecorated, because the
 // index is seeded from it only after the boot fixture has run.
@@ -418,7 +437,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// in-memory state. Seeding any earlier would leave a fixture record's id
 	// invisible to Allocate, so a self-registering device could be handed
 	// that same id and get a permanent 409 on every retry (#443).
-	stores.EndDeviceIndexes = memory.NewEndDeviceIndexFromStore(endDevices)
+	seedEndDeviceIndex(stores, endDevices)
 
 	// Subscription notification dispatcher. Owns its own bounded worker pool
 	// and exits when ctx is cancelled (see shutdown branch below). The

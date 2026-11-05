@@ -142,6 +142,8 @@ func TestConcretize(t *testing.T) {
 		{name: "multi-slot discovered", path: "/edev/{id1}/der/{id2}", wantPath: "/edev/3/der/1", wantSource: "discovered"},
 		{name: "falls back to synthetic", path: "/upt/{id1}/mr", wantPath: "/upt/0/mr", wantSource: "synthetic"},
 		{name: "multi-slot synthetic", path: "/x/{id1}/y/{id2}", wantPath: "/x/0/y/0", wantSource: "synthetic"},
+		{name: "synthetic child keeps the discovered device id", path: "/edev/{id1}/cfg", wantPath: "/edev/3/cfg", wantSource: "synthetic"},
+		{name: "synthetic grandchild keeps the device id", path: "/edev/{id1}/frq/{id2}", wantPath: "/edev/3/frq/0", wantSource: "synthetic"},
 	}
 
 	for _, tc := range tests {

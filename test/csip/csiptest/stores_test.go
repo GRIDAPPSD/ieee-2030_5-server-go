@@ -3,12 +3,15 @@ package csiptest_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -53,5 +56,43 @@ func TestNewFreshStores_BuildsTheLedgerLikeRun(t *testing.T) {
 	}
 	if err := check(); err != nil {
 		t.Fatalf("after the cancel mark: CheckGrant = %v, want the window free", err)
+	}
+}
+
+// TestNewFreshStores_IsTheProductionSet: the harness serves the stores Run
+// serves, so a route Run mounts is mounted under test. The three fields the
+// old hand-listed copy lacked are the ones that hid the Registration route
+// from the WADL sweep (#1244).
+func TestNewFreshStores_IsTheProductionSet(t *testing.T) {
+	t.Parallel()
+	s := csiptest.NewFreshStores()
+	if s.Registrations == nil || s.EndDeviceIndexes == nil || s.AdminFSAs == nil || s.DeviceProfiles == nil || s.ProgramOrigins == nil {
+		t.Fatalf("Registrations %v, EndDeviceIndexes %v, AdminFSAs %v, DeviceProfiles %v, ProgramOrigins %v; want all five wired",
+			s.Registrations != nil, s.EndDeviceIndexes != nil, s.AdminFSAs != nil, s.DeviceProfiles != nil, s.ProgramOrigins != nil)
+	}
+	other := csiptest.NewFreshStores()
+	if err := s.Registrations.Create(context.Background(), "1", sep2.Registration{PIN: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Registrations.Get(context.Background(), "1"); err == nil {
+		t.Fatal("a Registration written to one set is visible in another: the sets share state")
+	}
+}
+
+// TestNewFreshStores_CoversEveryFieldNewStoresFills: whatever field the
+// embeddable constructor fills, the harness set fills too once projected for
+// core, so a store added to one is not missing from the other.
+func TestNewFreshStores_CoversEveryFieldNewStoresFills(t *testing.T) {
+	t.Parallel()
+	want := reflect.ValueOf(sep2server.NewStores()).Elem()
+	got := reflect.ValueOf(server.NewCoreStores(csiptest.NewFreshStores())).Elem()
+	for i := 0; i < want.NumField(); i++ {
+		name := want.Type().Field(i).Name
+		switch want.Field(i).Kind() {
+		case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice:
+			if !want.Field(i).IsNil() && got.Field(i).IsNil() {
+				t.Errorf("assembly.Stores.%s is filled by sep2server.NewStores and nil in the harness set", name)
+			}
+		}
 	}
 }

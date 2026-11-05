@@ -46,11 +46,9 @@ import (
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // deriveServerIdentity parses the leaf cert from a raw DER chain (as found
@@ -511,43 +509,15 @@ func newCCMConfig(t *testing.T, serverCertPEM, serverKeyPEM, caCertPEM []byte) (
 // this to seed topology-specific state, and Phase 3 tests that want
 // to mutate stores before booting can call this themselves and pass
 // the result via WithStores.
+//
+// It is the set Run serves with no data directory (server.NewInMemoryStores),
+// so the harness mounts the same routes the binary does.
 func NewFreshStores() *server.Stores {
-	s := &server.Stores{
-		EndDevices:               memory.NewEndDeviceStore(),
-		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
-		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
-		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
-		DERs:                     memory.NewScopedStore[sep2.DER](),
-		DERCapabilities:          memory.NewScopedStore[sep2.DERCapability](),
-		DERSettings:              memory.NewScopedStore[sep2.DERSettings](),
-		DERStatuses:              memory.NewDERStatusSinceStore(memory.NewScopedStore[sep2.DERStatus](), nil),
-		DERAvailabilities:        memory.NewDERAvailabilitySinceStore(memory.NewScopedStore[sep2.DERAvailability](), nil),
-		DERPrograms:              memory.NewDERProgramStore(),
-		DERControls:              memory.NewDERControlStore(),
-		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
-		DERCurves:                memory.NewStore[sep2.DERCurve](),
-		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		Subscriptions:            memory.NewSubscriptionStore(),
-		UsagePoints:              memory.NewStore[sep2.UsagePoint](),
-		MeterReadings:            memory.NewScopedStore[sep2.MeterReading](),
-		Readings:                 memory.NewScopedStore[sep2.Reading](),
-		ReadingTypes:             memory.NewStore[sep2.ReadingType](),
-		Configurations:           memory.NewScopedStore[sep2.Configuration](),
-		DeviceStatuses:           memory.NewScopedStore[sep2.DeviceStatus](),
-		LogEvents:                memory.NewScopedStore[sep2.LogEvent](),
-		PowerStatuses:            memory.NewScopedStore[sep2.PowerStatus](),
-		MessagingPrograms:        memory.NewStore[sep2.MessagingProgram](),
-		TextMessages:             memory.NewScopedStore[sep2.TextMessage](),
-		FlowReservationRequests:  memory.NewScopedStore[sep2.FlowReservationRequest](),
-		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
-		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
-		Responses:                memory.NewScopedStore[sep2.Response](),
-
-		DERControlLifecycles:              dercontrol.NewLifecycleStore(),
-		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+	s, err := server.NewInMemoryStores()
+	if err != nil {
+		// An in-memory set names no path, so a failure here is a programming
+		// error in the constructor, not an environment condition.
+		panic(fmt.Sprintf("csiptest: in-memory stores: %v", err))
 	}
-	// Built the way Run builds it (#714): without a ledger every windowed
-	// flow reservation grant is refused.
-	s.CommitmentLedger = server.NewCommitmentLedger(s)
 	return s
 }

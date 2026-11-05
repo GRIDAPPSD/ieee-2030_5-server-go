@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/statuswriter"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 )
 
 const namespace = "sep2"
@@ -197,26 +198,19 @@ func RecordAdminAuthFailure(admissionPath string) {
 	adminAuthFailures.WithLabelValues(admissionPath).Inc()
 }
 
-// knownFunctionSets is the closed set of IEEE 2030.5 protocol-listener
-// first-path-segments derived from the routes mounted on the protocol mux
-// (assembly.BuildProtocolRouter via internal/server/assembly_seam.go).
-// functionSet folds anything outside this set to "other" so an
-// arbitrary or malicious path cannot expand the function_set label's
-// cardinality. Sub-resources (der, fsa, sub, frq, frp, cfg, ...) live under
-// /edev/{id}/... and never surface as a first segment, so they are NOT in
-// this set by design. Keep in sync with the protocol router's prefix list.
-var knownFunctionSets = map[string]struct{}{
-	"dcap": {}, // DeviceCapability
-	"tm":   {}, // Time
-	"sdev": {}, // SelfDevice
-	"edev": {}, // EndDevice (and all device-scoped sub-resources)
-	"mup":  {}, // MirrorUsagePoint
-	"dc":   {}, // DERCurve (global)
-	"upt":  {}, // UsagePoint
-	"rt":   {}, // ReadingType (global)
-	"msg":  {}, // Messaging
-	"rsps": {}, // ResponseSet
-	"root": {}, // "/" or "" — discovery root
+// knownFunctionSets is the closed set of function_set label values: the first
+// path segment of every route family (pkg/sep2srv/routefamily), plus "root"
+// for "/" or "". functionSet folds anything outside it to "other" so an
+// arbitrary path cannot expand the label's cardinality. Sub-resources live
+// under a family's subtree and never surface as a first segment.
+var knownFunctionSets = buildKnownFunctionSets()
+
+func buildKnownFunctionSets() map[string]struct{} {
+	set := map[string]struct{}{"root": {}}
+	for _, f := range routefamily.All() {
+		set[strings.TrimPrefix(f.Prefix, "/")] = struct{}{}
+	}
+	return set
 }
 
 // functionSet extracts the IEEE 2030.5 function-set label from a request

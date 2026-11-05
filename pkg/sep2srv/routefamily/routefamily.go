@@ -28,6 +28,7 @@ var (
 )
 
 // All returns the families. A path no family names is refused (Refuse).
+// The build-tagged /test/mutations surface is deliberately outside this table.
 func All() []Family {
 	return []Family{
 		{Prefix: "/dcap", Methods: read, Unauthenticated: true},

@@ -982,11 +982,10 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// Both new shapes are declared in MintableHrefs in this same change:
 	// mounting and advertising are one act.
 	//
-	// Reachability through the bridge and server-go ACLs is NOT addressed here.
-	// Both wrappers classify /mup as read-and-create and return 405 before the
-	// mux, so these two methods stay dark in those deployments until the
-	// wrapper tables are removed upstream. Editing those tables from here is
-	// the cross-repo lockstep drift to avoid.
+	// server-go's ACL allows PUT and DELETE on /mup (the route family table),
+	// so both reach this mux. A deployment behind a wrapper that still
+	// classifies /mup as read-and-create answers 405 before the mux; that
+	// table is not edited from here.
 	mux.HandleFunc("PUT /mup/{id}", coremetering.HandlePutMirrorUsagePoint(
 		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider, requireRecords,
 	))

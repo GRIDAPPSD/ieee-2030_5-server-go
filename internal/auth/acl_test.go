@@ -12,7 +12,7 @@ import (
 
 func TestACLAllowedMethod(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet | auth.MethodHead | auth.MethodPost, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet | auth.MethodHead | auth.MethodPost, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -29,7 +29,7 @@ func TestACLAllowedMethod(t *testing.T) {
 
 func TestACLDisallowedMethod(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet | auth.MethodHead, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet | auth.MethodHead, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -46,7 +46,7 @@ func TestACLDisallowedMethod(t *testing.T) {
 
 func TestACLRequiresAuth(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -63,7 +63,7 @@ func TestACLRequiresAuth(t *testing.T) {
 
 func TestACLAllowsNoAuth(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/dcap", auth.MethodGet | auth.MethodHead, auth.AuthNone | auth.AuthDeviceCert, false},
+		{"/dcap", auth.MethodGet | auth.MethodHead, auth.AuthNone | auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -79,8 +79,8 @@ func TestACLAllowsNoAuth(t *testing.T) {
 
 func TestACLLongestPrefixMatch(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet | auth.MethodPost, auth.AuthDeviceCert, false},
-		{"/edev/1", auth.MethodGet | auth.MethodPut, auth.AuthDeviceCert, true},
+		{"/edev", auth.MethodGet | auth.MethodPost, auth.AuthDeviceCert},
+		{"/edev/1", auth.MethodGet | auth.MethodPut, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -101,7 +101,7 @@ func TestACLLongestPrefixMatch(t *testing.T) {
 // and "/edevx" is not under the "/edev" rule.
 func TestACLNoMatchingRuleIsRefused(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet, auth.AuthDeviceCert},
 	}
 	for _, path := range []string{"/unknown", "/edevx", "/"} {
 		for _, kind := range []string{"no TLS", "device cert"} {

@@ -444,3 +444,22 @@ func TestRootElement(t *testing.T) {
 		})
 	}
 }
+
+// TestParseLinksActiveListExpectsDERControlList pins the one link whose
+// resource root is not its name minus "Link", and that the plain rule still
+// holds beside it.
+func TestParseLinksActiveListExpectsDERControlList(t *testing.T) {
+	body := []byte(`<DERProgram xmlns="urn:ieee:std:2030.5:ns" href="/p">` +
+		`<ActiveDERControlListLink href="/p/actderc" all="0"/>` +
+		`<DERControlListLink href="/p/derc" all="0"/></DERProgram>`)
+	got := parseLinks(body, "/p")
+	if len(got) != 2 {
+		t.Fatalf("got %d links, want 2", len(got))
+	}
+	if got[0].href != "/p/actderc" || got[0].expectedRoot != "DERControlList" {
+		t.Errorf("active link = %+v, want root DERControlList", got[0])
+	}
+	if got[1].href != "/p/derc" || got[1].expectedRoot != "DERControlList" {
+		t.Errorf("control link = %+v, want root DERControlList", got[1])
+	}
+}

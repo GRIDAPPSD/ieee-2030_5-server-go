@@ -1,0 +1,56 @@
+# #1220: attach a Windows zip of sep2server and its SHA256SUMS to a release.
+# Releases are cut by hand (RELEASING.md section 11); this workflow only
+# uploads to the release that was published. It never creates or edits one.
+# Re-run for an existing release: gh workflow run release-windows.yml -f tag=vX.Y.Z
+name: release-windows
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to attach the Windows zip to (vX.Y.Z)'
+        required: true
+        type: string
+
+permissions: {}
+
+# One run per tag at a time; a queued run waits instead of being cancelled.
+concurrency:
+  group: release-windows-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  windows-zip:
+    name: Build and attach the Windows zip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the zip and checksums
+        run: scripts/package-windows-zip.sh "$TAG" "$RUNNER_TEMP/dist"
+
+      - name: Verify the checksum before upload
+        run: cd "$RUNNER_TEMP/dist" && sha256sum -c SHA256SUMS
+
+      - name: Attach to the release
+        # Never replaces a published asset: see scripts/attach-windows-zip.sh.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/attach-windows-zip.sh "$TAG" "$RUNNER_TEMP/dist" "$GITHUB_REPOSITORY"

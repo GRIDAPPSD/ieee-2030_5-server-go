@@ -16,6 +16,11 @@ on:
 
 permissions: {}
 
+# One run per tag at a time; a queued run waits instead of being cancelled.
+concurrency:
+  group: release-windows-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   windows-zip:
     name: Build and attach the Windows zip
@@ -25,18 +30,18 @@ jobs:
       contents: write
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
           persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Build the zip and checksums
         run: scripts/package-windows-zip.sh "$TAG" "$RUNNER_TEMP/dist"
@@ -45,5 +50,7 @@ jobs:
         run: cd "$RUNNER_TEMP/dist" && sha256sum -c SHA256SUMS
 
       - name: Attach to the release
-        # --clobber lets a re-run replace the assets of the same tag.
-        run: gh release upload "$TAG" "$RUNNER_TEMP/dist/"*.zip "$RUNNER_TEMP/dist/SHA256SUMS" --clobber --repo "$GITHUB_REPOSITORY"
+        # Never replaces a published asset: see scripts/attach-windows-zip.sh.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/attach-windows-zip.sh "$TAG" "$RUNNER_TEMP/dist" "$GITHUB_REPOSITORY"

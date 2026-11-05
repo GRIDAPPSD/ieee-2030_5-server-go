@@ -25,7 +25,10 @@ writes into SEP2_CERT_DIR (or %USERPROFILE%\tls):
   sep2server.exe certs generate-admin
   sep2server.exe certs generate-device --hw-serial INV-001 --name device
 
-generate-ca writes the CA private key, so keep that directory private.
+generate-ca writes the CA private key, so keep that directory private. To
+limit it to your own account (replace the path if you set SEP2_CERT_DIR):
+
+  icacls "%USERPROFILE%\tls" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"
 
 Run
 ---

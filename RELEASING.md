@@ -764,8 +764,8 @@ form an impression of the diff.
 claims.** `test/conformance/wadl`, gated by `SEP2_WADL_PATH` (section 6), boots
 the server and sweeps the addresses the normative WADL declares.
 `TestWADLConformanceSweep` reports the row-by-row verdicts and
-`TestMandatoryRouteCoverageRatchet` pins the count of unrouted mandatory
-methods as a ceiling. Any claim of the form "route X is served now", "N routes
+`TestMethodModePolicyRatchet` pins the count of methods outside the method-mode
+policy as a ceiling. Any claim of the form "route X is served now", "N routes
 were mounted" or "this release narrows the conformance gap" is checked against
 a sweep the reviewer ran, not against the diff:
 

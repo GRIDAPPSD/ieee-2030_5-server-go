@@ -9,18 +9,40 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// mandatoryUnroutedCeiling is the number of Mandatory (wx:mode="M") methods
-// the sweep does not find at a routed handler: methods answered by no route,
-// plus methods of a resource no link from /dcap leads to, which are not probed.
+// outsidePolicyCeiling is the number of methods outside the method-mode policy
+// (policy.go): Mandatory and Optional methods that are not conformant, Deprecated
+// methods answering anything but 405 or conformant, and Error methods answering
+// anything but 400 or 405. Methods of a resource the crawl did not reach are not
+// probed and count as outside.
 //
-// It is a RATCHET, not a target. The conformance gap it records is real and
-// tracked; pinning it here keeps the gap from widening unnoticed while route
-// ownership moves between core and this repo. Lower it whenever a fix beats
-// it: TestMandatoryRouteCoverageRatchet logs the new value to use.
+// It is a RATCHET, not a target. The gap it records is real and tracked; pinning
+// it keeps the gap from widening unnoticed. Lower it whenever a fix beats it:
+// TestMethodModePolicyRatchet logs the new value to use.
 //
 // Measured against the server csiptest boots, with the route set core's
 // assembly registers, on 2026-11-05.
-const mandatoryUnroutedCeiling = 190
+const outsidePolicyCeiling = 455
+
+// outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
+// mode cannot hide behind a fall in another. The values sum to the total.
+var outsidePolicyByMode = map[wadl.Mode]int{
+	wadl.ModeMandatory:  195,
+	wadl.ModeOptional:   64,
+	wadl.ModeDeprecated: 47,
+	wadl.ModeError:      149,
+}
+
+// The manager-only writes (restrictedWrites) the sweep reaches are probed as the
+// ordinary device. restrictedProbedFloor is how many it reaches, and
+// restrictedNotForbiddenCeiling is how many of those the device is not refused
+// with a 403 from an authority check. The server has no such check yet, so every
+// probed pair is not refused; the ceiling falls to zero, and is then an equality,
+// as the check lands. The unreached remainder of the declared writes is not
+// probed and sits in neither number.
+const (
+	restrictedProbedFloor         = 5
+	restrictedNotForbiddenCeiling = 5
+)
 
 // notReachedCeiling is the number of WADL resources with a Mandatory or Optional
 // method that the crawl from /dcap misses though the schema names a link for
@@ -58,6 +80,7 @@ func bootTarget(t *testing.T, links *wadl.LinkSchema) *wadl.Target {
 		MountedPatterns: srv.MountedPatterns,
 		Links:           links,
 		Stores:          srv.Stores,
+		ManagerClient:   srv.NewManagerClient(t),
 	}
 }
 
@@ -136,43 +159,92 @@ func TestWADLConformanceSweep(t *testing.T) {
 	}
 }
 
-// TestMandatoryRouteCoverageRatchet keeps the mandatory-method gap from
-// widening without failing on the gap that exists today.
+// TestMethodModePolicyRatchet keeps the count of methods outside the method-mode
+// policy from widening without failing on the gap that exists today.
 //
 // The count is a ceiling, not an equality: a fix that lowers it passes, and
-// the test says so in its failure message when the ceiling is beaten by
-// enough to be worth re-pinning. A regression that raises it fails.
+// the test says so when the ceiling is beaten and worth re-pinning. A regression
+// that raises it fails.
 //
-// This is a count, deliberately not a list. A committed list of which
-// mandatory routes are unrouted would be a partial transcription of the
-// WADL, which is not distributed with this project.
-func TestMandatoryRouteCoverageRatchet(t *testing.T) {
+// This is a count, deliberately not a list. A committed list of which methods
+// are outside the policy would be a partial transcription of the WADL, which is
+// not distributed with this project.
+func TestMethodModePolicyRatchet(t *testing.T) {
 	model := wadl.MustLoadModel(t)
-	target := bootTarget(t, wadl.SchemaForTest(t))
+	res := wadl.Sweep(bootTarget(t, wadl.SchemaForTest(t)), model)
 
-	res := wadl.Sweep(target, model)
+	outside := res.OutsidePolicy(model)
+	for _, line := range wadl.PolicyBreakdown(outside) {
+		t.Log("outside policy: " + line)
+	}
+	t.Logf("methods outside the method-mode policy: %d of %d declared", len(outside), len(model.Methods))
 
-	unrouted := res.CountMode(wadl.ModeMandatory, wadl.VerdictUnrouted) +
-		res.NotReachedMethods(model, wadl.ModeMandatory)
-	total := 0
-	for _, m := range model.Methods {
-		if m.Mode == wadl.ModeMandatory {
-			total++
+	if len(outside) > outsidePolicyCeiling {
+		t.Errorf("methods outside the method-mode policy = %d, which exceeds the ceiling of %d: "+
+			"a route or a link that used to be served is gone, or a method now answers outside its mode",
+			len(outside), outsidePolicyCeiling)
+	}
+	if len(outside) < outsidePolicyCeiling {
+		t.Logf("methods outside the method-mode policy = %d, below the ceiling of %d; "+
+			"lower outsidePolicyCeiling to %d to lock the improvement in",
+			len(outside), outsidePolicyCeiling, len(outside))
+	}
+
+	byMode := map[wadl.Mode]int{}
+	for _, row := range outside {
+		byMode[row.Mode]++
+	}
+	for mode, ceiling := range outsidePolicyByMode {
+		if byMode[mode] > ceiling {
+			t.Errorf("methods outside the policy in mode %s = %d, which exceeds its ceiling of %d",
+				mode, byMode[mode], ceiling)
+		}
+		if byMode[mode] < ceiling {
+			t.Logf("mode %s = %d, below its ceiling of %d; lower outsidePolicyByMode[%s] to lock the improvement in",
+				mode, byMode[mode], ceiling, mode)
 		}
 	}
-
-	t.Logf("mandatory methods: %d declared, %d unrouted or not reached, %d reached a handler",
-		total, unrouted, total-unrouted)
-
-	if unrouted > mandatoryUnroutedCeiling {
-		t.Errorf("unrouted or not reached mandatory methods = %d, which exceeds the ceiling of %d: "+
-			"a route or a link that used to be served is gone",
-			unrouted, mandatoryUnroutedCeiling)
+	for mode, n := range byMode {
+		if _, pinned := outsidePolicyByMode[mode]; !pinned {
+			t.Errorf("%d methods outside the policy in mode %q, which has no ceiling in outsidePolicyByMode", n, mode)
+		}
 	}
-	if unrouted < mandatoryUnroutedCeiling {
-		t.Logf("unrouted or not reached mandatory methods = %d, below the ceiling of %d; "+
-			"lower mandatoryUnroutedCeiling to %d to lock the improvement in",
-			unrouted, mandatoryUnroutedCeiling, unrouted)
+}
+
+// TestRestrictedWritesForbidDevice sweeps with a manager certificate and shows what
+// an ordinary device is answered on each write the server restricts to a manager.
+// The manager's own answer is scored by the policy ratchet like any other row.
+func TestRestrictedWritesForbidDevice(t *testing.T) {
+	model := wadl.MustLoadModel(t)
+	res := wadl.Sweep(bootTarget(t, wadl.SchemaForTest(t)), model)
+
+	asManager := len(res.Filter(func(r wadl.Row) bool { return r.AsManager }))
+	probed := len(res.Filter(func(r wadl.Row) bool { return r.Phase == wadl.PhaseRestricted }))
+	if asManager == 0 || asManager != probed {
+		t.Fatalf("%d restricted writes were made as the manager and %d probed as the device: "+
+			"the two must pair, or the 403 assertion is vacuous", asManager, probed)
+	}
+
+	notForbidden := res.DeviceProbedNotForbidden()
+	t.Logf("restricted writes: %d declared, %d probed as manager and device, %d of those without a device 403",
+		wadl.RestrictedWrites(model), probed, notForbidden)
+
+	if probed < restrictedProbedFloor {
+		t.Errorf("restricted writes probed = %d, below the floor of %d: a pair the sweep used to reach is no longer probed",
+			probed, restrictedProbedFloor)
+	}
+	if probed > restrictedProbedFloor {
+		t.Logf("restricted writes probed = %d, above the floor of %d; raise restrictedProbedFloor to %d to lock the new reach in",
+			probed, restrictedProbedFloor, probed)
+	}
+	if notForbidden > restrictedNotForbiddenCeiling {
+		t.Errorf("probed restricted writes without a device 403 = %d, which exceeds the ceiling of %d",
+			notForbidden, restrictedNotForbiddenCeiling)
+	}
+	if notForbidden < restrictedNotForbiddenCeiling {
+		t.Logf("probed restricted writes without a device 403 = %d, below the ceiling of %d; "+
+			"lower restrictedNotForbiddenCeiling to %d to lock the improvement in",
+			notForbidden, restrictedNotForbiddenCeiling, notForbidden)
 	}
 }
 

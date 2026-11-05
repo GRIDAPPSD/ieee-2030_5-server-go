@@ -188,6 +188,12 @@ type BootedServer struct {
 
 	client *Client // memoized; constructed lazily by Client()
 
+	// rootPool, caCertPEM and caKeyPEM are the ephemeral CA, kept so a test can
+	// mint a further identity this server trusts (NewManagerClient).
+	rootPool  *x509.CertPool
+	caCertPEM []byte
+	caKeyPEM  []byte
+
 	// internal fields below
 	listener net.Listener
 	srv      *http.Server
@@ -259,7 +265,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	if cfg.clientCert != nil {
 		clientCert = *cfg.clientCert
 	} else {
-		clientCert = mustGenerateDeviceCert(t, caCertPEM, caKeyPEM)
+		clientCert = mustGenerateDeviceCert(t, caCertPEM, caKeyPEM, "CSIPTEST-DEVICE-001")
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -360,16 +366,33 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		_ = listener.Close()
 		t.Fatal("csiptest: append root CA to pool")
 	}
+	booted.rootPool = rootPool
+	booted.caCertPEM = caCertPEM
+	booted.caKeyPEM = caKeyPEM
+	httpClient := booted.HTTPClientFor(clientCert)
+	booted.client = NewClient(httpClient, baseURL)
+
+	t.Cleanup(func() {
+		booted.shutdown(t, serveErr)
+	})
+
+	return booted
+}
+
+// HTTPClientFor returns an http.Client that presents cert and trusts this
+// server's CA. The server offers CCM-8 only, so the client dials through the
+// fork, as Client() does.
+func (b *BootedServer) HTTPClientFor(cert tls.Certificate) *http.Client {
 	clientTLSCfg := &gotls.Config{
-		Certificates:     []gotls.Certificate{toCCMCertificate(clientCert)},
-		RootCAs:          rootPool,
+		Certificates:     []gotls.Certificate{toCCMCertificate(cert)},
+		RootCAs:          b.rootPool,
 		ServerName:       "127.0.0.1",
 		MinVersion:       gotls.VersionTLS12,
 		MaxVersion:       gotls.VersionTLS12,
 		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
 		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
 	}
-	httpClient := &http.Client{
+	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
@@ -378,13 +401,31 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 			},
 		},
 	}
-	booted.client = NewClient(httpClient, baseURL)
+}
 
-	t.Cleanup(func() {
-		booted.shutdown(t, serveErr)
-	})
-
-	return booted
+// NewManagerClient mints a second device certificate from this server's CA,
+// records it as the manager of a third, absent device, and returns a client
+// presenting it. It is the manager identity a test uses to make writes the
+// server restricts to a manager, next to Client() as the ordinary device.
+//
+// The managed device is not the one Client() presents: the router refuses the
+// managed side of a pair on every route, so pairing the two would turn the
+// ordinary device's every request into a 403 that says nothing about authority.
+// The pair goes through Stores.EndDeviceManagers, the store the protocol router
+// consults, so the server sees a real manager.
+func (b *BootedServer) NewManagerClient(t *testing.T) *http.Client {
+	t.Helper()
+	if b.Stores == nil || b.Stores.EndDeviceManagers == nil {
+		t.Fatal("csiptest: NewManagerClient needs Stores.EndDeviceManagers")
+	}
+	cert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGER-001")
+	managedCert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGED-001")
+	_, managed := deriveServerIdentity(t, managedCert.Certificate)
+	_, managerLFDI := deriveServerIdentity(t, cert.Certificate)
+	if err := b.Stores.EndDeviceManagers.Assign(context.Background(), managerLFDI, managed); err != nil {
+		t.Fatalf("csiptest: assign manager %s of device %s: %v", managerLFDI, managed, err)
+	}
+	return b.HTTPClientFor(cert)
 }
 
 // shutdown closes the http.Server, waits for the serve goroutine to
@@ -452,7 +493,7 @@ func mustGenerateServerPKI(t *testing.T) (caCertPEM, caKeyPEM, serverCertPEM, se
 // device leaf signed by the supplied CA. The cert carries the
 // IEEE-2030.5 critical HardwareModuleName SAN so the server's verifier
 // hook accepts it. t.Fatal on any failure.
-func mustGenerateDeviceCert(t *testing.T, caCertPEM, caKeyPEM []byte) tls.Certificate {
+func mustGenerateDeviceCert(t *testing.T, caCertPEM, caKeyPEM []byte, hwSerial string) tls.Certificate {
 	t.Helper()
 	caCert, err := certs.ParseCertificatePEM(caCertPEM)
 	if err != nil {
@@ -464,7 +505,7 @@ func mustGenerateDeviceCert(t *testing.T, caCertPEM, caKeyPEM []byte) tls.Certif
 	}
 	devCertPEM, devKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "CSIPTEST-DEVICE-001",
+		HWSerialNum: hwSerial,
 	})
 	if err != nil {
 		t.Fatalf("csiptest: generate device cert: %v", err)

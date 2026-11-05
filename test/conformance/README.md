@@ -171,6 +171,11 @@ wrong under any reading of the standard (a 5xx, a transport failure). It does
 **not** fail on every non-conformant row, because the conformance gap is a
 known, tracked body of work, and a test that is red by design gets muted.
 
-The gap is reported in full, and `TestMandatoryRouteCoverageRatchet` keeps it
-from widening: it pins a ceiling on the number of Mandatory methods that are
-unrouted. A fix that lowers the number passes and logs the new value to pin.
+The gap is reported in full, and `TestMethodModePolicyRatchet` keeps it from
+widening: it pins a ceiling on the number of methods outside the method-mode
+policy (Mandatory and Optional must be conformant, Deprecated conformant or 405,
+Error 400 or 405). A fix that lowers the number passes and logs the new value to
+pin. `TestRestrictedWritesForbidDevice` does the same for the manager-only
+writes: it pins how many of the pairs the sweep reaches an ordinary device is
+not answered 403 on, and a floor on how many it reaches. The policy ratchet also
+pins each wx:mode separately.

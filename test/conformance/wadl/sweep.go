@@ -57,33 +57,41 @@ const muxNotFoundBody = "404 page not found"
 type Verdict string
 
 const (
-	VerdictConformant       Verdict = "conformant"
-	VerdictUnrouted         Verdict = "unrouted"
-	VerdictRoutedNotFound   Verdict = "routed_not_found"
-	VerdictUnroutedUnknown  Verdict = "unrouted_indeterminate"
-	VerdictMethodRefused    Verdict = "method_refused"
-	VerdictWrongStatus      Verdict = "wrong_status"
-	VerdictWrongRespType    Verdict = "wrong_response_type"
-	VerdictWrongResType     Verdict = "wrong_resource_type"
-	VerdictForbiddenACL     Verdict = "forbidden_acl"
-	VerdictServerError      Verdict = "server_error"
-	VerdictTransportError   Verdict = "transport_error"
-	VerdictEModeAccepted    Verdict = "e_mode_accepted"
-	VerdictEMode404         Verdict = "e_mode_404"
-	VerdictMissingLocation  Verdict = "missing_required_location_header"
-	VerdictDeadLinkUnrouted Verdict = "dead_link_unrouted"
-	VerdictDeadLinkNotFound Verdict = "dead_link_not_found"
-	VerdictLocationResolves Verdict = "location_resolves"
-	VerdictLocationUnrouted Verdict = "location_unrouted"
-	VerdictLocationNotFound Verdict = "location_not_found"
-	VerdictFieldsPresent    Verdict = "fields_present"
-	VerdictFieldsMissing    Verdict = "missing_required_fields"
+	VerdictConformant      Verdict = "conformant"
+	VerdictUnrouted        Verdict = "unrouted"
+	VerdictRoutedNotFound  Verdict = "routed_not_found"
+	VerdictUnroutedUnknown Verdict = "unrouted_indeterminate"
+	VerdictMethodRefused   Verdict = "method_refused"
+	// VerdictDeprecatedRefused is a Deprecated method answered 405, which the
+	// method-mode policy accepts.
+	VerdictDeprecatedRefused Verdict = "deprecated_refused"
+	VerdictWrongStatus       Verdict = "wrong_status"
+	VerdictWrongRespType     Verdict = "wrong_response_type"
+	VerdictWrongResType      Verdict = "wrong_resource_type"
+	VerdictForbiddenACL      Verdict = "forbidden_acl"
+	VerdictServerError       Verdict = "server_error"
+	VerdictTransportError    Verdict = "transport_error"
+	VerdictEModeAccepted     Verdict = "e_mode_accepted"
+	VerdictEMode404          Verdict = "e_mode_404"
+	VerdictMissingLocation   Verdict = "missing_required_location_header"
+	VerdictDeadLinkUnrouted  Verdict = "dead_link_unrouted"
+	VerdictDeadLinkNotFound  Verdict = "dead_link_not_found"
+	VerdictLocationResolves  Verdict = "location_resolves"
+	VerdictLocationUnrouted  Verdict = "location_unrouted"
+	VerdictLocationNotFound  Verdict = "location_not_found"
+	VerdictFieldsPresent     Verdict = "fields_present"
+	VerdictFieldsMissing     Verdict = "missing_required_fields"
 	// VerdictNotReached marks a WADL resource with a Mandatory or Optional
 	// method that no link followed from /dcap led to, though the schema names a
 	// link for it. It counts as non-conformant.
 	VerdictNotReached Verdict = "not_reached"
-	VerdictSeeded     Verdict = "seeded"
-	VerdictSeedFailed Verdict = "seed_failed"
+	// VerdictDeviceForbidden and VerdictDeviceNotForbidden score the ordinary
+	// device's attempt at a manager-only write: 403 from an authority check, or
+	// anything else.
+	VerdictDeviceForbidden    Verdict = "device_forbidden"
+	VerdictDeviceNotForbidden Verdict = "device_not_forbidden"
+	VerdictSeeded             Verdict = "seeded"
+	VerdictSeedFailed         Verdict = "seed_failed"
 	// VerdictSeedFailedDirect marks a seed written straight into the stores
 	// that did not complete; Row.TransportError carries the reason.
 	VerdictSeedFailedDirect Verdict = "seed_failed_direct"
@@ -98,19 +106,24 @@ const (
 	PhaseFieldCheck Phase = "field_check"
 	PhaseWADL       Phase = "wadl"
 	PhaseLocation   Phase = "location"
+	// PhaseRestricted rows are the ordinary device's attempts at the writes the
+	// server restricts to a manager certificate.
+	PhaseRestricted Phase = "restricted"
 )
 
 // Row is one observation. Every field is either what was sent or what came
 // back; nothing here is a guess.
 type Row struct {
-	Phase      Phase   `json:"phase"`
-	ResourceID string  `json:"resource_id,omitempty"`
-	WADLPath   string  `json:"wadl_path,omitempty"`
-	Path       string  `json:"path"`
-	Method     string  `json:"method,omitempty"`
-	Mode       Mode    `json:"mode,omitempty"`
-	IDSource   string  `json:"id_source,omitempty"`
-	Verdict    Verdict `json:"verdict"`
+	Phase      Phase  `json:"phase"`
+	ResourceID string `json:"resource_id,omitempty"`
+	WADLPath   string `json:"wadl_path,omitempty"`
+	Path       string `json:"path"`
+	Method     string `json:"method,omitempty"`
+	Mode       Mode   `json:"mode,omitempty"`
+	IDSource   string `json:"id_source,omitempty"`
+	// AsManager records that the request carried the manager certificate.
+	AsManager bool    `json:"as_manager,omitempty"`
+	Verdict   Verdict `json:"verdict"`
 
 	Status      int    `json:"status,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
@@ -174,6 +187,11 @@ type Target struct {
 	// Client performs the requests. For a live mTLS server this carries the
 	// client certificate; for an in-process router it is the httptest client.
 	Client *http.Client
+	// ManagerClient presents a manager certificate. When set, the writes the
+	// server restricts to a manager (restrictedWrite) are made with it, and the
+	// ordinary Client's attempt at each is recorded as a restricted row. Nil
+	// sends every request with Client and records no restricted rows.
+	ManagerClient *http.Client
 	// MountedPatterns is the router's own enumeration of the patterns it
 	// registered, as returned by assembly.BuildProtocolRouter. Supplying it
 	// enables the second, independent unrouted discriminator. Empty is
@@ -205,6 +223,10 @@ type response struct {
 const maxBody = 8 << 20
 
 func (t *Target) do(method, path string, body []byte) response {
+	return t.doWith(t.Client, method, path, body)
+}
+
+func (t *Target) doWith(client *http.Client, method, path string, body []byte) response {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -218,7 +240,7 @@ func (t *Target) do(method, path string, body []byte) response {
 		req.Header.Set("Content-Type", "application/sep+xml")
 	}
 
-	resp, err := t.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		// Surfaced as a row, never swallowed: a transport failure is itself
 		// an observation about the server under test.
@@ -480,6 +502,9 @@ func classify(m Method, concretePath string, r response, root string, muxByPath 
 	if r.status == http.StatusMethodNotAllowed {
 		if m.Mode == ModeError {
 			return VerdictConformant
+		}
+		if m.Mode == ModeDeprecated {
+			return VerdictDeprecatedRefused
 		}
 		return VerdictMethodRefused
 	}
@@ -943,7 +968,15 @@ func (t *Target) phaseWADL(m *Model, discovered []string, reached *crawl, rows *
 			body = []byte(`<` + meth.RequestElements[0] + ` xmlns="` + sepNS + `"/>`)
 		}
 
-		r := t.do(meth.Verb, path, body)
+		client := t.Client
+		asManager := false
+		if t.ManagerClient != nil && restrictedWrite(meth) {
+			// The device goes first: a manager DELETE that succeeded would
+			// leave the device a 404 that says nothing about authority.
+			t.probeDeviceOnRestricted(rows, meth, path, body)
+			client, asManager = t.ManagerClient, true
+		}
+		r := t.doWith(client, meth.Verb, path, body)
 		root := rootElement(r.body)
 		if meth.Verb == http.MethodGet && (r.status == http.StatusNotFound || isRouteRefusal(r)) {
 			muxByPath[path] = isUnrouted(r)
@@ -956,6 +989,7 @@ func (t *Target) phaseWADL(m *Model, discovered []string, reached *crawl, rows *
 			WADLPath:         meth.Path,
 			Path:             path,
 			IDSource:         idSource,
+			AsManager:        asManager,
 			Method:           meth.Verb,
 			Mode:             meth.Mode,
 			DeclaredStatuses: meth.DeclaredStatuses,

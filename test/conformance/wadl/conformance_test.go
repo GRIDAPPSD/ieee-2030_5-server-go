@@ -18,8 +18,8 @@ import (
 // it: TestMandatoryRouteCoverageRatchet logs the new value to use.
 //
 // Measured against the server csiptest boots, with the route set core's
-// assembly registers, on 2026-08-02.
-const mandatoryUnroutedCeiling = 192
+// assembly registers, on 2026-11-04.
+const mandatoryUnroutedCeiling = 179
 
 // EnvArtifact names an optional file to write the full row-by-row sweep to.
 //
@@ -84,13 +84,22 @@ func TestWADLConformanceSweep(t *testing.T) {
 		t.Fatal("the wire evidence and the router's route enumeration disagree, so the routing verdicts in this run cannot be trusted")
 	}
 
-	// 2. Transport failures. A request that never completed is not a
+	// 2. Seed failures. A refused seed leaves the subtree hanging off it
+	//    unwalked, which shrinks the sweep without failing anything else.
+	for _, row := range res.Filter(func(r wadl.Row) bool {
+		return r.Phase == wadl.PhaseSeed && r.Verdict != wadl.VerdictSeeded
+	}) {
+		t.Errorf("seed failed: %s %s (%s) returned status %d, verdict %q",
+			row.Method, row.Path, row.Element, row.Status, row.Verdict)
+	}
+
+	// 3. Transport failures. A request that never completed is not a
 	//    conformance observation, it is a broken run.
 	for _, row := range res.Filter(func(r wadl.Row) bool { return r.TransportError != "" }) {
 		t.Errorf("transport failure on %s %s: %s", row.Method, row.Path, row.TransportError)
 	}
 
-	// 3. Server errors. A 5xx is a defect under every wx:mode, including
+	// 4. Server errors. A 5xx is a defect under every wx:mode, including
 	//    Error mode, where the standard asks for a 400 or a 405 and never
 	//    for a panic.
 	for _, row := range res.Filter(func(r wadl.Row) bool { return r.Status >= 500 }) {

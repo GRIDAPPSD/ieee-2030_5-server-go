@@ -314,6 +314,12 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// add keyLogFile
+	keyLogFile, err := envPathOr("SEP2_TLS_KEY_LOG_FILE", "")
+	if err != nil {
+		return nil, err
+	}
+
 	// #624: SEP2_ADMIN_CLIENT_CA is read like SEP2_SERVING_CA/SEP2_DEVICE_CA
 	// (envPathOr, left empty when unset, so Config.EffectiveAdminClientCA
 	// falls back to EffectiveServingCA). The sentinel "system" has no
@@ -395,6 +401,7 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		CertFile:        certFile,
 		KeyFile:         keyFile,
 		CAFile:          caFile,
+		KeyLogFile:      keyLogFile,
 		ServingCAFile:   servingCAFile,
 		DeviceCAFile:    deviceCAFile,
 		ExtraClientCAs:  extraClientCAs,

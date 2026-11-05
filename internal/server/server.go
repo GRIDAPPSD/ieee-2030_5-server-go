@@ -590,6 +590,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	embedCfg.Addr = cfg.Addr
 	embedCfg.CertFile = cfg.CertFile
 	embedCfg.KeyFile = cfg.KeyFile
+	embedCfg.KeyLogFile = cfg.KeyLogFile
 	// #622: the protocol listener's ClientCAs pool is the DEVICE CA role,
 	// not the serving one - it verifies DEVICES, never this server's own
 	// leaf. EffectiveDeviceCA falls back to CAFile, so an unsplit

@@ -98,8 +98,9 @@ func TestWADLConformanceSweep(t *testing.T) {
 
 	// 1b. The crawl itself. A walk from /dcap that reaches no resource has
 	//     found nothing, and every row after it measures sample paths only.
-	if res.CrawlReached == 0 {
-		t.Fatal("the link crawl from /dcap reached no WADL resource, so the sweep scored sample paths and not what a client finds")
+	if res.CrawlReached == 0 || res.LinksFollowed() == 0 {
+		t.Fatalf("the link crawl from /dcap followed %d links and reached %d WADL resources, so the sweep scored sample paths and not what a client finds",
+			res.LinksFollowed(), res.CrawlReached)
 	}
 
 	// 2. Seed failures. A refused seed leaves the subtree hanging off it

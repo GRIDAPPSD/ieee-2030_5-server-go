@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -184,5 +185,82 @@ func TestSweepCrawlReachingNothingReportsZero(t *testing.T) {
 	}
 	if got := res.Count(PhaseWADL, VerdictNotReached); got != 2 {
 		t.Errorf("not_reached rows = %d, want 2 (Thing and ThingList)", got)
+	}
+}
+
+// linkServer serves the given bodies by path and counts every GET per path.
+func linkServer(t *testing.T, bodies map[string]string) (*Target, func(string) int) {
+	t.Helper()
+	var mu sync.Mutex
+	hits := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, ok := bodies[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			hits[r.URL.Path]++
+			mu.Unlock()
+		}
+		_, _ = w.Write([]byte(b))
+	}))
+	t.Cleanup(srv.Close)
+	return &Target{BaseURL: srv.URL, Client: srv.Client()}, func(p string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return hits[p]
+	}
+}
+
+// A diamond (/c advertised by both /a and /b) and a cycle (/c links back to /a
+// and /dcap) must each fetch every resource once in the discovery phase. The
+// diamond fails if the pop-time guard in phaseDiscovery goes; the cycle fails
+// if both guards go.
+func TestDiscoveryFetchesEachResourceOnceAcrossADiamondAndACycle(t *testing.T) {
+	ns := ` xmlns="urn:ieee:std:2030.5:ns"`
+	tgt, _ := linkServer(t, map[string]string{
+		"/dcap": `<DeviceCapability` + ns + ` href="/dcap"><ALink href="/a"/><BLink href="/b"/></DeviceCapability>`,
+		"/a":    `<A` + ns + ` href="/a"><CLink href="/c"/></A>`,
+		"/b":    `<B` + ns + ` href="/b"><CLink href="/c"/></B>`,
+		"/c":    `<C` + ns + ` href="/c"><ALink href="/a"/><DCapLink href="/dcap"/></C>`,
+	})
+
+	res := Sweep(tgt, &Model{})
+
+	got := map[string]int{}
+	for _, r := range res.Rows {
+		if r.Phase == PhaseDiscovery {
+			got[r.Path]++
+		}
+	}
+	want := map[string]int{"/dcap": 1, "/a": 1, "/b": 1, "/c": 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("discovery rows per path = %v, want %v", got, want)
+	}
+	if n := res.LinksFollowed(); n != 3 {
+		t.Errorf("LinksFollowed = %d, want 3 (/a, /b, /c)", n)
+	}
+}
+
+// With the model naming /dcap itself, a /dcap that carries no parsable link
+// still counts as one reached resource; only LinksFollowed shows the crawl
+// went nowhere.
+func TestCrawlThatFollowsNoLinkIsVisibleDespiteReachingDcap(t *testing.T) {
+	tgt, _ := linkServer(t, map[string]string{
+		"/dcap": `<DeviceCapability xmlns="urn:ieee:std:2030.5:ns" href="/dcap"/>`,
+	})
+	m := &Model{Methods: []Method{
+		{ResourceID: "DeviceCapability", Path: "/dcap", Verb: "GET", Mode: ModeMandatory, DeclaredElements: []string{"DeviceCapability"}},
+	}}
+
+	res := Sweep(tgt, m)
+
+	if res.CrawlReached != 1 {
+		t.Fatalf("CrawlReached = %d, want 1 (/dcap alone): the precondition of this test", res.CrawlReached)
+	}
+	if n := res.LinksFollowed(); n != 0 {
+		t.Errorf("LinksFollowed = %d, want 0", n)
 	}
 }

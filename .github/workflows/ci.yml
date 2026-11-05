@@ -125,6 +125,11 @@ jobs:
         with:
           wadl-xz-b64: ${{ secrets.SEP2_WADL_XZ_B64 }}
           required: 'false'
+          # sep.xsd for the link crawl, supplied by the same action. Empty on
+          # both halves leaves SEP2_SCHEMA_REQUIRED unset and the run green;
+          # exactly one half fails. The sweep then runs without the schema.
+          schema-xz-b64-0: ${{ secrets.SEP2_SCHEMA_XZ_B64_0 }}
+          schema-xz-b64-1: ${{ secrets.SEP2_SCHEMA_XZ_B64_1 }}
 
       - name: Confirm the WADL gate is armed
         if: steps.wadl.outputs.armed == 'true'

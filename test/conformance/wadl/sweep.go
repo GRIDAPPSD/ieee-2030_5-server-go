@@ -155,6 +155,18 @@ type Results struct {
 	CrawlReached int
 }
 
+// LinksFollowed is how many discovery fetches were advertised by a link in a
+// body, not seeded as the root. Zero means the crawl followed nothing from /dcap.
+func (r *Results) LinksFollowed() int {
+	n := 0
+	for _, row := range r.Rows {
+		if row.Phase == PhaseDiscovery && row.AdvertisedBy != crawlRoot {
+			n++
+		}
+	}
+	return n
+}
+
 // Target is the server under test.
 type Target struct {
 	// BaseURL is the scheme, host, and port, with no trailing slash.
@@ -800,9 +812,12 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 
 const maxDiscoveryURLs = 600
 
+// crawlRoot is the advertisedBy of the first link, which no resource advertises.
+const crawlRoot = "(root)"
+
 func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][]byte) ([]string, *crawl) {
 	seen := map[string]bool{}
-	queue := []link{{href: "/dcap", expectedRoot: "DeviceCapability", advertisedBy: "(root)"}}
+	queue := []link{{href: "/dcap", expectedRoot: "DeviceCapability", advertisedBy: crawlRoot}}
 	var discovered []string
 	reached := newCrawl()
 

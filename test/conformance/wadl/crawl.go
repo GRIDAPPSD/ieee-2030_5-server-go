@@ -121,7 +121,7 @@ func SchemaForTest(t *testing.T) *LinkSchema {
 	case err == nil:
 		return s
 	case errors.Is(err, ErrSchemaNotFound):
-		if required, perr := schemaRequired(); perr != nil {
+		if required, perr := envRequired(EnvSchemaRequired); perr != nil {
 			t.Fatalf("schema gate configuration: %v", perr)
 		} else if required {
 			t.Fatalf("%s is set but no schema is available: %v", EnvSchemaRequired, err)
@@ -132,20 +132,6 @@ func SchemaForTest(t *testing.T) *LinkSchema {
 		t.Fatalf("load IEEE 2030.5 schema: %v", err)
 	}
 	return nil
-}
-
-func schemaRequired() (bool, error) {
-	raw := strings.TrimSpace(os.Getenv(EnvSchemaRequired))
-	if raw == "" {
-		return false, nil
-	}
-	switch strings.ToLower(raw) {
-	case "1", "t", "true":
-		return true, nil
-	case "0", "f", "false":
-		return false, nil
-	}
-	return false, fmt.Errorf("%s=%q is not a boolean: use 1 or 0", EnvSchemaRequired, raw)
 }
 
 func attrValue(attrs []xml.Attr, local string) string {

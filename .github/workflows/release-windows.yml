@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
@@ -54,3 +56,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/attach-windows-zip.sh "$TAG" "$RUNNER_TEMP/dist" "$GITHUB_REPOSITORY"
+
+      # After the attach step on purpose: a rebuilt zip that differs from the
+      # published one fails above, so a different zip is never attested.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/dist/sep2server-*-windows-amd64.zip
+            ${{ runner.temp }}/dist/SHA256SUMS

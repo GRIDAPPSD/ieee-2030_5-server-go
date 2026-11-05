@@ -590,7 +590,12 @@ published one (the job then uploads nothing) or the job fails. Runs for one
 tag are serialized. If it failed, or a release predates it, re-run it with
 `gh workflow run release-windows.yml -f tag=vX.Y.Z`. The binary is unsigned. To verify a download, put both assets in one directory and run
 `sha256sum -c SHA256SUMS` (on Windows: `certutil -hashfile <zip> SHA256` and
-compare with the line in `SHA256SUMS`). Add this to the section 12 check:
+compare with the line in `SHA256SUMS`). The job also attests build provenance
+for both files; to check that a zip was built by this workflow from the tag's
+commit run `gh attestation verify <zip> -R GRIDAPPSD/ieee-2030_5-server-go`.
+A re-run that finds the zip already published attests the same digest again,
+which adds a duplicate record for the same file, never one for a different
+zip. Add this to the section 12 check:
 `gh release view vX.Y.Z --json assets -q '.assets[].name'` lists both files.
 
 **`VENDORED.md`** records material vendored into this repository from

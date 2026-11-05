@@ -78,8 +78,12 @@ const (
 	VerdictLocationNotFound Verdict = "location_not_found"
 	VerdictFieldsPresent    Verdict = "fields_present"
 	VerdictFieldsMissing    Verdict = "missing_required_fields"
-	VerdictSeeded           Verdict = "seeded"
-	VerdictSeedFailed       Verdict = "seed_failed"
+	// VerdictNotReached marks a WADL resource with a Mandatory or Optional
+	// method that no link followed from /dcap led to, though the schema names a
+	// link for it. It counts as non-conformant.
+	VerdictNotReached Verdict = "not_reached"
+	VerdictSeeded     Verdict = "seeded"
+	VerdictSeedFailed Verdict = "seed_failed"
 	// VerdictSeedFailedDirect marks a seed written straight into the stores
 	// that did not complete; Row.TransportError carries the reason.
 	VerdictSeedFailedDirect Verdict = "seed_failed_direct"
@@ -145,6 +149,22 @@ type Results struct {
 	// MountedPatterns is the router's boot-time route enumeration, when the
 	// caller supplied one.
 	MountedPatterns []string
+	// CrawlReached is how many WADL resources with a Mandatory or Optional method
+	// the walk from /dcap found. Zero means the crawl failed, however the
+	// sample-path probes scored.
+	CrawlReached int
+}
+
+// LinksFollowed is how many discovery fetches were advertised by a link in a
+// body, not seeded as the root. Zero means the crawl followed nothing from /dcap.
+func (r *Results) LinksFollowed() int {
+	n := 0
+	for _, row := range r.Rows {
+		if row.Phase == PhaseDiscovery && row.AdvertisedBy != crawlRoot {
+			n++
+		}
+	}
+	return n
 }
 
 // Target is the server under test.
@@ -160,6 +180,9 @@ type Target struct {
 	// allowed: the sweep then relies on the wire discriminator alone and
 	// says so rather than pretending to a corroboration it does not have.
 	MountedPatterns []string
+	// Links is the schema's Link fields. Nil makes the sweep strict: a resource
+	// the crawl misses is not_reached, never probed at its sample path.
+	Links *LinkSchema
 	// Stores are the stores the target serves. They are read by the seeds that
 	// write server-authored state directly; nil makes those seeds fail.
 	Stores *server.Stores
@@ -308,6 +331,8 @@ type link struct {
 	linkElement  string
 	expectedRoot string
 	advertisedBy string
+	// typeName is the element's xsi:type, which names the resource a list member is.
+	typeName string
 }
 
 // parseLinks extracts every advertised href from a response body.
@@ -335,11 +360,13 @@ func parseLinks(body []byte, sourcePath string) []link {
 		isRoot := first
 		first = false
 
-		var href string
+		var href, typeName string
 		for _, a := range se.Attr {
-			if a.Name.Local == "href" {
+			switch {
+			case a.Name.Local == "href" && href == "":
 				href = a.Value
-				break
+			case a.Name.Local == "type" && a.Name.Space == xsiNS:
+				typeName = stripNS(a.Value)
 			}
 		}
 		if href == "" || isRoot {
@@ -356,6 +383,7 @@ func parseLinks(body []byte, sourcePath string) []link {
 			linkElement:  name,
 			expectedRoot: expected,
 			advertisedBy: sourcePath,
+			typeName:     typeName,
 		})
 	}
 	return out
@@ -784,10 +812,14 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 
 const maxDiscoveryURLs = 600
 
-func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][]byte) []string {
+// crawlRoot is the advertisedBy of the first link, which no resource advertises.
+const crawlRoot = "(root)"
+
+func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][]byte) ([]string, *crawl) {
 	seen := map[string]bool{}
-	queue := []link{{href: "/dcap", expectedRoot: "DeviceCapability", advertisedBy: "(root)"}}
+	queue := []link{{href: "/dcap", expectedRoot: "DeviceCapability", advertisedBy: crawlRoot}}
 	var discovered []string
+	reached := newCrawl()
 
 	for len(queue) > 0 && len(seen) < maxDiscoveryURLs {
 		l := queue[0]
@@ -836,6 +868,8 @@ func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][
 		bodies[l.href] = r.body
 
 		if r.status == http.StatusOK {
+			reached.add(l.resourceID(), l.href)
+			reached.add(rootTypeName(r.body), l.href)
 			for _, nxt := range parseLinks(r.body, l.href) {
 				if !seen[nxt.href] && strings.HasPrefix(nxt.href, "/") {
 					queue = append(queue, nxt)
@@ -843,10 +877,10 @@ func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][
 			}
 		}
 	}
-	return discovered
+	return discovered, reached
 }
 
-func (t *Target) phaseWADL(m *Model, discovered []string, rows *[]Row, ri *routeIndex) {
+func (t *Target) phaseWADL(m *Model, discovered []string, reached *crawl, rows *[]Row, ri *routeIndex) (reachedResources int) {
 	// GET before HEAD before the mutating methods. GET-first is load bearing:
 	// HEAD's 404 classification borrows the body evidence only a GET supplies.
 	// Mutating methods run last so discovery-derived ids are still valid when
@@ -878,9 +912,31 @@ func (t *Target) phaseWADL(m *Model, discovered []string, rows *[]Row, ri *route
 		return false
 	})
 
+	// A Mandatory or Optional method is scored where the crawl found its resource.
+	// A resource the crawl missed is reported not_reached and not probed, unless no
+	// schema link names it, which leaves its sample path the only way to find it.
+	states, notReached := resourceStates(m, reached, t.Links)
+	*rows = append(*rows, notReached...)
+	for _, st := range states {
+		if st == stateReached {
+			reachedResources++
+		}
+	}
+
 	muxByPath := map[string]bool{}
 	for _, meth := range ordered {
 		path, idSource := concretize(meth.Path, discovered)
+		if requirable(meth.Mode) {
+			switch states[keyOf(meth)] {
+			case stateNotReached:
+				continue
+			case stateReached:
+				path, _ = reached.href(meth.ResourceID)
+				idSource = "crawled"
+			case stateSamplePath:
+				idSource = "sample_path"
+			}
+		}
 
 		var body []byte
 		if (meth.Verb == http.MethodPut || meth.Verb == http.MethodPost) && len(meth.RequestElements) > 0 {
@@ -932,6 +988,7 @@ func (t *Target) phaseWADL(m *Model, discovered []string, rows *[]Row, ri *route
 			})
 		}
 	}
+	return reachedResources
 }
 
 var schemeAuthority = regexp.MustCompile(`^https?://[^/]+`)
@@ -990,7 +1047,7 @@ func Sweep(t *Target, m *Model) *Results {
 	minted := t.phaseSeed(&res.Rows, ri)
 
 	bodies := map[string][]byte{}
-	discovered := t.phaseDiscovery(&res.Rows, ri, bodies)
+	discovered, reached := t.phaseDiscovery(&res.Rows, ri, bodies)
 	for _, h := range minted {
 		if !containsStr(discovered, h) {
 			discovered = append(discovered, h)
@@ -1008,7 +1065,7 @@ func Sweep(t *Target, m *Model) *Results {
 		checkRequiredFields(p, bodies[p], &res.Rows)
 	}
 
-	t.phaseWADL(m, discovered, &res.Rows, ri)
+	res.CrawlReached = t.phaseWADL(m, discovered, reached, &res.Rows, ri)
 	return res
 }
 
@@ -1030,6 +1087,25 @@ func (r *Results) CountMode(mode Mode, v Verdict) int {
 	n := 0
 	for _, row := range r.Rows {
 		if row.Phase == PhaseWADL && row.Mode == mode && row.Verdict == v {
+			n++
+		}
+	}
+	return n
+}
+
+// NotReachedMethods counts the model's methods of one mode that belong to a
+// resource the crawl did not reach. Those methods are not probed, so no
+// per-method row carries them.
+func (r *Results) NotReachedMethods(m *Model, mode Mode) int {
+	missed := map[resKey]bool{}
+	for _, row := range r.Rows {
+		if row.Phase == PhaseWADL && row.Verdict == VerdictNotReached {
+			missed[resKey{row.ResourceID, row.WADLPath}] = true
+		}
+	}
+	n := 0
+	for _, meth := range m.Methods {
+		if meth.Mode == mode && missed[keyOf(meth)] {
 			n++
 		}
 	}

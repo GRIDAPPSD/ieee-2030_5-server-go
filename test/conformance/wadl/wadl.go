@@ -116,13 +116,20 @@ func (e *IntegrityError) Error() string {
 // An unparseable value is an error rather than a shrug: a run configured
 // with SEP2_WADL_REQUIRED=ture must not disarm the gate.
 func Required() (bool, error) {
-	raw := strings.TrimSpace(os.Getenv(EnvRequired))
+	return envRequired(EnvRequired)
+}
+
+// envRequired reads one REQUIRED switch: unset is false, a boolean is itself,
+// anything else is an error so a typo cannot disarm a gate. Required and the
+// schema gate both read through it.
+func envRequired(name string) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return false, nil
 	}
 	v, err := strconv.ParseBool(raw)
 	if err != nil {
-		return false, fmt.Errorf("%s=%q is not a boolean: use 1 or 0", EnvRequired, raw)
+		return false, fmt.Errorf("%s=%q is not a boolean: use 1 or 0", name, raw)
 	}
 	return v, nil
 }

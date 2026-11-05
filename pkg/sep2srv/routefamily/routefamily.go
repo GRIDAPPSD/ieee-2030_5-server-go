@@ -19,6 +19,37 @@ type Family struct {
 	// Unauthenticated lets a client without a device certificate through the
 	// ACL. Every family accepts a device certificate.
 	Unauthenticated bool
+	// Anchor names the store whose presence mounts the family. The zero
+	// value means the family is mounted whatever the deployment wires.
+	Anchor Anchor
+}
+
+// Anchor names the store a deployment wires to serve a family.
+type Anchor string
+
+// The anchors a family can depend on. They match the store fields that gate
+// the routes in the assembly package.
+const (
+	AnchorMirrorUsagePoints Anchor = "MirrorUsagePoints"
+	AnchorUsagePoints       Anchor = "UsagePoints"
+	AnchorMessagingPrograms Anchor = "MessagingPrograms"
+	AnchorResponseSets      Anchor = "ResponseSets"
+	AnchorDERs              Anchor = "DERs"
+)
+
+// Wired reports whether a deployment wires the store an anchor names.
+type Wired func(Anchor) bool
+
+// Serves reports whether the deployment serves the family at prefix: the
+// prefix is in the table and its anchor, when it has one, is wired. A nil
+// Wired serves only the families without an anchor.
+func (w Wired) Serves(prefix string) bool {
+	for _, f := range All() {
+		if f.Prefix == prefix {
+			return f.Anchor == "" || (w != nil && w(f.Anchor))
+		}
+	}
+	return false
 }
 
 var (
@@ -35,12 +66,12 @@ func All() []Family {
 		{Prefix: "/tm", Methods: read, Unauthenticated: true},
 		{Prefix: "/sdev", Subtree: true, Methods: read},
 		{Prefix: "/edev", Subtree: true, Methods: readWrite},
-		{Prefix: "/mup", Subtree: true, Methods: readWrite},
-		{Prefix: "/dc", Subtree: true, Methods: read},
-		{Prefix: "/upt", Subtree: true, Methods: readPost},
-		{Prefix: "/rt", Subtree: true, Methods: read},
-		{Prefix: "/msg", Subtree: true, Methods: readPost},
-		{Prefix: "/rsps", Subtree: true, Methods: readPost},
+		{Prefix: "/mup", Subtree: true, Methods: readWrite, Anchor: AnchorMirrorUsagePoints},
+		{Prefix: "/dc", Subtree: true, Methods: read, Anchor: AnchorDERs},
+		{Prefix: "/upt", Subtree: true, Methods: readPost, Anchor: AnchorUsagePoints},
+		{Prefix: "/rt", Subtree: true, Methods: read, Anchor: AnchorUsagePoints},
+		{Prefix: "/msg", Subtree: true, Methods: readPost, Anchor: AnchorMessagingPrograms},
+		{Prefix: "/rsps", Subtree: true, Methods: readPost, Anchor: AnchorResponseSets},
 	}
 }
 

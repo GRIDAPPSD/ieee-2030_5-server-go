@@ -460,7 +460,7 @@ func BuildProtocolRouter(
 	top := http.NewServeMux()
 
 	protocolMux := newRecordingMux()
-	protocolMux.HandleFunc("GET /dcap", coredcap.HandleDeviceCapability())
+	protocolMux.HandleFunc("GET /dcap", coredcap.HandleDeviceCapability(wiredAnchors(stores), endDeviceCounter(stores, authPolicy.Identity)))
 	protocolMux.HandleFunc("GET /tm", coresep2time.HandleTime(coresep2time.TimeParams{
 		TZOffset:    cfg.TZOffset,
 		DSTOffset:   cfg.DSTOffset,
@@ -647,6 +647,39 @@ func asNotificationURIValidator(n ResourceNotifier) func(context.Context, string
 		return v.ValidateNotificationURI
 	}
 	return nil
+}
+
+// wiredAnchors says which anchored route families stores serves, from the
+// same IsAbsent test each family's mount gate makes. It is the one place an
+// anchor name meets a store field.
+func wiredAnchors(stores *Stores) routefamily.Wired {
+	if stores == nil {
+		return nil
+	}
+	return func(a routefamily.Anchor) bool {
+		switch a {
+		case routefamily.AnchorMirrorUsagePoints:
+			return !store.IsAbsent(stores.MirrorUsagePoints)
+		case routefamily.AnchorUsagePoints:
+			return !store.IsAbsent(stores.UsagePoints)
+		case routefamily.AnchorMessagingPrograms:
+			return !store.IsAbsent(stores.MessagingPrograms)
+		case routefamily.AnchorResponseSets:
+			return !store.IsAbsent(stores.ResponseSets)
+		case routefamily.AnchorDERs:
+			return !store.IsAbsent(stores.DERs)
+		}
+		return false
+	}
+}
+
+// endDeviceCounter counts the EndDevices GET /edev lists for the caller, or
+// is nil when there are no stores to count from.
+func endDeviceCounter(stores *Stores, identity identity.Func) coredcap.CallerEndDevices {
+	if stores == nil {
+		return nil
+	}
+	return coreedev.CallerEndDeviceCount(stores.EndDevices, stores.EndDeviceManagers, identity)
 }
 
 // registrationBoundEndDevices returns the EndDevice store the /edev routes
@@ -841,6 +874,25 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 	return memory.NewFlowReservationLinkedEndDeviceStore(devs, stores.FlowReservationRequests, resps)
 }
 
+// singletonLinkedEndDevices returns the EndDevice store the /edev routes must
+// use so every served EndDevice links its Configuration, DeviceStatus and
+// PowerStatus exactly when those routes are mounted.
+//
+// THE GATE IS THE MOUNT GATE: Stores.Configurations, DeviceStatuses and
+// PowerStatuses are the anchors registerNewFunctionSetRoutes tests. Like
+// [flowReservationLinkedEndDevices] it always wraps, so a link a client
+// supplied is cleared when none of the three is served.
+func singletonLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
+	if store.IsAbsent(devs) {
+		return devs
+	}
+	return memory.NewSingletonLinkedEndDeviceStore(devs, memory.SingletonLinks{
+		Configuration: !store.IsAbsent(stores.Configurations),
+		DeviceStatus:  !store.IsAbsent(stores.DeviceStatuses),
+		PowerStatus:   !store.IsAbsent(stores.PowerStatuses),
+	})
+}
+
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev
 // routes and the read handle serve from: registration-bound,
 // LogEventList-linked, DERList-linked, device-keyed-cascade-wrapped,
@@ -861,7 +913,7 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 // RegistrationLink, LogEventListLink and flow reservation link derivations
 // make no difference to it.
 func ownedEndDevices(stores *Stores) store.EndDeviceStore {
-	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(derLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores), stores))
+	return requireEndDevices(singletonLinkedEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(derLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores), stores), stores))
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck, inBandManagementOff bool, refusals func(r *http.Request, caller, reason string)) {
@@ -909,10 +961,11 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 
 	// FSA endpoints
 	if !store.IsAbsent(stores.FSAs) {
+		wired := wiredAnchors(stores)
 		mux.HandleFunc("GET /edev/{id}/fsa", scopedListHandler[sep2.FunctionSetAssignments, sep2.FunctionSetAssignmentsList](
-			stores.FSAs, "id", store.SortByIDAsc, corefsa.BuildFSAList, 900,
+			stores.FSAs, "id", store.SortByIDAsc, corefsa.ListBuilder(wired), 900,
 		))
-		mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(stores.FSAs))
+		mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(stores.FSAs, wired))
 	}
 
 	// Subscription endpoints

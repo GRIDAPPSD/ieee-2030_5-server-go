@@ -41,8 +41,8 @@ func TestMutationSurface_AbsentWithoutBuildTag(t *testing.T) {
 		req.Header.Set("X-CSIP-Test-Token", "anything")
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
-		if rr.Code != http.StatusNotFound {
-			t.Errorf("path %q: status = %d, want 404 (surface should not exist in production builds)", p, rr.Code)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("path %q: status = %d, want 403 (surface should not exist in production builds)", p, rr.Code)
 		}
 	}
 }

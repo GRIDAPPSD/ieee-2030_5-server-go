@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The outer mount, the ACL rows and the href probe are built from one route
+  family table. A request under a path no family names is now refused with 403
+  before any handler (it was 404), and PUT and DELETE on a mirror usage point
+  pass the ACL and reach their handlers (#1246).
+
 ## [0.19.0] - 2026-11-04
 
 This entry covers `v0.18.0..v0.19.0`. It is a MINOR release under the 0.x

@@ -59,15 +59,15 @@ func TestProtocolListenerDoesNotMountCertAPI(t *testing.T) {
 			// RemoteAddr is loopback with no proxy headers - this is
 			// exactly the Path 0 bypass shape. If the protocol-listener
 			// router still mounted /api/certs/*, the cert handler would
-			// fire and we'd see 200/400. We require 404 (mux miss).
+			// fire and we'd see 200/400. We require 403, the refusal for a path no route family names.
 			req := httptest.NewRequest(tc.method, tc.path, body)
 			req.RemoteAddr = "127.0.0.1:54321"
 			rec := httptest.NewRecorder()
 
 			router.ServeHTTP(rec, req)
 
-			if rec.Code != http.StatusNotFound {
-				t.Fatalf("%s %s on protocol listener: status = %d, want 404 (cert API must not be mounted on protocol listener); body = %q",
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s %s on protocol listener: status = %d, want 403 (cert API must not be mounted on protocol listener); body = %q",
 					tc.method, tc.path, rec.Code, rec.Body.String())
 			}
 		})

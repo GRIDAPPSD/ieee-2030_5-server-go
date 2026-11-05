@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 )
 
 // TestHandlerServesExposition asserts the /metrics handler returns 200 and
@@ -204,5 +206,19 @@ func TestFunctionSetBoundsUnknownPath(t *testing.T) {
 	after := testutil.ToFloat64(httpRequests.WithLabelValues("other", http.MethodGet, "200"))
 	if after-before != 1 {
 		t.Errorf("unknown-path function_set=other delta = %v, want 1", after-before)
+	}
+}
+
+// TestFunctionSetCoversEveryRouteFamily fails when a family is added to the
+// route family table but its label would fold to "other".
+func TestFunctionSetCoversEveryRouteFamily(t *testing.T) {
+	for _, f := range routefamily.All() {
+		want := strings.TrimPrefix(f.Prefix, "/")
+		if got := functionSet(f.Prefix + "/x"); got != want {
+			t.Errorf("functionSet(%q) = %q, want %q", f.Prefix+"/x", got, want)
+		}
+	}
+	if got := functionSet("/"); got != "root" {
+		t.Errorf("functionSet(\"/\") = %q, want root", got)
 	}
 }

@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 	"strings"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 )
 
 // Method bitmaps per spec section 6.2.3.
@@ -24,26 +26,28 @@ const (
 
 // ACLRule defines access control for a resource path pattern.
 type ACLRule struct {
-	PathPrefix       string // path prefix to match (e.g., "/edev")
-	AllowedMethods   uint8  // bitmask of allowed HTTP methods
-	RequiredAuth     uint8  // bitmask of allowed auth types
-	RequireOwnership bool   // if true, device must own the resource
+	PathPrefix     string // path prefix to match (e.g., "/edev")
+	AllowedMethods uint8  // bitmask of allowed HTTP methods
+	RequiredAuth   uint8  // bitmask of allowed auth types
 }
 
-// DefaultACLRules returns the default ACL rules for IEEE 2030.5 resources.
+// DefaultACLRules returns the default ACL rules for IEEE 2030.5 resources,
+// one row per route family.
 func DefaultACLRules() []ACLRule {
-	return []ACLRule{
-		{"/dcap", MethodGet | MethodHead, AuthNone | AuthDeviceCert, false},
-		{"/tm", MethodGet | MethodHead, AuthNone | AuthDeviceCert, false},
-		{"/sdev", MethodGet | MethodHead, AuthDeviceCert, false},
-		{"/edev", MethodGet | MethodHead | MethodPost | MethodPut | MethodDelete, AuthDeviceCert, false},
-		{"/mup", MethodGet | MethodHead | MethodPost, AuthDeviceCert, false},
-		{"/dc", MethodGet | MethodHead, AuthDeviceCert, false},
-		{"/upt", MethodGet | MethodHead | MethodPost, AuthDeviceCert, false},
-		{"/rt", MethodGet | MethodHead, AuthDeviceCert, false},
-		{"/msg", MethodGet | MethodHead | MethodPost, AuthDeviceCert, false},
-		{"/rsps", MethodGet | MethodHead | MethodPost, AuthDeviceCert, false},
+	families := routefamily.All()
+	rules := make([]ACLRule, 0, len(families))
+	for _, f := range families {
+		var methods uint8
+		for _, m := range f.Methods {
+			methods |= HTTPMethodToBitmap(m)
+		}
+		required := AuthDeviceCert
+		if f.Unauthenticated {
+			required |= AuthNone
+		}
+		rules = append(rules, ACLRule{PathPrefix: f.Prefix, AllowedMethods: methods, RequiredAuth: required})
 	}
+	return rules
 }
 
 // HTTPMethodToBitmap converts an HTTP method string to the ACL bitmap.
@@ -71,8 +75,8 @@ func ACLMiddleware(rules []ACLRule) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rule := matchRule(rules, r.URL.Path)
 			if rule == nil {
-				// No matching rule — allow through (handled by router 404)
-				next.ServeHTTP(w, r)
+				// Fail closed: a path no rule names reaches no handler.
+				routefamily.Refuse(w, r)
 				return
 			}
 
@@ -99,12 +103,18 @@ func matchRule(rules []ACLRule, path string) *ACLRule {
 	var best *ACLRule
 	bestLen := 0
 	for i := range rules {
-		if strings.HasPrefix(path, rules[i].PathPrefix) && len(rules[i].PathPrefix) > bestLen {
+		if underPrefix(path, rules[i].PathPrefix) && len(rules[i].PathPrefix) > bestLen {
 			best = &rules[i]
 			bestLen = len(rules[i].PathPrefix)
 		}
 	}
 	return best
+}
+
+// underPrefix reports whether path is prefix itself or lies beneath it, on a
+// path-segment boundary, so "/edevx" is not under "/edev".
+func underPrefix(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 func authTypeFromRequest(r *http.Request) uint8 {

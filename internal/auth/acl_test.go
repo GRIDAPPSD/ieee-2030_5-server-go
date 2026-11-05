@@ -12,7 +12,7 @@ import (
 
 func TestACLAllowedMethod(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet | auth.MethodHead | auth.MethodPost, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet | auth.MethodHead | auth.MethodPost, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -29,7 +29,7 @@ func TestACLAllowedMethod(t *testing.T) {
 
 func TestACLDisallowedMethod(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet | auth.MethodHead, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet | auth.MethodHead, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -46,7 +46,7 @@ func TestACLDisallowedMethod(t *testing.T) {
 
 func TestACLRequiresAuth(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -63,7 +63,7 @@ func TestACLRequiresAuth(t *testing.T) {
 
 func TestACLAllowsNoAuth(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/dcap", auth.MethodGet | auth.MethodHead, auth.AuthNone | auth.AuthDeviceCert, false},
+		{"/dcap", auth.MethodGet | auth.MethodHead, auth.AuthNone | auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -79,8 +79,8 @@ func TestACLAllowsNoAuth(t *testing.T) {
 
 func TestACLLongestPrefixMatch(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet | auth.MethodPost, auth.AuthDeviceCert, false},
-		{"/edev/1", auth.MethodGet | auth.MethodPut, auth.AuthDeviceCert, true},
+		{"/edev", auth.MethodGet | auth.MethodPost, auth.AuthDeviceCert},
+		{"/edev/1", auth.MethodGet | auth.MethodPut, auth.AuthDeviceCert},
 	}
 
 	middleware := auth.ACLMiddleware(rules)(okHandler())
@@ -97,20 +97,29 @@ func TestACLLongestPrefixMatch(t *testing.T) {
 	}
 }
 
-func TestACLNoMatchingRule(t *testing.T) {
+// A path no rule names is refused before the handler, for every client kind,
+// and "/edevx" is not under the "/edev" rule.
+func TestACLNoMatchingRuleIsRefused(t *testing.T) {
 	rules := []auth.ACLRule{
-		{"/edev", auth.MethodGet, auth.AuthDeviceCert, false},
+		{"/edev", auth.MethodGet, auth.AuthDeviceCert},
 	}
-
-	middleware := auth.ACLMiddleware(rules)(okHandler())
-	req := httptest.NewRequest(http.MethodGet, "/unknown", nil)
-
-	w := httptest.NewRecorder()
-	middleware.ServeHTTP(w, req)
-
-	// No matching rule — pass through to handler (router will 404)
-	if w.Code != 200 {
-		t.Errorf("no matching rule should pass through, got %d", w.Code)
+	for _, path := range []string{"/unknown", "/edevx", "/"} {
+		for _, kind := range []string{"no TLS", "device cert"} {
+			ran := false
+			mw := auth.ACLMiddleware(rules)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { ran = true }))
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			if kind == "device cert" {
+				req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+			}
+			w := httptest.NewRecorder()
+			mw.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("%s %s: status = %d, want 403", kind, path, w.Code)
+			}
+			if ran {
+				t.Errorf("%s %s: handler ran for a path no rule names", kind, path)
+			}
+		}
 	}
 }
 

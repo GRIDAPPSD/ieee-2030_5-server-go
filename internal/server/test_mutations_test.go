@@ -97,14 +97,14 @@ func TestMutationSurface_WrongToken_Unauthorized(t *testing.T) {
 func TestMutationSurface_EmptyEnvDisablesSurface(t *testing.T) {
 	// Tag is set but the env is empty - RegisterMutationHandlers should
 	// log a warning and register no routes. A request to a mutation path
-	// must miss the mux and return 404.
+	// reaches no handler and is refused as a path no route family names.
 	t.Setenv(tmTokenEnv, "")
 	stores := newTestStores()
 	cfg := &config.Config{}
 	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
 	rr := postJSON(t, h, tmEdevDelete, "anything", map[string]string{"end_device_id": "edev-1"})
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (surface should be off)", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (surface should be off)", rr.Code)
 	}
 }
 

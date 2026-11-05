@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 )
 
 // These tests need no WADL copy and no server under test. They guard the
@@ -73,6 +75,30 @@ func TestIsMuxNotFoundRejectsHandlerAuthored404(t *testing.T) {
 				t.Errorf("isMuxNotFound() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A path no route family names is refused with a 403 carrying its own body.
+// It must classify as unrouted, and an ACL 403 must not.
+func TestClassifyRouteRefusalIsUnroutedNotACL(t *testing.T) {
+	m := Method{Verb: http.MethodGet, Mode: ModeMandatory}
+	refusal := response{status: 403, body: []byte(routefamily.RefusalBody + "\n")}
+	acl := response{status: 403, body: []byte("forbidden\n")}
+
+	if got := classify(m, "/zzz", refusal, "", map[string]bool{}); got != VerdictUnrouted {
+		t.Errorf("route refusal verdict = %q, want %q", got, VerdictUnrouted)
+	}
+	if got := classify(m, "/zzz", acl, "", map[string]bool{}); got != VerdictForbiddenACL {
+		t.Errorf("ACL 403 verdict = %q, want %q", got, VerdictForbiddenACL)
+	}
+
+	head := Method{Verb: http.MethodHead, Mode: ModeMandatory}
+	bodyless := response{status: 403}
+	if got := classify(head, "/zzz", bodyless, "", map[string]bool{"/zzz": true}); got != VerdictUnrouted {
+		t.Errorf("HEAD after a refused GET verdict = %q, want %q", got, VerdictUnrouted)
+	}
+	if got := classify(head, "/zzz", bodyless, "", map[string]bool{}); got != VerdictForbiddenACL {
+		t.Errorf("HEAD 403 with no GET evidence verdict = %q, want %q", got, VerdictForbiddenACL)
 	}
 }
 

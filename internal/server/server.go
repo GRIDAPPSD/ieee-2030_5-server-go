@@ -25,6 +25,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/content"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
@@ -329,6 +330,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:                adminFSAs,
+		Content:                  content.NewOwner(func(name string) string { return cfg.EffectiveStorePath(name, "") }),
 		ProgramOrigins:           programOrigins,
 		Subscriptions:            subStore,
 		UsagePoints:              memory.NewStore[sep2.UsagePoint](),

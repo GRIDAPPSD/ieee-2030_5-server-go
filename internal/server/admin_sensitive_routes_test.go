@@ -168,6 +168,12 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/derms/devices/{edevId}/ders", method: http.MethodGet, path: "/api/derms/devices/4/ders", wantReachedStatus: http.StatusNotFound},
 		// #1157: the block view names every aggregator, device and delivered figure.
 		{name: "GET /api/derms/grid-requests", method: http.MethodGet, path: "/api/derms/grid-requests", wantReachedStatus: http.StatusOK},
+		// #1245: operator-loaded content is per customer for some families, so
+		// the whole prefix needs a credential. No GET route exists, so a
+		// credentialed read gets the mux's 404; the write reaches the owner and
+		// is told the family is unknown.
+		{name: "GET /api/content/{family}/{id} (no GET route)", method: http.MethodGet, path: "/api/content/billing/c1", wantReachedStatus: http.StatusNotFound},
+		{name: "POST /api/content/{family}/{id}", method: http.MethodPost, path: "/api/content/billing/c1", bearerContentType: "application/sep+xml", bearerBody: "<x/>", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/derms/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/derms/audit", wantReachedStatus: http.StatusNotFound},
 	}
 

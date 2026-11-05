@@ -441,10 +441,12 @@ func (h *AdminFSAHandler) assignIncomplete(w http.ResponseWriter, deviceID, fsaI
 // and the device-only FSA both write.
 func newAdminFSA(id, description string) sep2.FunctionSetAssignments {
 	return sep2.FunctionSetAssignments{
-		Resource:           sep2.Resource{Href: "/api/fsas/" + id},
-		MRID:               id,
-		Description:        description,
-		DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
+		Resource:    sep2.Resource{Href: "/api/fsas/" + id},
+		MRID:        id,
+		Description: description,
+		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+			DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
+		},
 	}
 }
 

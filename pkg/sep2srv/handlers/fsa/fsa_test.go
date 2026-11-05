@@ -61,8 +61,10 @@ func TestHandleFSA_StoredValueReturned(t *testing.T) {
 		Resource:    sep2.Resource{Href: "/edev/e1/fsa/f1"},
 		MRID:        "fsa-mrid-01",
 		Description: "Test FSA",
-		DERProgramListLink: &sep2.ListLink{
-			Href: "/edev/e1/fsa/f1/derp",
+		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+			DERProgramListLink: &sep2.ListLink{
+				Href: "/edev/e1/fsa/f1/derp",
+			},
 		},
 	}
 	if err := fsaStore.Create(context.Background(), "e1", "f1", fsa); err != nil {

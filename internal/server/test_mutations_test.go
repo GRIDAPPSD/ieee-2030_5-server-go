@@ -758,8 +758,10 @@ func seedFSA(t *testing.T, stores *server.Stores, edevID, fsaID string) sep2.Fun
 		Resource:    sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + fsaID},
 		MRID:        "MRID-" + fsaID,
 		Description: "seeded fsa " + fsaID,
-		DERProgramListLink: &sep2.ListLink{
-			Href: "/edev/" + edevID + "/fsa/" + fsaID + "/derp",
+		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+			DERProgramListLink: &sep2.ListLink{
+				Href: "/edev/" + edevID + "/fsa/" + fsaID + "/derp",
+			},
 		},
 	}
 	if err := stores.FSAs.Create(context.Background(), edevID, fsaID, fsa); err != nil {

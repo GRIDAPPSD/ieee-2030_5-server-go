@@ -25,10 +25,12 @@ type DeviceFSAWriter interface {
 func Scoped(deviceID, fsaID string, admin sep2.FunctionSetAssignments) sep2.FunctionSetAssignments {
 	href := fmt.Sprintf("/edev/%s/fsa/%s", deviceID, fsaID)
 	return sep2.FunctionSetAssignments{
-		Resource:           sep2.Resource{Href: href},
-		MRID:               admin.MRID,
-		Description:        admin.Description,
-		DERProgramListLink: &sep2.ListLink{Href: href + "/derp"},
+		Resource:    sep2.Resource{Href: href},
+		MRID:        admin.MRID,
+		Description: admin.Description,
+		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
+			DERProgramListLink: &sep2.ListLink{Href: href + "/derp"},
+		},
 	}
 }
 

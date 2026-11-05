@@ -7,22 +7,26 @@ import "encoding/xml"
 //
 // Field order matches the combined AbstractDevice + EndDevice xsd:sequence
 // (AbstractDevice's own sequence elements come first per xsd:extension
-// composition, then EndDevice's own sequence elements). Only fields that
-// exist on this Go type are represented; AbstractDevice/EndDevice elements
-// not yet modeled here (ConfigurationLink, deviceCategory,
-// DeviceInformationLink, DeviceStatusLink, FileStatusLink,
-// IPInterfaceListLink, LoadShedAvailabilityListLink, PowerStatusLink,
-// postRate) are omitted.
+// composition, then EndDevice's own sequence elements). Every Link element
+// of the sequence is modeled; the non-link element deviceCategory is not yet
+// modeled and is omitted.
 // Schema parsers (e.g., EPRI oeg_client) validate element order strictly.
 type EndDevice struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns EndDevice"`
 	SubscribableResource
 
 	// --- AbstractDevice sequence (in XSD order, subset present here) ---
-	DERListLink      *ListLink `xml:"DERListLink,omitempty"`
-	LFDI             string    `xml:"lFDI,omitempty"`
-	LogEventListLink *ListLink `xml:"LogEventListLink,omitempty"`
-	SFDI             string    `xml:"sFDI"`
+	ConfigurationLink            *Link     `xml:"ConfigurationLink,omitempty"`
+	DERListLink                  *ListLink `xml:"DERListLink,omitempty"`
+	DeviceInformationLink        *Link     `xml:"DeviceInformationLink,omitempty"`
+	DeviceStatusLink             *Link     `xml:"DeviceStatusLink,omitempty"`
+	FileStatusLink               *Link     `xml:"FileStatusLink,omitempty"`
+	IPInterfaceListLink          *ListLink `xml:"IPInterfaceListLink,omitempty"`
+	LFDI                         string    `xml:"lFDI,omitempty"`
+	LoadShedAvailabilityListLink *ListLink `xml:"LoadShedAvailabilityListLink,omitempty"`
+	LogEventListLink             *ListLink `xml:"LogEventListLink,omitempty"`
+	PowerStatusLink              *Link     `xml:"PowerStatusLink,omitempty"`
+	SFDI                         string    `xml:"sFDI"`
 
 	// --- EndDevice's own sequence (in XSD order) ---
 	ChangedTime int64 `xml:"changedTime"`
@@ -53,12 +57,19 @@ func (e EndDevice) Copy() EndDevice {
 	c.XMLName = e.XMLName
 	c.Enabled = clonePtr(e.Enabled)
 	c.SubscribableResource = e.SubscribableResource.Copy()
-	c.RegistrationLink = clonePtr(e.RegistrationLink)
+	c.ConfigurationLink = clonePtr(e.ConfigurationLink)
+	c.DERListLink = clonePtr(e.DERListLink)
+	c.DeviceInformationLink = clonePtr(e.DeviceInformationLink)
+	c.DeviceStatusLink = clonePtr(e.DeviceStatusLink)
+	c.FileStatusLink = clonePtr(e.FileStatusLink)
+	c.IPInterfaceListLink = clonePtr(e.IPInterfaceListLink)
+	c.LoadShedAvailabilityListLink = clonePtr(e.LoadShedAvailabilityListLink)
+	c.LogEventListLink = clonePtr(e.LogEventListLink)
+	c.PowerStatusLink = clonePtr(e.PowerStatusLink)
 	c.FlowReservationRequestListLink = clonePtr(e.FlowReservationRequestListLink)
 	c.FlowReservationResponseListLink = clonePtr(e.FlowReservationResponseListLink)
 	c.FunctionSetAssignmentsListLink = clonePtr(e.FunctionSetAssignmentsListLink)
-	c.DERListLink = clonePtr(e.DERListLink)
-	c.LogEventListLink = clonePtr(e.LogEventListLink)
+	c.RegistrationLink = clonePtr(e.RegistrationLink)
 	c.SubscriptionListLink = clonePtr(e.SubscriptionListLink)
 	return c
 }

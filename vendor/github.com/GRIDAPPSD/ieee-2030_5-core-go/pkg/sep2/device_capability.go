@@ -14,17 +14,8 @@ type DeviceCapability struct {
 	Resource
 	PollRate uint32 `xml:"pollRate,attr,omitempty"`
 
-	// --- FunctionSetAssignmentsBase elements (in XSD order) ---
-	CustomerAccountListLink       *ListLink `xml:"CustomerAccountListLink,omitempty"`
-	DemandResponseProgramListLink *ListLink `xml:"DemandResponseProgramListLink,omitempty"`
-	DERProgramListLink            *ListLink `xml:"DERProgramListLink,omitempty"`
-	FileListLink                  *ListLink `xml:"FileListLink,omitempty"`
-	MessagingProgramListLink      *ListLink `xml:"MessagingProgramListLink,omitempty"`
-	PrepaymentListLink            *ListLink `xml:"PrepaymentListLink,omitempty"`
-	ResponseSetListLink           *ListLink `xml:"ResponseSetListLink,omitempty"`
-	TariffProfileListLink         *ListLink `xml:"TariffProfileListLink,omitempty"`
-	TimeLink                      *Link     `xml:"TimeLink,omitempty"`
-	UsagePointListLink            *ListLink `xml:"UsagePointListLink,omitempty"`
+	// FunctionSetAssignmentsBase elements come first (XSD order).
+	FunctionSetAssignmentsBase
 
 	// --- DeviceCapability extension elements (in XSD order) ---
 	EndDeviceListLink        *ListLink `xml:"EndDeviceListLink,omitempty"`

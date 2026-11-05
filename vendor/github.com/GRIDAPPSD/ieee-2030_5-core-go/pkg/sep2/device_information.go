@@ -17,23 +17,24 @@ type DeviceInformation struct {
 	// serializes as hex text, not decimal.
 	FunctionsImplemented *HexBinary64 `xml:"functionsImplemented,omitempty"`
 	// GPSLocation omitted (complex sub-type, deferred)
-	LFDI           string `xml:"lFDI,omitempty"`
-	MfDate         int64  `xml:"mfDate,omitempty"`
-	MfHwVer        string `xml:"mfHwVer,omitempty"`
-	MfID           string `xml:"mfID,omitempty"`
-	MfInfo         string `xml:"mfInfo,omitempty"`
-	MfModel        string `xml:"mfModel,omitempty"`
-	MfSerNum       string `xml:"mfSerNum,omitempty"`
-	PrimaryPower   int32  `xml:"primaryPower,omitempty"`
-	SecondaryPower int32  `xml:"secondaryPower,omitempty"`
-	// SupportedLocaleListLink omitted (deferred)
-	SwActTime int64  `xml:"swActTime,omitempty"`
-	SwVer     string `xml:"swVer,omitempty"`
+	LFDI                    string    `xml:"lFDI,omitempty"`
+	MfDate                  int64     `xml:"mfDate,omitempty"`
+	MfHwVer                 string    `xml:"mfHwVer,omitempty"`
+	MfID                    string    `xml:"mfID,omitempty"`
+	MfInfo                  string    `xml:"mfInfo,omitempty"`
+	MfModel                 string    `xml:"mfModel,omitempty"`
+	MfSerNum                string    `xml:"mfSerNum,omitempty"`
+	PrimaryPower            int32     `xml:"primaryPower,omitempty"`
+	SecondaryPower          int32     `xml:"secondaryPower,omitempty"`
+	SupportedLocaleListLink *ListLink `xml:"SupportedLocaleListLink,omitempty"`
+	SwActTime               int64     `xml:"swActTime,omitempty"`
+	SwVer                   string    `xml:"swVer,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (d DeviceInformation) Copy() DeviceInformation {
 	c := d
 	c.FunctionsImplemented = clonePtr(d.FunctionsImplemented)
+	c.SupportedLocaleListLink = clonePtr(d.SupportedLocaleListLink)
 	return c
 }

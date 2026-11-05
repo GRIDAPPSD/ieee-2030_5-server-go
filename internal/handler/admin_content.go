@@ -92,7 +92,7 @@ func writeContentError(w http.ResponseWriter, op, fam, id string, err error) {
 	case errors.Is(err, content.ErrInvalid):
 		refuse(http.StatusBadRequest, err.Error())
 	default:
-		log.Printf("admin content: %s: %v", logsafe.Str(op), logsafe.Err(err))
+		log.Printf("admin content: %s failed family=%s id=%s: %v", logsafe.Str(op), logsafe.Str(fam), logsafe.Str(id), logsafe.Err(err))
 		writeError(w, http.StatusInternalServerError, op+": request failed, see server log")
 	}
 }

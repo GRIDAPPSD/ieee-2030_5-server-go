@@ -57,6 +57,9 @@ func checkSnapshot[T store.Copier[T]](path string, spec Spec[T]) error {
 				return fmt.Errorf("snapshot record %d (%s) fails validation: %w", i, shorten(r.ID), err)
 			}
 		}
+		if err := checkHref(spec, v, r.ID); err != nil {
+			return fmt.Errorf("snapshot record %d (%s): %w", i, shorten(r.ID), err)
+		}
 	}
 	return nil
 }

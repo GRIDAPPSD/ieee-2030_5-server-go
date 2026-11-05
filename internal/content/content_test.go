@@ -371,3 +371,41 @@ func TestSnapshotOfAnEmptiedFamilyStillLoads(t *testing.T) {
 		t.Errorf("count after restart = %d, want 0", n)
 	}
 }
+
+func TestKnownZeroValuedAttributeIsAccepted(t *testing.T) {
+	ctx := context.Background()
+	o, st := register(t, t.TempDir())
+	ok := program("/msg/1", "AA01", "d")
+	zero := strings.Replace(ok, "<primacy>", `<TextMessageListLink href="/m/t" all="0"/><primacy>`, 1)
+	if err := o.Create(ctx, fam, "p1", []byte(zero)); err != nil {
+		t.Fatalf("Create with all=0 on a known attribute = %v, want nil", err)
+	}
+	got, _ := st.Get(ctx, "p1")
+	if got.TextMessageListLink == nil || got.TextMessageListLink.Href != "/m/t" || got.TextMessageListLink.All != 0 {
+		t.Errorf("stored link = %+v, want href /m/t, all 0", got.TextMessageListLink)
+	}
+
+	// Control: an unknown attribute on the same element is still refused.
+	unknown := strings.Replace(zero, `all="0"`, `all="0" surcharge="9"`, 1)
+	if err := o.Create(ctx, fam, "p2", []byte(unknown)); !errors.Is(err, content.ErrInvalid) || !strings.Contains(err.Error(), "attribute surcharge in TextMessageListLink") {
+		t.Errorf("Create with an unknown attribute on the link = %v, want ErrInvalid naming it", err)
+	}
+}
+
+func TestSnapshotRecordMustBindHrefToItsID(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"version":1,"records":[{"parent":"all","id":"p2","value":{"href":"/msg/p1","mRID":"AA01"}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "content-"+fam+".json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := content.NewOwner(func(n string) string { return filepath.Join(dir, n+".json") })
+	href := func(p sep2.MessagingProgram) string { return p.Href }
+	if _, err := content.Register(o, content.Spec[sep2.MessagingProgram]{Name: fam, Validate: requireProgram, Href: href}); err == nil {
+		t.Fatal("Register over a record whose href does not end in its id succeeded")
+	}
+	// Control: the same snapshot loads when the family binds no href.
+	o2 := content.NewOwner(func(n string) string { return filepath.Join(dir, n+".json") })
+	if _, err := content.Register(o2, content.Spec[sep2.MessagingProgram]{Name: fam, Validate: requireProgram}); err != nil {
+		t.Fatalf("control Register = %v, want nil", err)
+	}
+}

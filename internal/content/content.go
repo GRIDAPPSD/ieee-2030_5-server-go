@@ -109,7 +109,8 @@ func Register[T store.Copier[T]](o *Owner, spec Spec[T]) (store.ResourceStore[T]
 	if err != nil {
 		return nil, fmt.Errorf("content: family %q: %w", spec.Name, err)
 	}
-	o.families[spec.Name] = &typedFamily[T]{spec: spec, store: st}
+	var root T
+	o.families[spec.Name] = &typedFamily[T]{spec: spec, store: st, shape: shapeOf(reflect.TypeOf(root), map[reflect.Type]*shape{})}
 	return st, nil
 }
 
@@ -166,6 +167,9 @@ func (o *Owner) lookup(name, id string) (family, error) {
 type typedFamily[T store.Copier[T]] struct {
 	spec  Spec[T]
 	store store.ResourceStore[T]
+	// shape is the elements and attributes the registered type can carry,
+	// built once at Register.
+	shape *shape
 }
 
 func (f *typedFamily[T]) create(ctx context.Context, id string, body []byte) error {
@@ -210,10 +214,8 @@ func (f *typedFamily[T]) decode(id string, body []byte) (T, error) {
 			return zero, fmt.Errorf("%w: %s: %v", ErrInvalid, f.spec.Name, err)
 		}
 	}
-	if f.spec.Href != nil {
-		if href := f.spec.Href(v); path.Base(href) != id {
-			return zero, fmt.Errorf("%w: %s: href does not end in the id %q it is sent to", ErrInvalid, f.spec.Name, id)
-		}
+	if err := checkHref(f.spec, v, id); err != nil {
+		return zero, fmt.Errorf("%w: %s: %v", ErrInvalid, f.spec.Name, err)
 	}
 	out, err := enc.Marshal(v)
 	if err != nil {
@@ -232,6 +234,10 @@ func (f *typedFamily[T]) decode(id string, body []byte) (T, error) {
 	}
 	for node, n := range sent {
 		switch have := kept[node]; {
+		case have == 0 && idx.isKnownAttr(f.shape, node):
+			// A known attribute written at its zero value is omitted by the
+			// encoder and decodes back to the same zero, so nothing is lost.
+			continue
 		case have == 0:
 			return zero, fmt.Errorf("%w: %s: %s is not represented by the type and would be dropped", ErrInvalid, f.spec.Name, idx.describe(node))
 		case have < n:
@@ -239,6 +245,18 @@ func (f *typedFamily[T]) decode(id string, body []byte) (T, error) {
 		}
 	}
 	return v, nil
+}
+
+// checkHref applies the family's href-to-id binding, for a write and for a
+// record loaded from a snapshot alike.
+func checkHref[T store.Copier[T]](spec Spec[T], v T, id string) error {
+	if spec.Href == nil {
+		return nil
+	}
+	if path.Base(spec.Href(v)) != id {
+		return fmt.Errorf("href does not end in the id %q it is sent to", id)
+	}
+	return nil
 }
 
 // nodeKey names one element or attribute by its parent node and its name.

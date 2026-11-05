@@ -520,7 +520,7 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	})
 	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 	registerDERRoutes(gated, stores)
-	registerMeteringRoutes(gated, stores)
+	registerMeteringRoutes(gated, stores, authPolicy)
 	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, deviceLogResolver, notifier)
 	return gated
 }
@@ -905,6 +905,8 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// (GRIDAPPSD/ieee-2030_5-server-go#170).
 	if !store.IsAbsent(stores.Registrations) {
 		mux.HandleFunc("GET /edev/{id}/rg", corereg.HandleGetRegistration(edevs, stores.Registrations, authPolicy.Identity))
+		mux.HandleFunc("PUT /edev/{id}/rg", corereg.HandlePutRegistration(stores.Registrations))
+		mux.HandleFunc("DELETE /edev/{id}/rg", corereg.HandleDeleteRegistration(stores.Registrations))
 	}
 
 	// FSA endpoints
@@ -923,6 +925,15 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	}
 }
 
+// lfdiProviderFor adapts the auth policy's identity function to the metering
+// handlers' LFDIProvider.
+func lfdiProviderFor(authPolicy AuthPolicy) coremetering.LFDIProvider {
+	return func(ctx context.Context) (string, bool) {
+		lfdi, _, ok := authPolicy.Identity(ctx)
+		return lfdi, ok
+	}
+}
+
 func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, postRateProvider coremetering.PostRateProvider) {
 	if store.IsAbsent(stores.MirrorUsagePoints) {
 		return
@@ -933,15 +944,12 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// LFDIProvider extracts the device LFDI from the request context via the
 	// injected AuthPolicy.Identity. Keeps internal/auth out of core (the same
 	// callback-injection pattern that Phase D1 applied to the obs callback).
-	lfdiProvider := coremetering.LFDIProvider(func(ctx context.Context) (string, bool) {
-		lfdi, _, ok := authPolicy.Identity(ctx)
-		return lfdi, ok
-	})
+	lfdiProvider := lfdiProviderFor(authPolicy)
 	// A manager acts on /mup for a managed device only when that device has an
 	// EndDevice record, as GET /edev already requires.
 	requireRecords := coremetering.RequireDeviceRecords(stores.EndDevices)
-	mux.HandleFunc("GET /mup", corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
-		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
+	mux.HandleFunc("GET /mup", coremetering.HandleMirrorUsagePointList(
+		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, 300, requireRecords,
 	))
 	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider, requireRecords))
 	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, requireRecords))
@@ -1429,7 +1437,7 @@ func scopedResourceHandler[T store.Copier[T]](
 	}
 }
 
-func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
+func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy) {
 	if store.IsAbsent(stores.UsagePoints) {
 		return
 	}
@@ -1438,8 +1446,8 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	meterReadings := requireScoped(stores.MeterReadings, "MeterReadings")
 	readings := requireScoped(stores.Readings, "Readings")
 	readingTypes := requireResource(stores.ReadingTypes, "ReadingTypes")
-	mux.HandleFunc("GET /upt", corelisthandler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
-		stores.UsagePoints, coremetering.BuildUsagePointList, 900,
+	mux.HandleFunc("GET /upt", coremetering.HandleUsagePointList(
+		stores.UsagePoints, stores.EndDeviceManagers, lfdiProviderFor(authPolicy), 900,
 	))
 	mux.HandleFunc("POST /upt", coremetering.HandleCreateUsagePoint(stores.UsagePoints))
 	mux.HandleFunc("GET /upt/{uptId}", coremetering.HandleUsagePoint(stores.UsagePoints))

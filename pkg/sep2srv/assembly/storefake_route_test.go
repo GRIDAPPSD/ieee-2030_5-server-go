@@ -167,6 +167,12 @@ func TestSecondImplementation_FlatStoreServesPostAndGet(t *testing.T) {
 	t.Parallel()
 
 	stores := fakeStores()
+	// POST /upt is for a manager certificate, which the test identity becomes
+	// by managing one device.
+	stores.EndDeviceManagers = memory.NewEndDeviceManagementStore()
+	if err := stores.EndDeviceManagers.Assign(context.Background(), testLFDI, "1122334455667788990011223344556677889900"); err != nil {
+		t.Fatalf("assign the manager: %v", err)
+	}
 	srv := fakeBackedServer(t, stores)
 
 	const body = `<UsagePoint xmlns="urn:ieee:std:2030.5:ns">` +

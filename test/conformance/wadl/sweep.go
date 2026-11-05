@@ -355,6 +355,10 @@ type link struct {
 	advertisedBy string
 	// typeName is the element's xsi:type, which names the resource a list member is.
 	typeName string
+	// manager is set on a link followed with the manager certificate: the
+	// server shows the usage point list only to a manager, so a device's own
+	// crawl cannot reach what hangs below it.
+	manager bool
 }
 
 // parseLinks extracts every advertised href from a response body.
@@ -671,6 +675,9 @@ type seed struct {
 	// order, against the stores the target serves, and gets the device id the
 	// first seed created. method and path are for the row only.
 	direct func(ctx context.Context, s *server.Stores, dev string) error
+	// manager sends the seed with the manager certificate, for a write the
+	// server restricts to one.
+	manager bool
 }
 
 // seeds create a minimum of real server state before the read phases.
@@ -706,7 +713,7 @@ func seedSet() []seed {
 				`<serviceCategoryKind>0</serviceCategoryKind><status>1</status></MirrorUsagePoint>`,
 		},
 		{
-			method: http.MethodPost, path: "/upt", element: "UsagePoint",
+			method: http.MethodPost, path: "/upt", element: "UsagePoint", manager: true,
 			body: `<UsagePoint xmlns="` + sepNS + `">` +
 				`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FBB</mRID>` +
 				`<description>wadl sweep upt</description><roleFlags>03</roleFlags>` +
@@ -796,7 +803,11 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 				r.status = http.StatusOK
 			}
 		default:
-			r = t.do(s.method, path, []byte(body))
+			client := t.Client
+			if s.manager && t.ManagerClient != nil {
+				client = t.ManagerClient
+			}
+			r = t.doWith(client, s.method, path, []byte(body))
 		}
 
 		v := Verdict(fmt.Sprintf("%s_%d", VerdictSeedFailed, r.status))
@@ -840,21 +851,38 @@ const maxDiscoveryURLs = 600
 // crawlRoot is the advertisedBy of the first link, which no resource advertises.
 const crawlRoot = "(root)"
 
+// managerCrawlRoot is the advertisedBy of the second crawl start, which only the
+// manager certificate can follow.
+const managerCrawlRoot = "(manager root)"
+
+// managerCrawlPrefix bounds the manager crawl: its links are followed as the
+// manager only while they stay under it.
+const managerCrawlPrefix = "/upt"
+
 func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][]byte) ([]string, *crawl) {
 	seen := map[string]bool{}
 	queue := []link{{href: "/dcap", expectedRoot: "DeviceCapability", advertisedBy: crawlRoot}}
+	if t.ManagerClient != nil {
+		queue = append(queue, link{href: managerCrawlPrefix, expectedRoot: "UsagePointList", advertisedBy: managerCrawlRoot, manager: true})
+	}
 	var discovered []string
 	reached := newCrawl()
 
 	for len(queue) > 0 && len(seen) < maxDiscoveryURLs {
 		l := queue[0]
 		queue = queue[1:]
-		if seen[l.href] {
+		seenKey := l.href
+		client := t.Client
+		if l.manager {
+			seenKey += " (manager)"
+			client = t.ManagerClient
+		}
+		if seen[seenKey] {
 			continue
 		}
-		seen[l.href] = true
+		seen[seenKey] = true
 
-		r := t.do(http.MethodGet, l.href, nil)
+		r := t.doWith(client, http.MethodGet, l.href, nil)
 		root := rootElement(r.body)
 
 		v := VerdictConformant
@@ -896,7 +924,12 @@ func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][
 			reached.add(l.resourceID(), l.href)
 			reached.add(rootTypeName(r.body), l.href)
 			for _, nxt := range parseLinks(r.body, l.href) {
-				if !seen[nxt.href] && strings.HasPrefix(nxt.href, "/") {
+				nxt.manager = l.manager && strings.HasPrefix(nxt.href, managerCrawlPrefix)
+				key := nxt.href
+				if nxt.manager {
+					key += " (manager)"
+				}
+				if !seen[key] && strings.HasPrefix(nxt.href, "/") {
 					queue = append(queue, nxt)
 				}
 			}

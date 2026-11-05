@@ -1,6 +1,7 @@
 package metering
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -10,9 +11,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
+	corelisthandler "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -177,7 +181,19 @@ func UsagePointHref(id string) string {
 // satisfies it, so every existing call site is unchanged; what it buys is that
 // the ErrAlreadyExists-then-Get-fails path can be driven in a test at all, and
 // that path is precisely the one whose swallowed error this change fixes.
-func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint]) http.HandlerFunc {
+//
+// It takes no authority decision: it is mounted only behind the manager-only
+// check. The number of UsagePoints is capped (DefaultMaxUsagePoints unless
+// WithMaxUsagePoints says otherwise), because the records are global and held
+// in memory.
+func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint], opts ...UsagePointOption) http.HandlerFunc {
+	maxPoints := DefaultMaxUsagePoints
+	for _, opt := range opts {
+		opt(&maxPoints)
+	}
+	// Holds the count check and the Create together, so concurrent POSTs
+	// cannot each pass the check and overshoot the cap.
+	var createMu sync.Mutex
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -212,7 +228,18 @@ func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint]) http.
 		upt.Href = UsagePointHref(id)
 		upt.MeterReadingListLink = &sep2.ListLink{Href: upt.Href + "/mr"}
 
-		if err := uptStore.Create(r.Context(), id, upt); err != nil {
+		createMu.Lock()
+		createErr := usagePointRoom(r.Context(), uptStore, id, maxPoints)
+		if createErr == nil {
+			createErr = uptStore.Create(r.Context(), id, upt)
+		}
+		createMu.Unlock()
+		if errors.Is(createErr, errUsagePointCap) {
+			http.Error(w, errUsagePointCap.Error(), http.StatusInsufficientStorage)
+			return
+		}
+
+		if err := createErr; err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
 				// The record was deleted between the Create above and this
 				// Get, or the store failed. Either way there is no existing
@@ -241,6 +268,79 @@ func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint]) http.
 
 		w.Header().Set("Location", upt.Href)
 		encoding.WriteXML(w, http.StatusCreated, &upt)
+	}
+}
+
+// DefaultMaxUsagePoints bounds the UsagePoints POST /upt will create.
+const DefaultMaxUsagePoints = 1000
+
+// UsagePointOption configures HandleCreateUsagePoint.
+type UsagePointOption func(maxPoints *int)
+
+// WithMaxUsagePoints replaces the default cap on created UsagePoints.
+func WithMaxUsagePoints(n int) UsagePointOption {
+	return func(maxPoints *int) { *maxPoints = n }
+}
+
+// errUsagePointCap is usagePointRoom's answer when the cap is reached.
+var errUsagePointCap = errors.New("usage point limit reached")
+
+// usagePointRoom reports nil when a UsagePoint may be created under id. At the
+// cap a POST naming an existing record still goes through, since it adds
+// nothing.
+func usagePointRoom(ctx context.Context, uptStore store.ResourceStore[sep2.UsagePoint], id string, maxPoints int) error {
+	n, err := uptStore.Count(ctx)
+	if err != nil {
+		return fmt.Errorf("count the UsagePoints: %w", err)
+	}
+	if int(n) < maxPoints {
+		return nil
+	}
+	_, err = uptStore.Get(ctx, id)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrNotFound):
+		return errUsagePointCap
+	}
+	return fmt.Errorf("look up the UsagePoint at the cap: %w", err)
+}
+
+// HandleUsagePointList returns the handler for GET /upt. UsagePoints are
+// server-authored and have no owner, so only a manager (coreedev.IsManager)
+// sees them; any other caller gets a well-formed empty list. The operator
+// reads the store directly and is not affected.
+func HandleUsagePointList(s store.ResourceStore[sep2.UsagePoint], managers store.EndDeviceManagementReader, lfdiProvider LFDIProvider, pollRate uint32) http.HandlerFunc {
+	managersAbsent := store.IsAbsent(managers)
+	full := corelisthandler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](s, BuildUsagePointList, pollRate)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			encoding.MethodNotAllowed(w, "GET, HEAD")
+			return
+		}
+		if lfdiProvider == nil {
+			http.Error(w, "identity required", http.StatusForbidden)
+			return
+		}
+		lfdi, ok := lfdiProvider(r.Context())
+		if !ok || lfdi == "" {
+			http.Error(w, "identity required", http.StatusForbidden)
+			return
+		}
+		manager := false
+		if !managersAbsent {
+			var err error
+			if manager, err = coreedev.IsManager(r.Context(), managers, lfdi); err != nil {
+				srverr.Internal(w, r, err)
+				return
+			}
+		}
+		if manager {
+			full.ServeHTTP(w, r)
+			return
+		}
+		empty := BuildUsagePointList(r.URL.Path, store.ListResult[sep2.UsagePoint]{}, pollRate)
+		encoding.WriteXML(w, http.StatusOK, &empty)
 	}
 }
 

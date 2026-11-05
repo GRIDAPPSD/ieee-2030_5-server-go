@@ -43,7 +43,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-// canonicalProtocolRoutes is the pinned list of 72 SEP2 protocol-listener
+// canonicalProtocolRoutes is the pinned list of 74 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
 // (TestCoreRouterPatternEquivalence). Any addition or deletion from this
@@ -117,9 +117,13 @@ import (
 //
 // PUT on the FlowReservationRequest instance is ADDED (#667): the client's
 // cancel. 71 -> 72.
+//
+// PUT and DELETE on the Registration are ADDED (#1263), behind the
+// manager-only check. 72 -> 74.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/lel/{lelId}",
+	"DELETE /edev/{id}/rg",
 	"DELETE /edev/{id}/sub/{subId}",
 	"DELETE /mup/{id}",
 	"GET /dc",
@@ -189,12 +193,13 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/dstat",
 	"PUT /edev/{id}/frq/{frqId}",
 	"PUT /edev/{id}/ps",
+	"PUT /edev/{id}/rg",
 	"PUT /mup/{id}",
 }
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
 // delegates unconditionally to assembly.BuildProtocolRouter) produces
-// exactly the 72 canonical SEP2 protocol routes, sorted, with no
+// exactly the 74 canonical SEP2 protocol routes, sorted, with no
 // additions or deletions. This replaces TestCoreRouterPatternEquivalence
 // from Phase 1: there is no longer an in-tree router to compare against,
 // so we pin the live surface directly.

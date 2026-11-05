@@ -1,6 +1,7 @@
 package assembly_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -111,6 +112,11 @@ var faultProbeBodies = map[string]string{
 	"PUT /edev/{id}/frq/{frqId}": sep2Doc("FlowReservationRequest",
 		`<RequestStatus><dateTime>1700000000</dateTime><requestStatus>1</requestStatus></RequestStatus>`),
 
+	// The manager-only Registration write reads the stored record first, so a
+	// store fault surfaces there.
+	"PUT /edev/{id}/rg": sep2Doc("Registration",
+		`<dateTimeRegistered>1700000000</dateTimeRegistered><pIN>1</pIN>`),
+
 	"PUT /edev/{id}/cfg":   sep2Doc("Configuration", `<userDeviceName>probe</userDeviceName>`),
 	"PUT /edev/{id}/dstat": sep2Doc("DeviceStatus", `<changedTime>1700000000</changedTime>`),
 	"PUT /edev/{id}/ps": sep2Doc("PowerStatus",
@@ -218,7 +224,15 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 	device := faultProbeDevice{fault: &storetest.Fault{}, raw: memory.NewEndDeviceStore()}
 	device.ensure(t)
 
+	// The probe identity manages one device, so it is a manager and reaches the
+	// manager-only routes' handlers, where the store fault is injected.
+	managers := memory.NewEndDeviceManagementStore()
+	if err := managers.Assign(context.Background(), testLFDI, "1122334455667788990011223344556677889900"); err != nil {
+		t.Fatalf("assign the probe manager: %v", err)
+	}
+
 	return &assembly.Stores{
+		EndDeviceManagers:   managers,
 		EndDevices:          storetest.NewFaultyEndDeviceStore(device.raw, device.fault),
 		Registrations:       storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault),
 		RegistrationPolicy:  testRegistrationPolicy(),

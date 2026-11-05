@@ -353,6 +353,14 @@ func TestOwnershipGate_OwnerIsNeverRefusedByTheGate(t *testing.T) {
 			continue
 		}
 		status, raw := gateRequest(t, srv, method, path, victimLFDI, "")
+		// The Registration writes are for a manager certificate, which the
+		// owner is not (#1263).
+		if p == "PUT /edev/{id}/rg" || p == "DELETE /edev/{id}/rg" {
+			if status != http.StatusForbidden {
+				t.Errorf("%s as a non-manager owner: status %d, want 403", p, status)
+			}
+			continue
+		}
 		if status == http.StatusForbidden || status == http.StatusMethodNotAllowed {
 			t.Errorf("%s as owner: status %d; body=%q", p, status, raw)
 		}

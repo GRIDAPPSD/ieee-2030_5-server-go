@@ -151,7 +151,7 @@ func registerAll(mux routeRegistrar, stores *Stores, policy AuthPolicy) {
 	registerEndDeviceRoutes(mux, stores, policy, nil, nil, false, nil)
 	registerMirrorRoutes(mux, stores, policy, nil)
 	registerDERRoutes(mux, stores)
-	registerMeteringRoutes(mux, stores)
+	registerMeteringRoutes(mux, stores, policy)
 	registerNewFunctionSetRoutes(mux, stores, nil, 0, 0, nil, nil, nil, nil)
 }
 
@@ -249,8 +249,12 @@ func TestDelegable(t *testing.T) {
 var managerVerdicts = map[string]bool{
 	"GET /edev/{id}":    true,
 	"GET /edev/{id}/rg": false,
-	"PUT /edev/{id}":    false,
-	"DELETE /edev/{id}": true, // CSIP MAINT-002: a manager deletes a device it manages
+	// Not delegation: a manager certificate makes these through
+	// managerOnlyWrites, on any device.
+	"PUT /edev/{id}/rg":    false,
+	"DELETE /edev/{id}/rg": false,
+	"PUT /edev/{id}":       false,
+	"DELETE /edev/{id}":    true, // CSIP MAINT-002: a manager deletes a device it manages
 
 	"GET /edev/{id}/fsa":                                     true,
 	"GET /edev/{id}/fsa/{fsaId}":                             true,

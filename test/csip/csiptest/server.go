@@ -428,6 +428,17 @@ func (b *BootedServer) NewManagerClient(t *testing.T) *http.Client {
 	return b.HTTPClientFor(cert)
 }
 
+// NewDeviceClient mints another ordinary device certificate from this server's
+// CA and returns a client presenting it, with the SFDI and LFDI the server derives
+// from it. It is the second device a test needs next to Client() to show one device
+// cannot act as, or see, another. The device holds no management pair.
+func (b *BootedServer) NewDeviceClient(t *testing.T, hwSerial string) (client *http.Client, sfdi, lfdi string) {
+	t.Helper()
+	cert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, hwSerial)
+	sfdi, lfdi = deriveServerIdentity(t, cert.Certificate)
+	return b.HTTPClientFor(cert), sfdi, lfdi
+}
+
 // shutdown closes the http.Server, waits for the serve goroutine to
 // drain, and reports the result via t.Logf. Safe to call from a
 // t.Cleanup or directly from a test. Idempotent via sync.Once.

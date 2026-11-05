@@ -57,6 +57,24 @@ func CurrentManagerOwns(ctx context.Context, managers store.EndDeviceManagementR
 	return OwnedBy(manager, caller), nil
 }
 
+// IsManager reports whether caller is the manager in at least one pair of
+// managers. It is the one definition of the manager identity that the
+// manager-only writes and the scoped usage point list decide on, so the two
+// cannot disagree on who a manager is. A pair alone is enough: unlike a
+// delegation on one device, these writes are not tied to a managed device's
+// record. A store failure is returned so a caller can answer 500 rather than
+// read an outage as "not a manager".
+func IsManager(ctx context.Context, managers store.EndDeviceManagementReader, caller string) (bool, error) {
+	if caller == "" {
+		return false, nil
+	}
+	managed, err := managers.ManagedBy(ctx, caller)
+	if err != nil {
+		return false, fmt.Errorf("look up the devices the caller manages: %w", err)
+	}
+	return len(managed) > 0, nil
+}
+
 // CurrentManagerOwnsLFDI is CurrentManagerOwns for an LFDI a client named: it
 // canonicalises device and caller (surrounding hexBinary whitespace trimmed,
 // upper case) before the exact comparison, so a lower-case spelling decides

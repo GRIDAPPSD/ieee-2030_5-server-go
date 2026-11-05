@@ -65,7 +65,7 @@ moves from v0.27.0 to v0.30.0.
   (#1208, #1209).
 - Admin UI: Overview power card, per-aggregator bars, energy chart, scheduled
   events timeline and "Under a control" count; DERMS tab grid-request entry and
-  scheduled-block views; Send DER Control form layout; design tokens with a
+  scheduled-block views; Send DER Control form layout; design tokens with
   light values defined (#1115, #1143, #1156 to #1159,
   #1170, #1172, #1173, #1188, #1190, #1133).
 - Windows. `sep2server` runs on Windows (#1218), CI builds it and runs the admin
@@ -75,9 +75,10 @@ moves from v0.27.0 to v0.30.0.
   `gh attestation verify` as RELEASING.md section 16 describes (#1232). The
   binary is unsigned.
 - `SEP2_PEN` defaults to `40732` and a device certificate made without a hardware
-  type uses `1.3.6.1.4.1.40732.99`, the IEEE 2030.5 test arc, each with one
-  log line saying so. `SEP2_HW_TYPE` sets the default; a malformed value stops
-  startup (#1062, #1074).
+  type uses `1.3.6.1.4.1.40732.99`, the IEEE 2030.5 test arc. The PEN default is
+  logged once at startup and the hardware type for each certificate created.
+  `SEP2_HW_TYPE` sets the default; a malformed value stops startup (#1062,
+  #1074).
 - CI runs on every pull request, so its jobs can be required checks (#1224), and
   type-checks the Playwright suite (#1223).
 

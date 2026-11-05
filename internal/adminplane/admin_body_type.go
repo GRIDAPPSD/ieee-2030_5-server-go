@@ -6,6 +6,8 @@ import (
 	"mime"
 	"net/http"
 	"slices"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 )
 
 // adminBodyTypes names the media types each state-changing route on the
@@ -94,10 +96,10 @@ func requireAdminBodyTypes(mux *recordingMux) http.Handler {
 		// line, not just headers or the credential (#416).
 		slog.Warn("admin: content type refused",
 			"event", "admin_body_type_refused",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"pattern", pattern,
-			"remote_addr", r.RemoteAddr,
+			"method", logsafe.Str(r.Method),
+			"path", logsafe.Str(r.URL.Path),
+			"pattern", logsafe.Str(pattern),
+			"remote_addr", logsafe.Str(r.RemoteAddr),
 		)
 		writeUnsupportedContentType(w, types)
 	})

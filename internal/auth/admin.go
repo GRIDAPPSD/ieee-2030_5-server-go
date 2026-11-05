@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 )
 
@@ -96,7 +97,7 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 			// when ANY proxy-forwarded header is present so Caddy-fronted
 			// deployments still run the full auth chain.
 			if loopbackBypass && isLoopbackRemote(r) && !hasForwardedHeader(r) {
-				log.Printf("admin: loopback bypass admitted %s %s", r.Method, r.URL.Path)
+				log.Printf("admin: loopback bypass admitted %s %s", logsafe.Str(r.Method), logsafe.Str(r.URL.Path))
 				next.ServeHTTP(w, withBypassAdmission(r))
 				return
 			}
@@ -292,9 +293,9 @@ func LogFailedAdminCredential(r *http.Request, admissionPath string) {
 		"event", "admin_auth_failure",
 		"outcome", "wrong_credential",
 		"admission_path", admissionPath,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"remote_addr", r.RemoteAddr,
+		"method", logsafe.Str(r.Method),
+		"path", logsafe.Str(r.URL.Path),
+		"remote_addr", logsafe.Str(r.RemoteAddr),
 	)
 	obs.RecordAdminAuthFailure(admissionPath)
 }
@@ -309,9 +310,9 @@ func LogSuccessfulAdminCredential(r *http.Request, admissionPath string) {
 	slog.Info("admin: credential presented and accepted",
 		"event", "admin_auth_success",
 		"admission_path", admissionPath,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"remote_addr", r.RemoteAddr,
+		"method", logsafe.Str(r.Method),
+		"path", logsafe.Str(r.URL.Path),
+		"remote_addr", logsafe.Str(r.RemoteAddr),
 	)
 }
 
@@ -459,9 +460,9 @@ func LogSensitiveRouteRefusal(r *http.Request) {
 		"event", "admin_sensitive_route_refused",
 		"outcome", "credential_required",
 		"admission_path", "loopback_bypass",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"remote_addr", r.RemoteAddr,
+		"method", logsafe.Str(r.Method),
+		"path", logsafe.Str(r.URL.Path),
+		"remote_addr", logsafe.Str(r.RemoteAddr),
 	)
 }
 
@@ -476,9 +477,9 @@ func LogTicketSelfRenewalRefused(r *http.Request) {
 		"event", "admin_ticket_self_renewal_refused",
 		"outcome", "credential_required",
 		"admission_path", "ticket",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"remote_addr", r.RemoteAddr,
+		"method", logsafe.Str(r.Method),
+		"path", logsafe.Str(r.URL.Path),
+		"remote_addr", logsafe.Str(r.RemoteAddr),
 	)
 }
 

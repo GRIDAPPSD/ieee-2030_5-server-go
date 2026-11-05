@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -174,7 +175,7 @@ func (h *AdminProgramListHandler) item(ctx context.Context, k listedKey, p sep2.
 	_, fsa, _, ok := derhref.Program(p.Href)
 	if !ok {
 		h.logger().WarnContext(ctx, "admin: DER program href is not /edev/{id}/fsa/{fsaId}/derp/{id}; listing it with no fsa",
-			"event", "der_program_list_bad_href", "device", k.device, "program", k.id)
+			"event", "der_program_list_bad_href", "device", logsafe.Str(k.device), "program", logsafe.Str(k.id))
 	}
 	item := ProgramListItem{
 		Device: k.device, FSA: fsa, ID: k.id, Href: p.Href, MRID: p.MRID,
@@ -236,6 +237,6 @@ func (h *AdminProgramListHandler) logger() *slog.Logger {
 // and answers a fixed 500.
 func (h *AdminProgramListHandler) failed(w http.ResponseWriter, r *http.Request, step, device, program string, err error) {
 	h.logger().ErrorContext(r.Context(), "admin: DER program list failed", "event", "der_program_list_failed",
-		"step", step, "device", device, "program", program, "path", r.URL.Path, "error", err)
+		"step", step, "device", logsafe.Str(device), "program", logsafe.Str(program), "path", logsafe.Str(r.URL.Path), "error", logsafe.Err(err))
 	writeError(w, http.StatusInternalServerError, programListInternalError)
 }

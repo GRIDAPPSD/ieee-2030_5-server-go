@@ -156,7 +156,7 @@ func (h *AdminFSAHandler) replicateControls(r *http.Request, deviceID, fsaID str
 			message = "a control of this fsa conflicts with a commitment of the device's fleet"
 		}
 		h.audit(r, slog.LevelWarn, "admin: device assignment refused", "der_fsa_assign_refused",
-			"code", string(conflict.Code), "conflict_mrid", conflict.MRID, "device", deviceID, "fsa", fsaID)
+			"code", string(conflict.Code), "conflict_mrid", logsafe.Str(conflict.MRID), "device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID))
 		return jsonFault(err, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
 	}
 	return h.failedFault(r, "replicate_controls", err)
@@ -239,7 +239,7 @@ func (h *AdminFSAHandler) unassignLocked(r *http.Request, deviceID, fsaID string
 	var live *dercontrol.LiveControlsError
 	if errors.As(err, &live) {
 		h.audit(r, slog.LevelWarn, "admin: device unassign refused", "der_fsa_unassign_refused",
-			"code", "live_controls", "device", deviceID, "fsa", fsaID, "controls", live.Controls)
+			"code", "live_controls", "device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "controls", live.Controls)
 		return jsonFault(err, http.StatusConflict, programRefusal{
 			Error:    "cancel these controls, or wait for them to end, before unassigning the device",
 			Code:     "live_controls",

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
@@ -514,6 +515,6 @@ func writeManagementRekeyError(w http.ResponseWriter, role string, err error) {
 // (secure-coding.md section 6). The full error, path included, still goes
 // to the server log, where an operator debugging a write failure needs it.
 func writeManagementInternalError(w http.ResponseWriter, op string, err error) {
-	log.Printf("admin management pairs: %s: %v", op, err)
+	log.Printf("admin management pairs: %s: %s", logsafe.Str(op), logsafe.Err(err))
 	writeError(w, http.StatusInternalServerError, op+": request failed, see server log")
 }

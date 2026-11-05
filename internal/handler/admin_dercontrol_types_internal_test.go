@@ -67,3 +67,25 @@ func TestMapIssuerError_InvalidOrigin(t *testing.T) {
 		t.Errorf("control: an unrelated error maps to %+v, want internal", got)
 	}
 }
+
+type loggedStringer string
+
+func (s loggedStringer) String() string { return string(s) }
+
+// derControlLog.add escapes every text-bearing value type its callers pass,
+// not only string and error (#1236).
+func TestDERControlLogAddEscapesEveryTextType(t *testing.T) {
+	var l derControlLog
+	l.add("supersedes", []string{"ok", "a\nINFO forged"})
+	l.add("stringer", loggedStringer("x\ny"))
+	l.add("count", 3)
+	if got, _ := l.attrs[1].([]string); len(got) != 2 || got[0] != "ok" || got[1] != `a\nINFO forged` {
+		t.Errorf("[]string value = %#v, want the element escaped", l.attrs[1])
+	}
+	if l.attrs[3] != `x\ny` {
+		t.Errorf("Stringer value = %#v, want x\\ny escaped", l.attrs[3])
+	}
+	if l.attrs[5] != 3 {
+		t.Errorf("control: an int stays an int, got %#v", l.attrs[5])
+	}
+}

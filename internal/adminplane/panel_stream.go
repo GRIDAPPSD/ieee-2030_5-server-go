@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/ssedeadline"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 )
@@ -86,7 +87,7 @@ func (q *streamQueue) send(panelID string) sep2admin.StreamSendFunc {
 		}
 		frame, err := encodeStreamEvent(ev)
 		if err != nil {
-			log.Printf("admin: panel %q: stream event refused: %v", panelID, err)
+			log.Printf("admin: panel %s: stream event refused: %s", logsafe.Quote(panelID), logsafe.Err(err))
 			q.finishLocked(streamInvalidEventText)
 			return false
 		}
@@ -193,12 +194,12 @@ func (ps *panelSet) handleStream() http.HandlerFunc {
 		if err := ps.crossOrigin.Check(asWrite); err != nil {
 			slog.Warn("admin: cross-origin request refused",
 				"event", "admin_cross_origin_refused",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"remote_addr", r.RemoteAddr,
-				"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
-				"origin", r.Header.Get("Origin"),
-				"err", err.Error(),
+				"method", logsafe.Str(r.Method),
+				"path", logsafe.Str(r.URL.Path),
+				"remote_addr", logsafe.Str(r.RemoteAddr),
+				"sec_fetch_site", logsafe.Str(r.Header.Get("Sec-Fetch-Site")),
+				"origin", logsafe.Str(r.Header.Get("Origin")),
+				"err", logsafe.Err(err),
 			)
 			writePanelError(w, http.StatusForbidden, "cross-origin admin request refused")
 			return
@@ -286,12 +287,12 @@ func (ps *panelSet) openStream(ctx context.Context, w http.ResponseWriter, r *ht
 	case err == nil:
 		return true
 	case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
-		log.Printf("admin: panel %q: stream open: %v", p.ID, err)
+		log.Printf("admin: panel %s: stream open: %s", logsafe.Quote(p.ID), logsafe.Err(err))
 		writePanelError(w, http.StatusGatewayTimeout, "panel did not answer in time")
 	case errors.Is(err, sep2admin.ErrViewCanceled):
 		writePanelError(w, http.StatusServiceUnavailable, "request canceled")
 	default:
-		log.Printf("admin: panel %q: stream open: %v", p.ID, err)
+		log.Printf("admin: panel %s: stream open: %s", logsafe.Quote(p.ID), logsafe.Err(err))
 		writePanelError(w, http.StatusInternalServerError, "panel failed")
 	}
 	return false

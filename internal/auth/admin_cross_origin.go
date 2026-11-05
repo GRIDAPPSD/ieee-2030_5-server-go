@@ -3,6 +3,8 @@ package auth
 import (
 	"log/slog"
 	"net/http"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 )
 
 // AdminCrossOriginMiddleware refuses a state-changing admin request that a
@@ -25,12 +27,12 @@ func (p *CrossOriginPolicy) Middleware() func(http.Handler) http.Handler {
 			if err := p.Check(r); err != nil {
 				slog.Warn("admin: cross-origin request refused",
 					"event", "admin_cross_origin_refused",
-					"method", r.Method,
-					"path", r.URL.Path,
-					"remote_addr", r.RemoteAddr,
-					"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
-					"origin", r.Header.Get("Origin"),
-					"err", err.Error(),
+					"method", logsafe.Str(r.Method),
+					"path", logsafe.Str(r.URL.Path),
+					"remote_addr", logsafe.Str(r.RemoteAddr),
+					"sec_fetch_site", logsafe.Str(r.Header.Get("Sec-Fetch-Site")),
+					"origin", logsafe.Str(r.Header.Get("Origin")),
+					"err", logsafe.Err(err),
 				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)

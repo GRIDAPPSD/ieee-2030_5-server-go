@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -120,8 +121,8 @@ func fillLink(dst **sep2.Link, permitted bool, want, field, base string) {
 		return
 	}
 	if (*dst).Href != want {
-		log.Printf("der: %s is stored as %q but derives to %q under %q; serving the stored value",
-			field, (*dst).Href, want, base)
+		log.Printf("der: %s is stored as %s but derives to %s under %s; serving the stored value",
+			field, logsafe.Quote((*dst).Href), logsafe.Quote(want), logsafe.Quote(base))
 	}
 }
 
@@ -153,8 +154,8 @@ func DropUnpermittedDERLinks(d *sep2.DER, p DERLinkPolicy) {
 	// permitted. When that lands it gains a field, a fill and a mount
 	// together, and this special case goes away.
 	if d.AssociatedDERProgramListLink != nil {
-		log.Printf("der: dropping client-supplied AssociatedDERProgramListLink %q: no route serves the associated DERProgram list yet",
-			d.AssociatedDERProgramListLink.Href)
+		log.Printf("der: dropping client-supplied AssociatedDERProgramListLink %s: no route serves the associated DERProgram list yet",
+			logsafe.Quote(d.AssociatedDERProgramListLink.Href))
 		d.AssociatedDERProgramListLink = nil
 	}
 }
@@ -164,8 +165,8 @@ func dropLink(dst **sep2.Link, permitted bool, field string) {
 	if permitted || *dst == nil {
 		return
 	}
-	log.Printf("der: dropping client-supplied %s %q: this server does not serve that function set (2018 section 4.4)",
-		field, (*dst).Href)
+	log.Printf("der: dropping client-supplied %s %s: this server does not serve that function set (2018 section 4.4)",
+		field, logsafe.Quote((*dst).Href))
 	*dst = nil
 }
 
@@ -192,14 +193,14 @@ func StampDERInstance(p DERLinkPolicy) func(r *http.Request, d *sep2.DER) {
 
 		if r.Method == http.MethodPut {
 			if d.Href != "" && d.Href != base {
-				log.Printf("der: PUT %s carried Href %q; re-stamping it from the request path", base, d.Href)
+				log.Printf("der: PUT %s carried Href %s; re-stamping it from the request path", logsafe.Str(base), logsafe.Quote(d.Href))
 			}
 			d.Href = base
 			DropUnpermittedDERLinks(d, p)
 		} else if d.Href == "" {
 			d.Href = base
 		} else if d.Href != base {
-			log.Printf("der: the DER stored at %s has Href %q; serving the stored value", base, d.Href)
+			log.Printf("der: the DER stored at %s has Href %s; serving the stored value", logsafe.Str(base), logsafe.Quote(d.Href))
 		}
 
 		FillAbsentDERLinks(d, base, p)

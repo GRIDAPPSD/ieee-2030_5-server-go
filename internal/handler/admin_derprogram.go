@@ -14,6 +14,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	srvmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
@@ -151,7 +152,7 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			return
 		}
 		h.logged(r).InfoContext(r.Context(), "admin: DER program template created", "event", "der_program_template_created",
-			"fsa", fsaID, "template", tmpl.ID, "mrid", tmpl.MRID, "copies", len(devices))
+			"fsa", logsafe.Str(fsaID), "template", logsafe.Str(tmpl.ID), "mrid", logsafe.Str(tmpl.MRID), "copies", len(devices))
 		writeJSON(w, http.StatusCreated, h.templateView(r.Context(), fsaID, tmpl))
 	}
 }
@@ -405,7 +406,7 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 
 		h.notify(r.Context(), programListHref(deviceID, fsaID))
 		h.logged(r).InfoContext(r.Context(), "admin: DER device program created", "event", "der_device_program_created",
-			"device", deviceID, "fsa", fsaID, "program", prog.ID, "mrid", prog.MRID)
+			"device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "program", logsafe.Str(prog.ID), "mrid", logsafe.Str(prog.MRID))
 		writeJSON(w, http.StatusCreated, DeviceProgramView{
 			ID:             prog.ID,
 			Href:           der.DERProgramHref(deviceID, fsaID, prog.ID),
@@ -468,7 +469,7 @@ func (h *AdminFSAHandler) writeTemplate(r *http.Request, fsaID string, tmpl memo
 			continue
 		}
 		if !h.rolledBack(r, err, steps, &incompleteLog{"admin: DER program template create left partly applied", "der_program_template_incomplete",
-			[]any{"fsa", fsaID, "template", tmpl.ID, "error", err}}) {
+			[]any{"fsa", logsafe.Str(fsaID), "template", logsafe.Str(tmpl.ID), "error", logsafe.Err(err)}}) {
 			return nil, statusFault(err, http.StatusInternalServerError, fmt.Sprintf(
 				"program template write failed; template %s was kept on fsa %s and its device copies are completed at the next restart", tmpl.ID, fsaID))
 		}
@@ -502,7 +503,7 @@ func (h *AdminFSAHandler) templateFailed(w http.ResponseWriter, r *http.Request,
 // logTemplateFailed writes the log line of every 500 a program write answers.
 func (h *AdminFSAHandler) logTemplateFailed(r *http.Request, cause string, err error) {
 	h.logged(r).ErrorContext(r.Context(), "admin: DER program write failed", "event", "der_program_template_failed",
-		"cause", cause, "path", r.URL.Path, "error", err)
+		"cause", cause, "path", logsafe.Str(r.URL.Path), "error", logsafe.Err(err))
 }
 
 // rollbackStep undoes one write of a template create, assign or unassign.
@@ -562,7 +563,7 @@ func (h *AdminFSAHandler) rolledBack(r *http.Request, cause error, steps []rollb
 
 func (h *AdminFSAHandler) logUndoFailed(r *http.Request, device, template, part string, err error) {
 	h.logged(r).ErrorContext(r.Context(), "admin: DER program undo incomplete", "event", "der_program_template_undo_failed",
-		"path", r.URL.Path, "device", device, "template", template, "part", part, "error", err)
+		"path", logsafe.Str(r.URL.Path), "device", logsafe.Str(device), "template", logsafe.Str(template), "part", logsafe.Str(part), "error", logsafe.Err(err))
 }
 
 // audit writes an audit line with the base fields every audit line shares.

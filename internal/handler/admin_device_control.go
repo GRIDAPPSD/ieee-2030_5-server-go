@@ -11,6 +11,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -340,7 +341,7 @@ func (t *deviceTxn) finish(h *AdminFSAHandler, r *http.Request) {
 		return
 	}
 	h.rolledBack(r, errors.New("device control request failed"), t.steps,
-		&incompleteLog{"admin: device control left partly applied", "device_control_incomplete", []any{"path", r.URL.Path}})
+		&incompleteLog{"admin: device control left partly applied", "device_control_incomplete", []any{"path", logsafe.Str(r.URL.Path)}})
 }
 
 // chosenPrimacy is the primacy a device-only program takes and why. changed
@@ -455,7 +456,7 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 	var steps []rollbackStep
 	fail := func(cause string, err error) (string, bool) {
 		h.rolledBack(r, err, steps, &incompleteLog{"admin: device-only FSA left partly applied", "device_only_fsa_incomplete",
-			[]any{"device", deviceID, "fsa", fsaID, "cause", cause, "error", err}})
+			[]any{"device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "cause", cause, "error", logsafe.Err(err)}})
 		h.templateFailed(w, r, cause, err)
 		return "", false
 	}

@@ -86,6 +86,8 @@ package srverr
 import (
 	"log"
 	"net/http"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 )
 
 // DefaultMessage is the response body written to the client for a 500 whose
@@ -180,7 +182,7 @@ func Internal(w http.ResponseWriter, r *http.Request, err error) {
 // clientMessage is written to the client and MUST NOT carry internal detail;
 // err is written to the log and never to the client.
 func InternalMessage(w http.ResponseWriter, r *http.Request, clientMessage string, err error) {
-	log.Printf("%s%s: %v", logPrefix, Route(r), errDetail(err))
+	log.Printf("%s%s: %s", logPrefix, logsafe.Str(Route(r)), errDetail(err))
 	http.Error(w, clientMessage, http.StatusInternalServerError)
 }
 
@@ -216,15 +218,15 @@ func BadRequestMessage(w http.ResponseWriter, r *http.Request, clientMessage str
 // admin plane's JSON error envelope) still logs through this package's one
 // convention, then writes its own response with its own fixed message.
 func LogBadRequest(r *http.Request, err error) {
-	log.Printf("%s%s: %v", logPrefix400, Route(r), errDetail(err))
+	log.Printf("%s%s: %s", logPrefix400, logsafe.Str(Route(r)), errDetail(err))
 }
 
 // errDetail names a nil err rather than rendering it as "<nil>", which reads
 // like a bug in the logging rather than like a call site that had no error
 // value to report.
-func errDetail(err error) any {
+func errDetail(err error) string {
 	if err != nil {
-		return err
+		return logsafe.Err(err)
 	}
 	return "(no error reported)"
 }

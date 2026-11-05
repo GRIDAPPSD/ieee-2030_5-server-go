@@ -12,6 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -200,7 +201,7 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 		var audit derControlLog
 		addBaseToLog(&audit, res.Control)
 		ch.log(r, slog.LevelInfo, "admin: FSA DER control created", "der_fsa_control_created", append(audit.attrs,
-			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", len(res.Copies)))
+			"mrid", logsafe.Str(rec.MRID), "fsa", logsafe.Str(fsaID), "template", logsafe.Str(t.ID), "copies", len(res.Copies)))
 		notified, persisted := h.createdFlags()
 		writeJSON(w, http.StatusCreated, FSAControlCreated{
 			FSAControlView:        h.view(ctx, fsaID, rec, devices, sep2time.Now().Unix()),
@@ -438,7 +439,7 @@ func (h *AdminFSAControlHandler) HandleCancel() http.HandlerFunc {
 			return
 		}
 		ch.log(r, slog.LevelInfo, "admin: FSA DER control cancelled", "der_fsa_control_cancelled", []any{
-			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", res.copies})
+			"mrid", logsafe.Str(rec.MRID), "fsa", logsafe.Str(fsaID), "template", logsafe.Str(t.ID), "copies", res.copies})
 		writeJSON(w, http.StatusOK, h.view(ctx, fsaID, res.rec, res.devices, sep2time.Now().Unix()))
 	}
 }
@@ -726,7 +727,7 @@ func (h *AdminFSAControlHandler) heldCopies(ctx context.Context, deviceID, fsaID
 			held[tmplID] = ok
 			if !ok {
 				h.FSAs.logged(nil).WarnContext(ctx, "admin: FSA controls not replicated to a device without the copy", "event", "fsa_control_replica_skipped",
-					"device", deviceID, "fsa", fsaID, "template", tmplID, "reason", fmt.Sprint(err))
+					"device", logsafe.Str(deviceID), "fsa", logsafe.Str(fsaID), "template", logsafe.Str(tmplID), "reason", logsafe.Err(err))
 			}
 		}
 		if ok {

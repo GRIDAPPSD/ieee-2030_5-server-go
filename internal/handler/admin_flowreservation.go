@@ -19,6 +19,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -262,7 +263,7 @@ func writeFRJSON(w http.ResponseWriter, status int, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
-		log.Printf("admin flow reservations: encode: %v", err)
+		log.Printf("admin flow reservations: encode: %s", logsafe.Err(err))
 	}
 }
 
@@ -287,7 +288,7 @@ func (h *AdminFlowReservationHandler) HandleList() http.HandlerFunc {
 		now := h.now()
 		views, err := h.fleetViews(r.Context(), agg, now)
 		if err != nil {
-			log.Printf("admin flow reservations: list %s: %v", agg, err)
+			log.Printf("admin flow reservations: list %s: %s", logsafe.Str(agg), logsafe.Err(err))
 			writeFRInternal(w)
 			return
 		}
@@ -318,13 +319,13 @@ func (h *AdminFlowReservationHandler) HandleGet() http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			log.Printf("admin flow reservations: get %s/%s: %v", edevID, frqID, err)
+			log.Printf("admin flow reservations: get %s/%s: %s", logsafe.Str(edevID), logsafe.Str(frqID), logsafe.Err(err))
 			writeFRInternal(w)
 			return
 		}
 		fleet, held, err := h.fleetOf(ctx, edevID)
 		if err != nil {
-			log.Printf("admin flow reservations: fleet of %s: %v", edevID, err)
+			log.Printf("admin flow reservations: fleet of %s: %s", logsafe.Str(edevID), logsafe.Err(err))
 			writeFRInternal(w)
 			return
 		}
@@ -334,7 +335,7 @@ func (h *AdminFlowReservationHandler) HandleGet() http.HandlerFunc {
 		}
 		view, err := h.viewOf(ctx, edevID, frqID, fleet, frq, h.now())
 		if err != nil {
-			log.Printf("admin flow reservations: view %s/%s: %v", edevID, frqID, err)
+			log.Printf("admin flow reservations: view %s/%s: %s", logsafe.Str(edevID), logsafe.Str(frqID), logsafe.Err(err))
 			writeFRInternal(w)
 			return
 		}
@@ -356,7 +357,7 @@ func (h *AdminFlowReservationHandler) HandleGrants() http.HandlerFunc {
 		now := h.now()
 		views, err := h.fleetViews(r.Context(), agg, now)
 		if err != nil {
-			log.Printf("admin flow reservations: grants %s: %v", agg, err)
+			log.Printf("admin flow reservations: grants %s: %s", logsafe.Str(agg), logsafe.Err(err))
 			writeFRInternal(w)
 			return
 		}
@@ -421,7 +422,7 @@ func stateFilter(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 func (h *AdminFlowReservationHandler) fleetOf(ctx context.Context, edevID string) (fleet string, held bool, err error) {
 	fleet, err = h.Fleets.FleetOf(ctx, edevID)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, commitment.ErrNoLFDI) {
-		log.Printf("WARNING: admin flow reservations: EndDevice %s skipped, its requests belong to no fleet: %v", edevID, err)
+		log.Printf("WARNING: admin flow reservations: EndDevice %s skipped, its requests belong to no fleet: %s", logsafe.Str(edevID), logsafe.Err(err))
 		return "", false, nil
 	}
 	if err != nil {

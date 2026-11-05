@@ -402,7 +402,7 @@ type derControlLog struct {
 }
 
 func (l *derControlLog) add(key string, value any) {
-	l.attrs = append(l.attrs, key, value)
+	l.attrs = append(l.attrs, key, logsafe.Any(value))
 }
 
 func (l *derControlLog) addControl(scope dercontrol.Scope, ctrl sep2.DERControl) {
@@ -480,10 +480,10 @@ func (h *AdminDERControlHandler) incomplete(w http.ResponseWriter, r *http.Reque
 	h.log(r, slog.LevelError, "admin: DER control write could not be undone", "der_control_"+op+"_incomplete", []any{
 		"code", refuseInternal.code,
 		"cause", "undo_incomplete",
-		"mrid", undo.MRID,
-		"href", href,
-		"program_href", undo.Scope.ProgramHref(),
-		"undo_step", string(undo.Step),
+		"mrid", logsafe.Str(undo.MRID),
+		"href", logsafe.Str(href),
+		"program_href", logsafe.Str(undo.Scope.ProgramHref()),
+		"undo_step", logsafe.Str(string(undo.Step)),
 		"control_kept", undo.ControlKept,
 		"lifecycle_kept", undo.LifecycleKept,
 		"unreverted_ids", undo.UnrevertedIDs,
@@ -737,12 +737,12 @@ func (h *AdminDERControlHandler) cancelFleetKeys(ctx context.Context, scope derc
 func (h *AdminDERControlHandler) cancelUnlocked(ctx context.Context, scope dercontrol.Scope, id, mrid, reason, why string, lockErr error) (dercontrol.LifecycleRecord, error) {
 	attrs := []any{
 		"event", "der_control_cancel_unlocked",
-		"reason", why,
-		"device_id", scope.EndDeviceID,
-		"mrid", mrid,
+		"reason", logsafe.Str(why),
+		"device_id", logsafe.Str(scope.EndDeviceID),
+		"mrid", logsafe.Str(mrid),
 	}
 	if lockErr != nil {
-		attrs = append(attrs, "error", lockErr)
+		attrs = append(attrs, "error", logsafe.Err(lockErr))
 	}
 	h.logger().Warn("admin: DER control cancelled without the fleet lock", attrs...)
 	return h.Issuer.Cancel(ctx, scope, id, reason)
@@ -776,7 +776,11 @@ func (h *AdminDERControlHandler) logSuccess(r *http.Request, event, msg string, 
 	var l derControlLog
 	l.addControl(scope, ctrl)
 	addBaseToLog(&l, ctrl)
-	h.log(r, slog.LevelInfo, msg, event, append(l.attrs, extra...))
+	for i := 0; i+1 < len(extra); i += 2 {
+		key, _ := extra[i].(string)
+		l.add(key, extra[i+1])
+	}
+	h.log(r, slog.LevelInfo, msg, event, l.attrs)
 }
 
 // HandleCancel returns the handler for POST /api/der/controls/{mrid}/cancel.
@@ -1037,7 +1041,7 @@ func (h *AdminDERControlHandler) loadDevice(w http.ResponseWriter, r *http.Reque
 // failed operation and route the mux pattern; the store's error text is not
 // logged because it may carry a request-derived id.
 func (h *AdminDERControlHandler) internal(w http.ResponseWriter, r *http.Request, step string) {
-	h.log(r, slog.LevelError, "admin: DER control read failed", "der_control_read_failed", []any{"step", step, "route", r.Pattern})
+	h.log(r, slog.LevelError, "admin: DER control read failed", "der_control_read_failed", []any{"step", step, "route", logsafe.Str(r.Pattern)})
 	writeError(w, refuseInternal.status, refuseInternal.message)
 }
 

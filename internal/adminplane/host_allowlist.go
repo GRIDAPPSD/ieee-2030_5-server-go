@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 )
 
 // #270: Host-header allowlist for the admin listener.
@@ -58,12 +59,12 @@ func HostAllowlistMiddleware(allowed []string) func(http.Handler) http.Handler {
 			if host == "" {
 				if r.ProtoMajor == 1 && r.ProtoMinor == 1 {
 					log.Printf("admin: rejecting request with empty Host header (HTTP/1.1) from %s %s %s",
-						r.RemoteAddr, r.Method, r.URL.Path)
+						logsafe.Str(r.RemoteAddr), logsafe.Str(r.Method), logsafe.Str(r.URL.Path))
 					http.Error(w, "Bad Request: missing Host header", http.StatusBadRequest)
 					return
 				}
 				log.Printf("admin: rejecting request with empty Host header (HTTP/%d.%d) from %s %s %s",
-					r.ProtoMajor, r.ProtoMinor, r.RemoteAddr, r.Method, r.URL.Path)
+					r.ProtoMajor, r.ProtoMinor, logsafe.Str(r.RemoteAddr), logsafe.Str(r.Method), logsafe.Str(r.URL.Path))
 				http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
 				return
 			}
@@ -88,8 +89,8 @@ func HostAllowlistMiddleware(allowed []string) func(http.Handler) http.Handler {
 				return
 			}
 
-			log.Printf("admin: rejecting request with disallowed Host header %q from %s %s %s (allowlist: %v)",
-				host, r.RemoteAddr, r.Method, r.URL.Path, allowedKeys(allowSet))
+			log.Printf("admin: rejecting request with disallowed Host header %s from %s %s %s (allowlist: %v)",
+				logsafe.Quote(host), logsafe.Str(r.RemoteAddr), logsafe.Str(r.Method), logsafe.Str(r.URL.Path), allowedKeys(allowSet))
 			http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
 		})
 	}

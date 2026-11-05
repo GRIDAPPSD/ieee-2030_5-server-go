@@ -578,6 +578,18 @@ well as the tagged tree. Nothing that goes into an image may carry either
 file, and a build that copies the working tree wholesale is exactly how one
 would get in.
 
+**Windows zip.** Publishing the GitHub release (section 11 step 8) triggers
+`.github/workflows/release-windows.yml`, which checks out the tag, runs
+`scripts/package-windows-zip.sh` (it builds with `make build` for
+windows/amd64), and uploads `sep2server-<tag>-windows-amd64.zip` and
+`SHA256SUMS` to that release with `gh release upload --clobber`. The workflow
+never creates or edits the release. If it failed, or a release predates it,
+re-run it with `gh workflow run release-windows.yml -f tag=vX.Y.Z`. The binary
+is unsigned. To verify a download, put both assets in one directory and run
+`sha256sum -c SHA256SUMS` (on Windows: `certutil -hashfile <zip> SHA256` and
+compare with the line in `SHA256SUMS`). Add this to the section 12 check:
+`gh release view vX.Y.Z --json assets -q '.assets[].name'` lists both files.
+
 **`VENDORED.md`** records material vendored into this repository from
 elsewhere. Read it before asserting anything about this repository's
 distribution posture in a release note. An assertion about licensing that

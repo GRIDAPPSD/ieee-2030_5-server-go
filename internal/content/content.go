@@ -337,11 +337,24 @@ func (x *nodeIndex) count(doc []byte) (map[int]int, error) {
 			node := x.child(stack[len(stack)-1], t.Name.Local)
 			counts[node]++
 			stack = append(stack, node)
+			seen := make(map[xml.Name]bool, len(t.Attr))
 			for _, a := range t.Attr {
 				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
 					continue
 				}
-				counts[x.child(node, "@"+a.Name.Local)]++
+				// encoding/xml keeps the last of a repeated attribute, so a
+				// repeat would silently lose a value whatever the values are.
+				if seen[a.Name] {
+					return nil, fmt.Errorf("attribute %s is repeated in %s", shorten(a.Name.Local), shorten(t.Name.Local))
+				}
+				seen[a.Name] = true
+				name := "@" + a.Name.Local
+				if a.Name.Space != "" {
+					// A known attribute matches only in the namespace the
+					// type declares, which for sep2 attributes is none.
+					name = "@" + a.Name.Space + ":" + a.Name.Local
+				}
+				counts[x.child(node, name)]++
 			}
 		case xml.EndElement:
 			stack = stack[:len(stack)-1]

@@ -392,6 +392,33 @@ func TestKnownZeroValuedAttributeIsAccepted(t *testing.T) {
 	}
 }
 
+func TestRepeatedAndForeignNamespaceAttributesAreRefused(t *testing.T) {
+	ctx := context.Background()
+	o, st := register(t, t.TempDir())
+	ok := program("/msg/1", "AA01", "d")
+	with := func(attrs string) string {
+		return strings.Replace(ok, "<primacy>", `<TextMessageListLink href="/m/t" `+attrs+`/><primacy>`, 1)
+	}
+	for _, attrs := range []string{`all="5" all="0"`, `all="0" all="0"`, `all="0" all="5"`} {
+		err := o.Create(ctx, fam, "p1", []byte(with(attrs)))
+		if !errors.Is(err, content.ErrInvalid) || !strings.Contains(err.Error(), "attribute all is repeated") {
+			t.Errorf("Create with %s = %v, want ErrInvalid naming the repeat", attrs, err)
+		}
+	}
+	foreign := strings.Replace(with(`x:all="0"`), "<TextMessageListLink", `<TextMessageListLink xmlns:x="urn:other"`, 1)
+	err := o.Create(ctx, fam, "p1", []byte(foreign))
+	if !errors.Is(err, content.ErrInvalid) || !strings.Contains(err.Error(), "attribute") {
+		t.Errorf("Create with x:all=0 = %v, want ErrInvalid", err)
+	}
+	if n, _ := st.Count(ctx); n != 0 {
+		t.Errorf("count after refusals = %d, want 0", n)
+	}
+	// Control: a single all="0" is still accepted.
+	if err := o.Create(ctx, fam, "p2", []byte(with(`all="0"`))); err != nil {
+		t.Errorf("Create with a single all=0 = %v, want nil", err)
+	}
+}
+
 func TestSnapshotRecordMustBindHrefToItsID(t *testing.T) {
 	dir := t.TempDir()
 	body := `{"version":1,"records":[{"parent":"all","id":"p2","value":{"href":"/msg/p1","mRID":"AA01"}}]}`

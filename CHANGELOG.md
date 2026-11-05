@@ -52,7 +52,7 @@ moves from v0.27.0 to v0.30.0.
   and the control lists return it (#1154, #1155, #1156, #1157).
 - Power and energy. `GET /api/derms/power` serves real power over time per device
   and in total, energy charged and discharged per bucket, the instantaneous
-  total kW (`latestW`, `latestAt`, `latestMissing`) and `aggregatorEnergy` per
+  total power in watts (`latestW`, `latestAt`, `latestMissing`) and `aggregatorEnergy` per
   aggregator (#1112, #1113, #1114, #1147, #1148, #1189). The history is kept
   across restarts under `<SEP2_DATA_DIR>/power-history/` for
   `SEP2_POWER_HISTORY_HOURS` (default 48) (#1150).
@@ -87,10 +87,10 @@ moves from v0.27.0 to v0.30.0.
   and v0.29.0). `DERCapability` `rtgMaxA` is now a `CurrentRMS` element,
   `<rtgMaxA><multiplier>0</multiplier><value>16</value></rtgMaxA>`, and a bare
   number such as `<rtgMaxA>16</rtgMaxA>` is refused with an error naming the
-  element where it was once read as 0. A client that posts the bare form is
-  now refused. The reply of `/api/derms/devices/{edevId}/ders` carries `rtgMaxA` as
-  `{value, multiplier}`, and the 16 DERCapability and 2 DERStatus elements core
-  adds, null when absent (#1111, #1168, #1226).
+  element (v0.18.0 read the bare number as 16 into an `*int32`). A client that
+  puts the bare form is now refused. The new `/api/derms/devices/{edevId}/ders`
+  route carries `rtgMaxA` as `{value, multiplier}`, and the 16 DERCapability and
+  2 DERStatus elements core adds, null when absent (#1111, #1168, #1226).
 - **Breaking, Go surface.** `store.EndDeviceManagementStore` gains `Release`, so
   an embedder that implements it must add the method (#1087), and
   `activity.Recorder.Middleware` is removed because the recorder is fed by the
@@ -99,10 +99,13 @@ moves from v0.27.0 to v0.30.0.
 - **Breaking, registration and rekey.** A request whose certificate LFDI is the
   managed side of a management pair gets 403 (`managed-direct`) on every
   protocol route, since a DER connects in one scenario only (#1128). A managed
-  rekey answers 409 while the old LFDI still has an EndDevice record; delete
-  it first. A manager acting on `/mup` for a managed LFDI needs that device's
-  EndDevice record, and a rotated certificate is refused as
-  `not-owner-or-manager` until an operator runs rekey (#1087).
+  rekey answers 409 while the old LFDI still has an EndDevice record or owns
+  MirrorUsagePoints; remove them first. A manager acting on `/mup` for a managed
+  LFDI needs that device's EndDevice record, and a rotated manager certificate
+  is refused as `not-owner-or-manager` on delegated routes until an operator
+  runs rekey (#1087). A `POST /edev` whose body lFDI differs from the
+  certificate's, which v0.18.0 silently overrode with the certificate's, now
+  gets 403 (not its manager) or 400 (malformed) (#1127).
 - Every EndDevice now advertises `DERListLink`, and the server seeds one DER at
   `/edev/{id}/der/1` for each EndDevice, on `POST /edev` and at boot. A device
   that registered itself was served no `DERListLink` and had no DER, so a client
@@ -141,7 +144,8 @@ moves from v0.27.0 to v0.30.0.
   built from the same readings an uninterrupted server holds, so a device that had
   gone quiet is no longer dropped from a covered Total.
 - The device log directory check refused every directory on Windows, where Go
-  reports mode 0777, so the log could not run there (#1218).
+  reports mode 0777, so the log could not run there. On Windows the log stays off
+  unless `SEP2_DEVICE_LOG_DIR` is set (#1218).
 - Admin UI: the Logs tab no longer jumps to the top on each dashboard frame, the
   drawer's poll overlap, first-page and focus defects are gone (#1079, #1085, #1129).
 

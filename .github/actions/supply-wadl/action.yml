@@ -2,7 +2,9 @@ name: "Supply the IEEE 2030.5 WADL"
 description: >
   Reassemble a licensed sep_wadl.xml from a repository secret into a file
   outside the checkout and export SEP2_WADL_PATH plus SEP2_WADL_REQUIRED, so the
-  WADL-gated conformance tests RUN instead of skipping.
+  WADL-gated conformance tests RUN instead of skipping. Optionally does the same
+  for sep.xsd (SEP2_SCHEMA_PATH plus SEP2_SCHEMA_REQUIRED), from two secret
+  parts, through the same reassemble.sh.
 
   Factored out of ci.yml so the digest constants and the reassembly logic have
   exactly one home. Two copies would drift the moment the secret is resealed,
@@ -28,7 +30,25 @@ inputs:
     required: false
     default: "false"
 
+  schema-xz-b64-0:
+    description: >
+      First half of the base64-encoded xz stream holding sep.xsd. Pass
+      secrets.SEP2_SCHEMA_XZ_B64_0, the name core-go uses. Both halves empty
+      leaves the schema gate unarmed; exactly one empty fails.
+    required: false
+    default: ""
+  schema-xz-b64-1:
+    description: >
+      Second half of that stream. Pass secrets.SEP2_SCHEMA_XZ_B64_1.
+    required: false
+    default: ""
+
 outputs:
+  schema-armed:
+    description: >
+      "true" when a digest-verified sep.xsd is on disk and SEP2_SCHEMA_REQUIRED
+      has been exported.
+    value: ${{ steps.schema.outputs.armed }}
   armed:
     description: >
       "true" when a digest-verified WADL is on disk and SEP2_WADL_REQUIRED has
@@ -48,6 +68,7 @@ runs:
       env:
         WADL_XZ_B64: ${{ inputs.wadl-xz-b64 }}
         WADL_REQUIRED: ${{ inputs.required }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
 
@@ -80,49 +101,47 @@ runs:
           exit 0
         fi
 
-        if ! command -v xz > /dev/null; then
-          echo "::error::xz is not installed on this runner, so the WADL cannot be decompressed."
-          exit 1
-        fi
-
-        # Written outside the checkout on purpose. RUNNER_TEMP is not the repo
-        # working tree, so the file cannot be committed, is not visible to
-        # anything that globs the tree, and is not part of any path a later step
-        # would upload as an artifact. The runner deletes it when the job ends.
-        dest_dir="${RUNNER_TEMP:?RUNNER_TEMP is unset}/sep2-wadl"
-        case "$dest_dir" in
-          "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is unset}"/*)
-            echo "::error::Refusing to write the WADL inside the repository working tree."
-            exit 1
-            ;;
-        esac
-        umask 077
-        mkdir -p "$dest_dir"
-        dest="$dest_dir/sep_wadl.xml"
-
-        if ! printf '%s' "$WADL_XZ_B64" \
-          | tr -d '[:space:]' \
-          | base64 -d \
-          | xz -d > "$dest"; then
-          rm -f "$dest"
-          echo "::error::Could not reassemble sep_wadl.xml from SEP2_WADL_XZ_B64. The value must be one base64 string holding an xz stream."
-          exit 1
-        fi
-
-        got_bytes=$(wc -c < "$dest")
-        got_md5=$(md5sum < "$dest" | cut -d ' ' -f 1)
-        if [ "$got_bytes" != "$want_bytes" ] || [ "$got_md5" != "$want_md5" ]; then
-          rm -f "$dest"
-          echo "::error::Reassembled WADL is not the expected document: $got_bytes bytes, md5 $got_md5; want $want_bytes bytes, md5 $want_md5. A truncated or half-rotated secret is the likely cause; reseal from one copy."
-          exit 1
-        fi
-        echo "Reassembled sep_wadl.xml: $got_bytes bytes, md5 matches."
+        REASSEMBLE_PAYLOAD=$WADL_XZ_B64 bash "$ACTION_PATH/reassemble.sh" \
+          "WADL" sep2-wadl sep_wadl.xml "$want_md5" "$want_bytes" SEP2_WADL_PATH
 
         # Only reached once the file on disk is verified, so no path gets to
         # go test with a WADL configured but unchecked, and none gets there with
         # the secret present but REQUIRED unset.
-        {
-          echo "SEP2_WADL_PATH=$dest"
-          echo "SEP2_WADL_REQUIRED=1"
-        } >> "$GITHUB_ENV"
+        echo "SEP2_WADL_REQUIRED=1" >> "$GITHUB_ENV"
+        echo "armed=true" >> "$GITHUB_OUTPUT"
+
+    - id: schema
+      shell: bash
+      # Same handling as the WADL step; the schema arrives in two secret parts
+      # because it exceeds one secret's size limit.
+      env:
+        SCHEMA_PART_0: ${{ inputs.schema-xz-b64-0 }}
+        SCHEMA_PART_1: ${{ inputs.schema-xz-b64-1 }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+
+        # Transport check on the reassembly only: the bytes sealed into the two
+        # secrets (IEEE 2030.5-2018 Model Build 20180301 sep.xsd), matching the
+        # values core-go checks. The Go loader pins the document's identity.
+        want_md5=e4acb8b31a64a70c06af24f22f2d0441
+        want_bytes=381926
+
+        # Both parts empty is legitimate absence (a fork pull request, or the
+        # secrets not yet added). Exactly one empty is a broken pair.
+        if [ -z "${SCHEMA_PART_0:-}" ] && [ -z "${SCHEMA_PART_1:-}" ]; then
+          echo "No schema secrets in scope for this run (fork pull request, secrets withheld, or not yet added)."
+          echo "Leaving SEP2_SCHEMA_REQUIRED unset: the schema-gated sweep checks SKIP and the run stays green."
+          echo "armed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -z "${SCHEMA_PART_0:-}" ] || [ -z "${SCHEMA_PART_1:-}" ]; then
+          echo "::error::Exactly one of SEP2_SCHEMA_XZ_B64_0 and SEP2_SCHEMA_XZ_B64_1 is set. That is a broken secret pair, not an absent schema; set both or neither."
+          exit 1
+        fi
+
+        REASSEMBLE_PAYLOAD="${SCHEMA_PART_0}${SCHEMA_PART_1}" bash "$ACTION_PATH/reassemble.sh" \
+          "schema" sep2-schema sep.xsd "$want_md5" "$want_bytes" SEP2_SCHEMA_PATH
+
+        echo "SEP2_SCHEMA_REQUIRED=1" >> "$GITHUB_ENV"
         echo "armed=true" >> "$GITHUB_OUTPUT"

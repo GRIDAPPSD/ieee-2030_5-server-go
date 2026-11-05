@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 )
 
 // Mintable-href routing assertion.
@@ -181,7 +183,7 @@ func MintableHrefs() []MintableHref {
 		{"/dc", http.MethodGet, "handlers/dcap.HandleDeviceCapability DERProgramListLink", "global DERCurve list"},
 		{"/msg", http.MethodGet, "handlers/dcap.HandleDeviceCapability MessagingProgramListLink", "messaging programs"},
 		{"/rsps", http.MethodGet, "handlers/dcap.HandleDeviceCapability ResponseSetListLink", "response sets"},
-		{"/rt", http.MethodGet, "assembly.topLevelMounts", "ReadingType list, mounted on the top-level mux"},
+		{"/rt", http.MethodGet, "routefamily.All", "ReadingType list, mounted on the top-level mux"},
 
 		// EndDevice and its immediate children.
 		{"/edev/{}", http.MethodGet, "handlers/enddevice.HandleCreateEndDevice", "the Location header a client follows after POST /edev, and the self href of every EndDevice in the list"},
@@ -411,7 +413,7 @@ func checkHrefsAgainst(probe http.Handler, hrefs []MintableHref) []UnroutedHref 
 
 // buildProbeRouter reconstructs the production routing topology from a pattern
 // list: a protocol mux carrying every pattern, mounted on a top mux under
-// topLevelMounts, with a marker handler in place of the real ones.
+// the family mounts, with a marker handler in place of the real ones.
 //
 // The marker writes 200 and nothing else. That is the third discriminator
 // alongside the stdlib's 404 and 405: a 200 can only have come from a pattern
@@ -439,7 +441,7 @@ func buildProbeRouter(patterns []string) (h http.Handler, err error) {
 	}
 
 	top := http.NewServeMux()
-	for _, prefix := range topLevelMounts {
+	for _, prefix := range routefamily.Mounts() {
 		top.Handle(prefix, protocol)
 	}
 	return top, nil

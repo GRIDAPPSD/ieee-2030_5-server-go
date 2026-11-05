@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 )
 
 // This file walks a live IEEE 2030.5 server against the normative WADL.
@@ -214,6 +216,17 @@ func isMuxNotFound(r response) bool {
 		strings.TrimSpace(string(r.body)) == muxNotFoundBody
 }
 
+// isRouteRefusal reports the refusal the server gives a path no route family
+// names. It is a 403, but not an ACL denial: the body says no route exists.
+func isRouteRefusal(r response) bool {
+	return r.status == http.StatusForbidden &&
+		strings.TrimSpace(string(r.body)) == routefamily.RefusalBody
+}
+
+// isUnrouted is the wire discriminator for "no route": the mux's own 404, or
+// the server's refusal of a path no family names.
+func isUnrouted(r response) bool { return isMuxNotFound(r) || isRouteRefusal(r) }
+
 // ---- route index --------------------------------------------------------
 
 // routeIndex answers "did the router register a pattern matching this
@@ -377,7 +390,10 @@ func classify(m Method, concretePath string, r response, root string, muxByPath 
 		return VerdictTransportError
 	}
 
-	if r.status == http.StatusNotFound {
+	// A HEAD refusal has no body to carry the marker, so it borrows the GET
+	// evidence like a HEAD 404 does.
+	headRefusal := r.status == http.StatusForbidden && m.Verb == http.MethodHead && muxByPath[concretePath]
+	if r.status == http.StatusNotFound || isRouteRefusal(r) || headRefusal {
 		// An E-mode method declares 400/405. A 404 there is a distinct,
 		// milder finding than a 404 on a Mandatory method, so it gets its
 		// own class rather than being folded into "unrouted".
@@ -399,7 +415,7 @@ func classify(m Method, concretePath string, r response, root string, muxByPath 
 			}
 			return VerdictRoutedNotFound
 		}
-		if isMuxNotFound(r) {
+		if isUnrouted(r) {
 			return VerdictUnrouted
 		}
 		return VerdictRoutedNotFound
@@ -657,7 +673,7 @@ func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][
 		switch {
 		case r.transportError != "":
 			v = VerdictTransportError
-		case r.status == http.StatusNotFound && isMuxNotFound(r):
+		case isUnrouted(r):
 			v = VerdictDeadLinkUnrouted
 		case r.status == http.StatusNotFound:
 			v = VerdictDeadLinkNotFound
@@ -730,8 +746,8 @@ func (t *Target) phaseWADL(m *Model, discovered []string, rows *[]Row, ri *route
 
 		r := t.do(meth.Verb, path, body)
 		root := rootElement(r.body)
-		if meth.Verb == http.MethodGet && r.status == http.StatusNotFound {
-			muxByPath[path] = isMuxNotFound(r)
+		if meth.Verb == http.MethodGet && (r.status == http.StatusNotFound || isRouteRefusal(r)) {
+			muxByPath[path] = isUnrouted(r)
 		}
 		v := classify(meth, path, r, root, muxByPath)
 
@@ -798,7 +814,7 @@ func (t *Target) followLocation(rows *[]Row, ri *routeIndex, loc, mintedBy, wadl
 	switch {
 	case r.transportError != "":
 		v = VerdictTransportError
-	case r.status == http.StatusNotFound && isMuxNotFound(r):
+	case isUnrouted(r):
 		v = VerdictLocationUnrouted
 	case r.status == http.StatusNotFound:
 		v = VerdictLocationNotFound

@@ -190,7 +190,7 @@ func TestAssertMintableHrefs_NewUnroutedHrefFailsLoudly(t *testing.T) {
 			name:       "top-level collection deleted",
 			drop:       "GET /rt",
 			wantShape:  "/rt",
-			wantMint:   "assembly.topLevelMounts",
+			wantMint:   "routefamily.All",
 			wantReason: string(assembly.ReasonNoRoute),
 		},
 	}

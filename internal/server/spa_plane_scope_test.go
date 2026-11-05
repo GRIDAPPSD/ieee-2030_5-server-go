@@ -32,8 +32,8 @@ func TestProtocolListenerDoesNotMountAdminUIShell(t *testing.T) {
 
 			router.ServeHTTP(rec, req)
 
-			if rec.Code != http.StatusNotFound {
-				t.Fatalf("GET %s on protocol listener: status = %d, want 404 (the admin UI shell must not be mounted on the protocol listener); body = %q",
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("GET %s on protocol listener: status = %d, want 403 (the admin UI shell must not be mounted on the protocol listener); body = %q",
 					p, rec.Code, rec.Body.String())
 			}
 			if strings.Contains(rec.Body.String(), `<div id="app">`) {

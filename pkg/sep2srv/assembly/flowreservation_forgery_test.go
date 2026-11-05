@@ -74,13 +74,13 @@ func TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored(t *testing.T) {
 	}
 	assertDerivedNotForged(t, "/edev list", list.EndDevice[0])
 
-	// The forged href must not even resolve: this server never routed it.
+	// The forged href must not even resolve: no route family names it, so it is refused.
 	forgedResp, err := srv.Client().Get(srv.URL + "/evil/frq")
 	if err != nil {
 		t.Fatalf("GET /evil/frq: %v", err)
 	}
-	if forgedResp.StatusCode != http.StatusNotFound {
-		t.Errorf("GET /evil/frq status = %d, want 404 (control: the forged href was never mounted)", forgedResp.StatusCode)
+	if forgedResp.StatusCode != http.StatusForbidden {
+		t.Errorf("GET /evil/frq status = %d, want 403 (control: the forged href was never mounted)", forgedResp.StatusCode)
 	}
 }
 

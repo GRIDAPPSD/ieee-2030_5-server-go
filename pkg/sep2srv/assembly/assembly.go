@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 	"io"
 	"log"
 	"net/http"
@@ -497,9 +498,13 @@ func BuildProtocolRouter(
 		protocolChain = authPolicy.Wrap(inner)
 	}
 
-	for _, prefix := range topLevelMounts {
+	for _, prefix := range routefamily.Mounts() {
 		top.Handle(prefix, protocolChain)
 	}
+	// Everything the families do not name is refused here, before the
+	// identity, ACL and observer chain and before any handler, whether or not
+	// the caller supplied a Wrap.
+	top.HandleFunc("/", routefamily.Refuse)
 
 	return bufferContentLength(encoding.NamespaceMiddleware(top)), protocolMux.Patterns()
 }
@@ -542,24 +547,6 @@ func NewSubscriberCheck(cfg RouterConfig, stores *Stores) coresub.SubscriberChec
 		SFDIPrefix: func(string) (string, error) { return "", errors.New("SFDIPrefix not configured: deny") },
 	}
 	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil, nil).checkSubscriber
-}
-
-// topLevelMounts are the prefixes under which the protocol mux is mounted on
-// the outer mux. A pattern registered on the protocol mux whose family is
-// absent here is unreachable no matter how well formed it is, which is the
-// same advertised-but-unrouted defect one layer up, so the href probe in
-// hrefs.go mounts the same list rather than testing the protocol mux alone.
-//
-// The paired bare and trailing-slash entries are both required: "/edev"
-// matches only the collection, "/edev/" matches everything beneath it.
-var topLevelMounts = []string{
-	"/dcap", "/tm", "/sdev", "/sdev/",
-	"/edev", "/edev/",
-	"/mup", "/mup/",
-	"/dc", "/dc/",
-	"/upt", "/upt/", "/rt", "/rt/",
-	"/msg", "/msg/",
-	"/rsps", "/rsps/",
 }
 
 // routeRegistrar is the surface the register*Routes helpers need from a mux.

@@ -1027,7 +1027,10 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// control count in the scope the link names (issue context: a control
 	// added after boot must be counted), independent of whether an issuer's
 	// lifecycle store is wired.
-	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls)
+	// Its ActiveDERControlListLink is served because the actderc route below
+	// is mounted, and counts the same controls that route lists.
+	activeControls := coreder.NewActiveControlStore(derControls)
+	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls).WithActiveList(activeControls)
 
 	// The protocol routes below read through these two, which note the served
 	// mRIDs on the request's device log line. derPrograms above counts the
@@ -1035,6 +1038,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// decorator wraps the ordering wrapper, not the other way round, so List
 	// notes the page that was served rather than the whole collection.
 	servedControls := devicelog.NewServedStore(store.OrderedScoped(derControls, coreder.CompareDERControl), func(c sep2.DERControl) string { return c.MRID })
+	servedActive := devicelog.NewServedStore(store.OrderedScoped(activeControls, coreder.CompareDERControl), func(c sep2.DERControl) string { return c.MRID })
 	servedDefaults := devicelog.NewServedStore(defaultDERControls, func(c sep2.DefaultDERControl) string { return c.MRID })
 
 	dercap, derg, ders, dera := coreder.DERSingletonHandlers(
@@ -1116,6 +1120,13 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 		scopedListHandlerDeep[sep2.DERControl, sep2.DERControlList](
 			servedControls, store.SortByListOrdering, coreder.BuildDERControlList, 900,
+		))
+
+	// The controls of the program that are Active now, in the control
+	// list's order and paging.
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/actderc",
+		scopedListHandlerDeep[sep2.DERControl, sep2.DERControlList](
+			servedActive, store.SortByListOrdering, coreder.BuildDERControlList, 900,
 		))
 
 	// A DERControl's own href, so an activated event resolves. A client that

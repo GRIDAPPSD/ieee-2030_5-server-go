@@ -65,6 +65,19 @@ func ControlList(href string) (edev, fsa, derp string, ok bool) {
 	return Program(trimmed)
 }
 
+// ActiveControlList is the href of the active control list of the program
+// whose control list is at controlListHref ("/edev/{id}/fsa/{fsaId}/derp/{derpId}/actderc").
+// It is the only place the suffix is written, so the link a program
+// advertises and the route that serves it cannot disagree. ok is false when
+// controlListHref is not a control list link.
+func ActiveControlList(controlListHref string) (string, bool) {
+	if _, _, _, ok := ControlList(controlListHref); !ok {
+		return "", false
+	}
+	trimmed, _ := strings.CutSuffix(strings.TrimSpace(controlListHref), "/derc")
+	return trimmed + "/actderc", true
+}
+
 // ControlListScope is [ControlList] composed into the single scope key
 // string the DERControl store is keyed by, via [ScopeKey].
 func ControlListScope(href string) (string, bool) {

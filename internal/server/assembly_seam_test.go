@@ -142,6 +142,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}/fsa/{fsaId}",
 	"GET /edev/{id}/fsa/{fsaId}/derp",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}",
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/actderc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}",

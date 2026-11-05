@@ -587,10 +587,18 @@ reproducible (entry times are the tag commit time), and the workflow never
 creates or edits the release or replaces a published asset: on a re-run, if
 the release already holds the zip, the rebuilt `SHA256SUMS` must equal the
 published one (the job then uploads nothing) or the job fails. Runs for one
-tag are serialized. If it failed, or a release predates it, re-run it with
-`gh workflow run release-windows.yml -f tag=vX.Y.Z`. The binary is unsigned. To verify a download, put both assets in one directory and run
+tag are serialized. If it failed, re-run it with
+`gh workflow run release-windows.yml --ref vX.Y.Z -f tag=vX.Y.Z` (the job fails unless the run ref is the tag). Only tags cut after this workflow landed can get a Windows zip. The binary is unsigned. To verify a download, put both assets in one directory and run
 `sha256sum -c SHA256SUMS` (on Windows: `certutil -hashfile <zip> SHA256` and
-compare with the line in `SHA256SUMS`). Add this to the section 12 check:
+compare with the line in `SHA256SUMS`). The job also attests build provenance
+for both files; to check that a zip was built by this workflow from the tag's
+commit run
+`gh attestation verify <zip> -R GRIDAPPSD/ieee-2030_5-server-go --signer-workflow GRIDAPPSD/ieee-2030_5-server-go/.github/workflows/release-windows.yml --source-ref refs/tags/vX.Y.Z`.
+If the attach step succeeds and the attest step fails, the zip stays published
+unattested until the documented re-run.
+A re-run that finds the zip already published attests the same digest again,
+which adds a duplicate record for the same file, never one for a different
+zip. Add this to the section 12 check:
 `gh release view vX.Y.Z --json assets -q '.assets[].name'` lists both files.
 
 **`VENDORED.md`** records material vendored into this repository from

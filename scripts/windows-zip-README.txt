@@ -4,6 +4,8 @@ sep2server for Windows (amd64)
 This zip holds sep2server.exe, an IEEE 2030.5 server. The file is unsigned,
 so Windows SmartScreen warns on first run: choose "More info", then "Run
 anyway". Check the zip against SHA256SUMS from the same release page first.
+To check that this zip was built by the project's release workflow, run:
+  gh attestation verify <zip> -R GRIDAPPSD/ieee-2030_5-server-go --signer-workflow GRIDAPPSD/ieee-2030_5-server-go/.github/workflows/release-windows.yml --source-ref refs/tags/<tag>
 
 Environment
 -----------

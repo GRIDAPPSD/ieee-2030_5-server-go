@@ -90,8 +90,8 @@ func TestWADLConformanceSweep(t *testing.T) {
 	for _, row := range res.Filter(func(r wadl.Row) bool {
 		return r.Phase == wadl.PhaseSeed && r.Verdict != wadl.VerdictSeeded
 	}) {
-		t.Errorf("seed failed: %s %s (%s) returned status %d, verdict %q",
-			row.Method, row.Path, row.Element, row.Status, row.Verdict)
+		t.Errorf("seed failed: %s %s (%s) returned status %d, verdict %q: %s",
+			row.Method, row.Path, row.Element, row.Status, row.Verdict, row.TransportError)
 	}
 
 	// 2b. Unseeded probes. A routed row that answers 404 means the sweep

@@ -79,6 +79,9 @@ const (
 	VerdictFieldsMissing    Verdict = "missing_required_fields"
 	VerdictSeeded           Verdict = "seeded"
 	VerdictSeedFailed       Verdict = "seed_failed"
+	// VerdictSeedFailedDirect marks a seed written straight into the stores
+	// that did not complete; Row.TransportError carries the reason.
+	VerdictSeedFailedDirect Verdict = "seed_failed_direct"
 )
 
 // Phase names the stage of the sweep a row came from.
@@ -692,16 +695,8 @@ func seedSet() []seed {
 				return s.MessagingPrograms.Create(ctx, "1", mp)
 			},
 		},
-		{
-			method: http.MethodPost, path: "/msg/1/tm", element: "TextMessage",
-			body: `<TextMessage xmlns="` + sepNS + `"><mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FDD</mRID>` +
-				`<interval><duration>3600</duration><start>1785700000</start></interval>` +
-				`<priority>0</priority><textMessage>wadl sweep</textMessage></TextMessage>`,
-		},
 	}
 }
-
-var seededDevice = regexp.MustCompile(`^/edev/([^/]+)$`)
 
 // phaseSeed returns the hrefs the seeds minted, for resources no advertised
 // link reaches (a Subscription is listed under no EndDevice link).
@@ -726,15 +721,22 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 		case s.direct != nil && t.Stores == nil:
 			directErr = errors.New("the target carries no stores to seed")
 		case s.direct != nil:
+			// A direct seed has no HTTP response; status 200 is recorded only
+			// when it completes, so a failure is not read as an accepted POST.
 			directErr = s.direct(context.Background(), t.Stores, dev)
-			r.status = http.StatusOK
+			if directErr == nil {
+				r.status = http.StatusOK
+			}
 		default:
 			r = t.do(s.method, path, []byte(body))
 		}
 
 		v := Verdict(fmt.Sprintf("%s_%d", VerdictSeedFailed, r.status))
-		if directErr == nil && (r.status == http.StatusOK || r.status == http.StatusCreated) {
+		switch {
+		case directErr == nil && (r.status == http.StatusOK || r.status == http.StatusCreated):
 			v = VerdictSeeded
+		case directErr != nil && s.direct != nil:
+			v = VerdictSeedFailedDirect
 		}
 		row := Row{
 			Phase:           PhaseSeed,
@@ -754,7 +756,7 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 			row.TransportError = directErr.Error()
 		}
 		*rows = append(*rows, row)
-		if m := seededDevice.FindStringSubmatch(r.location); m != nil && dev == "" {
+		if m := devicePath.FindStringSubmatch(r.location); m != nil && dev == "" {
 			dev = m[1]
 		}
 		if r.location != "" {

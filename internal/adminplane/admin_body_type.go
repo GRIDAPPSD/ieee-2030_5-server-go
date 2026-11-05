@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 )
 
@@ -15,6 +16,9 @@ import (
 // handlers decode whatever arrives, and text/plain is a type a page can send
 // with no preflight, so the label is checked here (#416).
 var adminBodyTypes = map[string][]string{
+	"POST /api/content/{family}/{id}":                  handler.ContentBodyTypes,
+	"PUT /api/content/{family}/{id}":                   handler.ContentBodyTypes,
+	"DELETE /api/content/{family}/{id}":                nil,
 	"POST /api/certs/server":                           {"application/json"},
 	"POST /api/certs/device":                           {"application/json"},
 	"POST /api/certs/info":                             {"application/x-pem-file", "multipart/form-data"},

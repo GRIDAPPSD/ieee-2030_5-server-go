@@ -1,3 +1,4 @@
+    DELETE /api/content/{family}/{id}
     DELETE /api/devices/{id}/der-programs/{derpId}
     DELETE /api/devices/{id}/fsa-assignment
     DELETE /api/fsas/{id}
@@ -42,6 +43,7 @@
     POST /api/certs/device
     POST /api/certs/info
     POST /api/certs/server
+    POST /api/content/{family}/{id}
     POST /api/der/controls
     POST /api/der/controls/{mrid}/cancel
     POST /api/derms/flow-reservations/{edevId}/{frqId}/answer
@@ -63,6 +65,7 @@
     POST /api/management-pairs/rekey
     POST /auth/login
     POST /auth/ticket
+    PUT /api/content/{family}/{id}
     PUT /api/device-profiles/{lfdi}
     PUT /api/devices/{id}/der-programs/{derpId}
     PUT /api/fsas/{id}/der-programs/{derpId}

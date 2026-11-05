@@ -48,7 +48,10 @@ var sensitiveAdminPatterns = map[string]struct{}{
 //   - /api/device-logs/ (#1066): a device's log shows its request pattern
 //     and its manager's actions. The trailing slash covers the download
 //     route and any later one.
-var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/device-profiles", "/api/derms/", "/api/ui/panels", "/api/device-logs/"}
+//   - /api/content/ (#1245): operator-loaded content, some of it per
+//     customer (billing, prepayment). The whole family is covered by prefix
+//     so a customer family added later is protected without an entry here.
+var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/device-profiles", "/api/derms/", "/api/ui/panels", "/api/device-logs/", "/api/content/"}
 
 // isSensitiveAdminReadPath reports whether path falls under one of
 // sensitiveAdminReadPrefixes.

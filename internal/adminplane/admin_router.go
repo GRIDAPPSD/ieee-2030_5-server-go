@@ -205,6 +205,16 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		mountWrite("PUT /api/device-profiles/{lfdi}", profH.HandlePutDeviceProfile())
 	}
 
+	// #1245 operator-loaded content for server-authored function sets. The
+	// writes are off nonSensitiveAdminWrites, so each needs a real credential,
+	// and /api/content/ is a sensitive read prefix: a family may be per customer.
+	if stores != nil && stores.Content != nil {
+		contentH := &handler.AdminContentHandler{Content: stores.Content}
+		mountWrite("POST /api/content/{family}/{id}", contentH.HandleCreate())
+		mountWrite("PUT /api/content/{family}/{id}", contentH.HandleReplace())
+		mountWrite("DELETE /api/content/{family}/{id}", contentH.HandleDelete())
+	}
+
 	// #163 FSA hierarchy management API.
 	fsaH := newAdminFSAHandler(stores)
 	if fsaH != nil {

@@ -49,7 +49,7 @@ func (h *AdminContentHandler) HandleDelete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fam, id := r.PathValue("family"), r.PathValue("id")
 		if err := h.Content.Delete(r.Context(), fam, id); err != nil {
-			writeContentError(w, "delete", err)
+			writeContentError(w, "delete", fam, id, err)
 			return
 		}
 		log.Printf("admin content: deleted family=%s id=%s", logsafe.Str(fam), logsafe.Str(id))
@@ -62,11 +62,12 @@ func (h *AdminContentHandler) write(status int, op func(ctx context.Context, fam
 		fam, id := r.PathValue("family"), r.PathValue("id")
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxContentBody))
 		if err != nil {
+			log.Printf("admin content: refused body family=%s id=%s status=%d: %v", logsafe.Str(fam), logsafe.Str(id), http.StatusRequestEntityTooLarge, logsafe.Err(err))
 			writeError(w, http.StatusRequestEntityTooLarge, "body unreadable or over 1 MiB")
 			return
 		}
 		if err := op(r.Context(), fam, id, body); err != nil {
-			writeContentError(w, "write", err)
+			writeContentError(w, "write", fam, id, err)
 			return
 		}
 		log.Printf("admin content: stored family=%s id=%s", logsafe.Str(fam), logsafe.Str(id))
@@ -75,16 +76,21 @@ func (h *AdminContentHandler) write(status int, op func(ctx context.Context, fam
 }
 
 // writeContentError maps the owner's and the store's sentinels to response
-// codes. Only a refusal of the operator's own input carries its text; any
-// other error is logged and answered without it.
-func writeContentError(w http.ResponseWriter, op string, err error) {
+// codes and logs every refusal with the family and id. Only a refusal of the
+// operator's own input carries its text to the client; any other error is
+// logged and answered without it.
+func writeContentError(w http.ResponseWriter, op, fam, id string, err error) {
+	refuse := func(status int, msg string) {
+		log.Printf("admin content: %s refused family=%s id=%s status=%d: %v", logsafe.Str(op), logsafe.Str(fam), logsafe.Str(id), status, logsafe.Err(err))
+		writeError(w, status, msg)
+	}
 	switch {
 	case errors.Is(err, content.ErrUnknownFamily), errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "no such family or resource")
+		refuse(http.StatusNotFound, "no such family or resource")
 	case errors.Is(err, store.ErrAlreadyExists):
-		writeError(w, http.StatusConflict, "resource already exists")
+		refuse(http.StatusConflict, "resource already exists")
 	case errors.Is(err, content.ErrInvalid):
-		writeError(w, http.StatusBadRequest, err.Error())
+		refuse(http.StatusBadRequest, err.Error())
 	default:
 		log.Printf("admin content: %s: %v", logsafe.Str(op), logsafe.Err(err))
 		writeError(w, http.StatusInternalServerError, op+": request failed, see server log")

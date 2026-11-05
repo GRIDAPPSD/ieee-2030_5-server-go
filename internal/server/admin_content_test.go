@@ -1,6 +1,9 @@
 package server_test
 
 import (
+	"bytes"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -185,3 +188,35 @@ func TestContentWritesRefuseBadInputAndMissingCredential(t *testing.T) {
 		t.Errorf("GET under /api/content/ with no credential = %d %q, want the 401 refusal", rec.Code, rec.Body)
 	}
 }
+
+func TestContentRefusalsAreLogged(t *testing.T) {
+	h := newContentHarness(t, t.TempDir())
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	h.write(http.MethodPost, "p1", "{nope")
+	h.write(http.MethodPut, "absent", contentXML("AA09", "x"))
+	h.write(http.MethodPost, "p2", contentXML("AA02", "x"))
+	h.write(http.MethodPost, "p2", contentXML("AA02", "x"))
+
+	rec := httptest.NewRecorder()
+	req := bearerFromLoopbackRequest(http.MethodPost, "/api/content/"+contentFamily+"/p3", "application/sep+xml", "")
+	req.Body = io.NopCloser(&failingReader{})
+	h.admin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("unreadable body = %d, want 413", rec.Code)
+	}
+
+	got := buf.String()
+	for _, want := range []string{"status=400", "status=404", "status=409", "status=413", "family=messages id=p1", "id=absent"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log lacks %q; log was:\n%s", want, got)
+		}
+	}
+}
+
+type failingReader struct{}
+
+func (*failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }

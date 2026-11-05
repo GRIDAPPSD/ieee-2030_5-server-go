@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"reflect"
 	"regexp"
 	"strings"
@@ -35,6 +36,14 @@ var (
 	ErrUnknownFamily = errors.New("content: unknown family")
 )
 
+// maxNesting bounds how deep a body's elements may nest. The deepest 2030.5
+// resource is a handful of levels; the bound exists so a hostile body cannot
+// make the structural scan do unbounded work.
+const maxNesting = 32
+
+// maxNameShown bounds an element or attribute name quoted in a refusal.
+const maxNameShown = 40
+
 var (
 	familyName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 	resourceID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -47,6 +56,12 @@ type Spec[T store.Copier[T]] struct {
 	// Validate refuses a decoded body that lacks what the protocol handler
 	// needs, such as a required field. Nil accepts any body that decodes.
 	Validate func(T) error
+	// Href, when set, names the resource address a body carries, and a body
+	// whose last path segment is not the {id} it is sent to is refused. The
+	// protocol handler addresses the resource by that href, so a body filed
+	// under another id would be served at one address and managed at another.
+	// The mRID is not bound: it is the resource's own identity, not its key.
+	Href func(T) string
 }
 
 type family interface {
@@ -87,6 +102,9 @@ func Register[T store.Copier[T]](o *Owner, spec Spec[T]) (store.ResourceStore[T]
 	}
 	// The persistent store owns the snapshot, the rollback on a failed write
 	// and the load-time refusal; an empty path is the plain in-memory store.
+	if err := checkSnapshot(path, spec); err != nil {
+		return nil, fmt.Errorf("content: family %q: %w", spec.Name, err)
+	}
 	st, err := memory.NewPersistentStore[T](path, "content "+spec.Name)
 	if err != nil {
 		return nil, fmt.Errorf("content: family %q: %w", spec.Name, err)
@@ -151,7 +169,7 @@ type typedFamily[T store.Copier[T]] struct {
 }
 
 func (f *typedFamily[T]) create(ctx context.Context, id string, body []byte) error {
-	v, err := f.decode(body)
+	v, err := f.decode(id, body)
 	if err != nil {
 		return err
 	}
@@ -159,7 +177,7 @@ func (f *typedFamily[T]) create(ctx context.Context, id string, body []byte) err
 }
 
 func (f *typedFamily[T]) replace(ctx context.Context, id string, body []byte) error {
-	v, err := f.decode(body)
+	v, err := f.decode(id, body)
 	if err != nil {
 		return err
 	}
@@ -171,11 +189,17 @@ func (f *typedFamily[T]) remove(ctx context.Context, id string) error {
 }
 
 // decode accepts a body only when what the protocol handler will serve is what
-// the operator sent: it decodes as the registered type, passes the family's
-// own check, survives an encode and decode unchanged, and carries no element
-// the type would drop.
-func (f *typedFamily[T]) decode(body []byte) (T, error) {
+// the operator sent: it has one root and nests within bounds, decodes as the
+// registered type, passes the family's own check and the id binding, survives
+// an encode and decode unchanged, and carries no element or attribute the type
+// would drop, nor an element repeated that the type would collapse.
+func (f *typedFamily[T]) decode(id string, body []byte) (T, error) {
 	var zero T
+	idx := newNodeIndex()
+	sent, err := idx.count(body)
+	if err != nil {
+		return zero, fmt.Errorf("%w: %s: %v", ErrInvalid, f.spec.Name, err)
+	}
 	enc := encoding.NewXMLEncoder()
 	var v T
 	if err := enc.Unmarshal(body, &v); err != nil {
@@ -184,6 +208,11 @@ func (f *typedFamily[T]) decode(body []byte) (T, error) {
 	if f.spec.Validate != nil {
 		if err := f.spec.Validate(v); err != nil {
 			return zero, fmt.Errorf("%w: %s: %v", ErrInvalid, f.spec.Name, err)
+		}
+	}
+	if f.spec.Href != nil {
+		if href := f.spec.Href(v); path.Base(href) != id {
+			return zero, fmt.Errorf("%w: %s: href does not end in the id %q it is sent to", ErrInvalid, f.spec.Name, id)
 		}
 	}
 	out, err := enc.Marshal(v)
@@ -197,39 +226,105 @@ func (f *typedFamily[T]) decode(body []byte) (T, error) {
 	if !reflect.DeepEqual(v, back) {
 		return zero, fmt.Errorf("%w: %s changes when encoded and decoded again", ErrInvalid, f.spec.Name)
 	}
-	sent, err := elementPaths(body)
+	kept, err := idx.count(out)
 	if err != nil {
 		return zero, fmt.Errorf("%w: %s: %v", ErrInvalid, f.spec.Name, err)
 	}
-	kept, err := elementPaths(out)
-	if err != nil {
-		return zero, fmt.Errorf("%w: %s: %v", ErrInvalid, f.spec.Name, err)
-	}
-	for p := range sent {
-		if _, ok := kept[p]; !ok {
-			return zero, fmt.Errorf("%w: %s: element %s is not represented by the type and would be dropped", ErrInvalid, f.spec.Name, p)
+	for node, n := range sent {
+		switch have := kept[node]; {
+		case have == 0:
+			return zero, fmt.Errorf("%w: %s: %s is not represented by the type and would be dropped", ErrInvalid, f.spec.Name, idx.describe(node))
+		case have < n:
+			return zero, fmt.Errorf("%w: %s: %s is repeated and only one value would be kept", ErrInvalid, f.spec.Name, idx.describe(node))
 		}
 	}
 	return v, nil
 }
 
-// elementPaths returns the slash-joined local names of every element in doc.
-func elementPaths(doc []byte) (map[string]struct{}, error) {
+// nodeKey names one element or attribute by its parent node and its name.
+type nodeKey struct {
+	parent int
+	name   string
+}
+
+// nodeIndex interns element paths as a trie, so the memory a body costs is
+// linear in its elements however deep they nest. Node 0 is the document; an
+// attribute is a node whose name starts with "@".
+type nodeIndex struct {
+	ids  map[nodeKey]int
+	keys []nodeKey
+}
+
+func newNodeIndex() *nodeIndex {
+	return &nodeIndex{ids: make(map[nodeKey]int), keys: []nodeKey{{}}}
+}
+
+func (x *nodeIndex) child(parent int, name string) int {
+	k := nodeKey{parent, name}
+	if id, ok := x.ids[k]; ok {
+		return id
+	}
+	id := len(x.keys)
+	x.ids[k] = id
+	x.keys = append(x.keys, k)
+	return id
+}
+
+// describe names a node by its own name and its parent's, both shortened.
+func (x *nodeIndex) describe(node int) string {
+	k := x.keys[node]
+	kind, name := "element", k.name
+	if strings.HasPrefix(name, "@") {
+		kind, name = "attribute", name[1:]
+	}
+	if k.parent == 0 {
+		return fmt.Sprintf("%s %s", kind, shorten(name))
+	}
+	return fmt.Sprintf("%s %s in %s", kind, shorten(name), shorten(x.keys[k.parent].name))
+}
+
+func shorten(name string) string {
+	if len(name) > maxNameShown {
+		return strings.ToValidUTF8(name[:maxNameShown], "") + "..."
+	}
+	return name
+}
+
+// count returns how many times each element and attribute appears in doc,
+// refusing a document with more than one root or nesting past maxNesting.
+// Namespace declarations are not counted: they carry no value.
+func (x *nodeIndex) count(doc []byte) (map[int]int, error) {
 	dec := xml.NewDecoder(bytes.NewReader(doc))
-	paths := make(map[string]struct{})
-	var stack []string
+	counts := make(map[int]int)
+	stack := []int{0}
+	roots := 0
 	for {
 		tok, err := dec.Token()
 		if errors.Is(err, io.EOF) {
-			return paths, nil
+			return counts, nil
 		}
 		if err != nil {
 			return nil, err
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			stack = append(stack, t.Name.Local)
-			paths[strings.Join(stack, "/")] = struct{}{}
+			if len(stack) == 1 {
+				if roots++; roots > 1 {
+					return nil, fmt.Errorf("more than one root element, second is %s", shorten(t.Name.Local))
+				}
+			}
+			if len(stack) > maxNesting {
+				return nil, fmt.Errorf("element %s nests deeper than %d levels", shorten(t.Name.Local), maxNesting)
+			}
+			node := x.child(stack[len(stack)-1], t.Name.Local)
+			counts[node]++
+			stack = append(stack, node)
+			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" || a.Name.Local == "xmlns" {
+					continue
+				}
+				counts[x.child(node, "@"+a.Name.Local)]++
+			}
 		case xml.EndElement:
 			stack = stack[:len(stack)-1]
 		}

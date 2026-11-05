@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -229,5 +230,144 @@ func TestRegisterRefusesBadNamesAndDuplicates(t *testing.T) {
 		if _, err := content.Register(o, content.Spec[sep2.MessagingProgram]{Name: name}); err == nil {
 			t.Errorf("Register accepted the family name %q", name)
 		}
+	}
+}
+
+func TestNestingIsBoundedAndRefused(t *testing.T) {
+	ctx := context.Background()
+	o, st := register(t, t.TempDir())
+	deep := func(n int) string {
+		return strings.Repeat("<a>", n) + strings.Repeat("</a>", n)
+	}
+	body := `<MessagingProgram xmlns="urn:ieee:std:2030.5:ns" href="/msg/1"><mRID>AA01</mRID>` + deep(8000) + `</MessagingProgram>`
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	err := o.Create(ctx, fam, "p1", []byte(body))
+	runtime.ReadMemStats(&after)
+
+	if !errors.Is(err, content.ErrInvalid) {
+		t.Fatalf("Create at depth 8000 = %v, want ErrInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "deeper than") {
+		t.Errorf("refusal = %q, want it to say the nesting is too deep", err)
+	}
+	if len(err.Error()) > 200 {
+		t.Errorf("refusal is %d bytes; it must name the element briefly, not echo a path", len(err.Error()))
+	}
+	// Quadratic path storage cost about 70 MB at this depth; the bound is a
+	// small fraction of that.
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 8<<20 {
+		t.Errorf("refusing a depth-8000 body allocated %d bytes, want under 8 MiB", grown)
+	}
+	if n, _ := st.Count(ctx); n != 0 {
+		t.Errorf("store holds %d resources after a refused body, want 0", n)
+	}
+}
+
+func TestRepeatsAndUnknownAttributesAreRefused(t *testing.T) {
+	ctx := context.Background()
+	o, st := register(t, t.TempDir())
+	ok := program("/msg/1", "AA01", "d")
+
+	cases := []struct {
+		name, body, want string
+	}{
+		{"repeated scalar", strings.Replace(ok, "<primacy>2</primacy>", "<primacy>2</primacy><primacy>3</primacy>", 1), "repeated"},
+		{"repeated root", ok + ok, "more than one root"},
+		{"unknown attribute", strings.Replace(ok, `href=`, `surcharge="9" href=`, 1), "attribute surcharge"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := o.Create(ctx, fam, "p1", []byte(c.body))
+			if !errors.Is(err, content.ErrInvalid) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Create = %v, want ErrInvalid mentioning %q", err, c.want)
+			}
+			if n, _ := st.Count(ctx); n != 0 {
+				t.Errorf("store holds %d resources after a refused body, want 0", n)
+			}
+		})
+	}
+
+	// Control: the same body without the defect is stored, so the cases above
+	// fail on the defect and not on something every body trips.
+	if err := o.Create(ctx, fam, "p1", []byte(ok)); err != nil {
+		t.Fatalf("control Create = %v, want nil", err)
+	}
+}
+
+func TestBodyHrefMustEndInThePathID(t *testing.T) {
+	ctx := context.Background()
+	o := content.NewOwner(nil)
+	st, err := content.Register(o, content.Spec[sep2.MessagingProgram]{
+		Name:     fam,
+		Validate: requireProgram,
+		Href:     func(p sep2.MessagingProgram) string { return p.Href },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.Create(ctx, fam, "p2", []byte(program("/msg/p1", "AA01", "d"))); !errors.Is(err, content.ErrInvalid) {
+		t.Fatalf("Create of href /msg/p1 under id p2 = %v, want ErrInvalid", err)
+	}
+	if err := o.Replace(ctx, fam, "p2", []byte(program("/msg/p1", "AA01", "d"))); !errors.Is(err, content.ErrInvalid) {
+		t.Errorf("Replace of href /msg/p1 under id p2 = %v, want ErrInvalid (checked before the store lookup)", err)
+	}
+	if n, _ := st.Count(ctx); n != 0 {
+		t.Errorf("store holds %d resources after a mismatched href, want 0", n)
+	}
+	if err := o.Create(ctx, fam, "p1", []byte(program("/msg/p1", "AA01", "d"))); err != nil {
+		t.Fatalf("Create of a matching href = %v, want nil", err)
+	}
+	if got, _ := st.Get(ctx, "p1"); got.Href != "/msg/p1" {
+		t.Errorf("stored href = %q, want /msg/p1", got.Href)
+	}
+}
+
+func TestSnapshotsTheStoreWouldMisreadAreRefused(t *testing.T) {
+	cases := map[string]string{
+		"no records key":               `{"version":1}`,
+		"record under another parent":  `{"version":1,"records":[{"parent":"other","id":"p1","value":{"href":"/msg/p1","mRID":"AA01"}}]}`,
+		"empty value bypassing checks": `{"version":1,"records":[{"parent":"all","id":"p1","value":{}}]}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "content-"+fam+".json"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			o := content.NewOwner(func(n string) string { return filepath.Join(dir, n+".json") })
+			_, err := content.Register(o, content.Spec[sep2.MessagingProgram]{Name: fam, Validate: requireProgram})
+			if err == nil {
+				t.Fatal("Register over this snapshot succeeded; it would serve the family with content missing or unreachable")
+			}
+			if o.Has(fam) {
+				t.Error("a family whose snapshot was refused is registered")
+			}
+		})
+	}
+}
+
+// The store writes "records":null once its last record is deleted, so a
+// restart after emptying a family must load, not refuse to boot.
+func TestSnapshotOfAnEmptiedFamilyStillLoads(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	o, _ := register(t, dir)
+	if err := o.Create(ctx, fam, "p1", []byte(program("/msg/1", "AA01", "d"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Delete(ctx, fam, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "content-"+fam+".json"))
+	if err != nil || !strings.Contains(string(raw), `"records":null`) {
+		t.Fatalf("snapshot after the last delete = %q, %v; want records null", raw, err)
+	}
+	_, st := register(t, dir)
+	if n, _ := st.Count(ctx); n != 0 {
+		t.Errorf("count after restart = %d, want 0", n)
 	}
 }

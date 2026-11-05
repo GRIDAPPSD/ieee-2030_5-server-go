@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
@@ -251,6 +252,19 @@ func wrapMTLS(listener net.Listener, cfg Config) (net.Listener, sep2srv.Identity
 	if err != nil {
 		return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: CCM TLS config: %w", err)
 	}
+
+	if cfg.KeyLogFile != "" {
+		keyLog, err := os.OpenFile(
+			cfg.KeyLogFile,
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+			0600,
+		)
+		if err != nil {
+			return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: TLS key log: %w", err)
+		}
+		ccmCfg.KeyLogWriter = keyLog
+	}
+
 	if len(ccmCfg.Certificates) == 0 {
 		return nil, sep2srv.Identity{}, errors.New("sep2server: CCM TLS config carries no certificate")
 	}

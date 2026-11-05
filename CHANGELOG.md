@@ -7,17 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-04
+
+This entry covers `v0.18.0..v0.19.0`. It is a MINOR release under the 0.x
+carve-out: the range adds per-device logs, the DERMS grid-request surface, the
+Overview power and events views, in-band device management and a Windows zip
+(`feature`), and changes exported Go surface, the DER wire form and the
+registration and rekey rules (`breaking`, see Changed). `ieee-2030_5-core-go`
+moves from v0.27.0 to v0.30.0.
+
 ### Added
 
+- Per-device logs. Each protocol request that passes identity and the ACL writes
+  one line to the requesting device's file under `SEP2_DEVICE_LOG_DIR`
+  (`<LFDI>.jsonl`, one rotated file kept, never blocking the request): method,
+  path without query, status, duration, sizes, remote address and the EndDevice
+  the path names, plus the response `Location`, a per-request note, the
+  Response status a device posted, and up to 8 served control mRIDs (#1063,
+  #1064, #1065, #1069, #1088, #1090, #1091). A posted LogEvent and a refused
+  (403) request also land in the device's file with the gate's fixed reason.
 - `GET /api/device-logs/{lfdi}` and `/download` on the admin listener read a
   device's log across its rotated file, with `limit`, `before`, `after`, `kind`
   and `scope`; a device's view includes its lines in the shared unregistered
   file and its manager's lines that name it. A real credential is required, and
   503 means the log is off (#1066). `sep2adminplane.Config` gains `DeviceLogs`.
-- A manager may delete a device it manages with `DELETE /edev/{id}`, which also
-  releases the pair (#1087). `store.EndDeviceManagementStore` gains
-  `Release(ctx, managerLFDI, managedLFDI)`, a compare-and-delete; an embedder
-  that implements the interface must add it.
+- Admin UI: a top-level Logs tab with a device and aggregator picker, a tail that
+  keeps its place while new lines arrive, an aggregator view of its managed
+  devices, and a Logs link on each Devices row (#1067, #1068, #1083, #1085,
+  #1129).
+- In-band device management (CSIP MAINT). An aggregator registers a managed DER
+  with `POST /edev` (#1087), and may delete a device it manages with
+  `DELETE /edev/{id}`, which also releases the pair. `store.EndDeviceManagementStore`
+  gains `Release(ctx, managerLFDI, managedLFDI)`, a compare-and-delete; an
+  embedder that implements the interface must add it. `GET /api/management-pairs`
+  now returns `{lfdi, hasRecord, lastSeen}` per side so a rotated certificate is
+  visible. Subscribers of `/edev/{id}` are told when it is deleted (status 4),
+  and a paired DER's notifications on its own certificate are withheld rather
+  than deleted (#1101, #1128).
+- DERMS grid requests. `POST /api/derms/grid-requests` takes 1 to 24 timed rows
+  and splits each across the available aggregators in proportion to their
+  devices' nameplate `rtgMaxW` (5 kW for a device without one, with a warning),
+  as one control per aggregator on a server-managed fleet FSA; `GET` lists
+  batches, blocks and shares. Each control records its origin, `admin` or `derms`,
+  and the control lists return it (#1154, #1155, #1156, #1157).
+- Power and energy. `GET /api/derms/power` serves real power over time per device
+  and in total, energy charged and discharged per bucket, the instantaneous
+  total kW (`latestW`, `latestAt`, `latestMissing`) and `aggregatorEnergy` per
+  aggregator (#1112, #1113, #1114, #1147, #1148, #1189). The history is kept
+  across restarts under `<SEP2_DATA_DIR>/power-history/` for
+  `SEP2_POWER_HISTORY_HOURS` (default 48) (#1150).
+- `GET /api/derms/control-events` lists the controls overlapping a window plus an
+  equal look-ahead (#1190). The dashboard reports `underControl` per device from
+  one control-state rule (#1149).
+- `GET /api/derms/devices/{edevId}/ders` returns each DER's DERStatus,
+  DERCapability, DERSettings and DERAvailability as stored, with freshness, and
+  the time each status or availability element's current value was first seen
+  (#1208, #1209).
+- Admin UI: Overview power card, per-aggregator bars, energy chart, scheduled
+  events timeline and "Under a control" count; DERMS tab grid-request entry and
+  scheduled-block views; Send DER Control form layout; design tokens with a
+  light values defined (#1115, #1143, #1156 to #1159,
+  #1170, #1172, #1173, #1188, #1190, #1133).
+- Windows. `sep2server` runs on Windows (#1218), CI builds it and runs the admin
+  UI Playwright suite there (#1219, #1228), and publishing a release attaches
+  `sep2server-<tag>-windows-amd64.zip` and `SHA256SUMS` to it (#1220), and
+  attests build provenance for both files; check a download with
+  `gh attestation verify` as RELEASING.md section 16 describes (#1232). The
+  binary is unsigned.
+- `SEP2_PEN` defaults to `40732` and a device certificate made without a hardware
+  type uses `1.3.6.1.4.1.40732.99`, the IEEE 2030.5 test arc, each with one
+  log line saying so. `SEP2_HW_TYPE` sets the default; a malformed value stops
+  startup (#1062, #1074).
+- CI runs on every pull request, so its jobs can be required checks (#1224), and
+  type-checks the Playwright suite (#1223).
+
+### Changed
+
+- **Breaking, wire form.** `ieee-2030_5-core-go` moves to v0.30.0 (through v0.28.0
+  and v0.29.0). `DERCapability` `rtgMaxA` is now a `CurrentRMS` element,
+  `<rtgMaxA><multiplier>0</multiplier><value>16</value></rtgMaxA>`, and a bare
+  number such as `<rtgMaxA>16</rtgMaxA>` is refused with an error naming the
+  element where it was once read as 0. A client that posts the bare form is
+  now refused. The reply of `/api/derms/devices/{edevId}/ders` carries `rtgMaxA` as
+  `{value, multiplier}`, and the 16 DERCapability and 2 DERStatus elements core
+  adds, null when absent (#1111, #1168, #1226).
+- **Breaking, Go surface.** `store.EndDeviceManagementStore` gains `Release`, so
+  an embedder that implements it must add the method (#1087), and
+  `activity.Recorder.Middleware` is removed because the recorder is fed by the
+  shared request observer (#1064). `HandleCreateEndDevice` and
+  `HandleDeleteEndDevice` take trailing options; a call site is unchanged.
+- **Breaking, registration and rekey.** A request whose certificate LFDI is the
+  managed side of a management pair gets 403 (`managed-direct`) on every
+  protocol route, since a DER connects in one scenario only (#1128). A managed
+  rekey answers 409 while the old LFDI still has an EndDevice record; delete
+  it first. A manager acting on `/mup` for a managed LFDI needs that device's
+  EndDevice record, and a rotated certificate is refused as
+  `not-owner-or-manager` until an operator runs rekey (#1087).
+- Every EndDevice now advertises `DERListLink`, and the server seeds one DER at
+  `/edev/{id}/der/1` for each EndDevice, on `POST /edev` and at boot. A device
+  that registered itself was served no `DERListLink` and had no DER, so a client
+  following links could not find where to PUT its DERStatus, DERCapability,
+  DERSettings or DERAvailability, and the dashboard and fleet view showed none. A
+  device that already has a DER is not given a second one (#1162).
+- Deleting an EndDevice removes its DERs and their DERCapability, DERSettings,
+  DERStatus and DERAvailability, and its subscriptions, so a re-registered
+  device at the same `/edev/N` no longer inherits them (#1100).
+- Fleet DERAvailability staleness uses `derstatus.Assess`, the rule DERStatus
+  already uses (1860 s at the 900 s pollRate), in place of a fixed 15 minutes. A
+  reading dated more than one pollRate ahead is now stale. Mirror readings keep
+  15 minutes (#1211).
+- `GET /api/der/controls` counts a Response toward a control when it is sent for
+  the listed device or a device that device currently manages, and adds
+  `responses.byDevice` (#1202).
+- The serving-CA startup check uses core's `HardwareModuleName` SAN rule, so a
+  CSIP leaf whose critical SAN holds only that name no longer warns (#1163).
+- The dashboard stream ends on shutdown and extends its write deadline, so an
+  open admin tab no longer holds shutdown to its 10 s deadline (#1109).
 
 ### Fixed
 
@@ -35,19 +140,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   journaled as one line, so a disk fault stores all of the batch or none. The buckets recorded just after a restart are now
   built from the same readings an uninterrupted server holds, so a device that had
   gone quiet is no longer dropped from a covered Total.
-- Every EndDevice now advertises `DERListLink`, and the server seeds one DER
-  at `/edev/{id}/der/1` for each EndDevice, on `POST /edev` and at boot. A
-  device that registered itself was served no `DERListLink` and had no DER, so
-  a client following links could not find where to PUT its DERStatus,
-  DERCapability, DERSettings or DERAvailability, and the dashboard and fleet
-  view showed none. A device that already has a DER is not given a second one.
+- The device log directory check refused every directory on Windows, where Go
+  reports mode 0777, so the log could not run there (#1218).
+- Admin UI: the Logs tab no longer jumps to the top on each dashboard frame, the
+  drawer's poll overlap, first-page and focus defects are gone (#1079, #1085, #1129).
 
-### Changed
+### Tests and internal
 
-- Fleet DERAvailability staleness uses `derstatus.Assess`, the rule DERStatus
-  already uses (1860 s at the 900 s pollRate), in place of a fixed 15 minutes. A reading dated more
-  than one pollRate ahead is now stale. Mirror readings keep 15 minutes
-  (#1211).
+- Session tests take time from one clock, and the commitments fixtures read it once
+  (#1118, #1105). The `mrid` format check has one owner in `pkg/sep2srv/mrid`
+  (#1089), and the chart encoder is exported as `sep2admin.MarshalChart` for
+  admin routes (#1113).
 
 ## [0.18.0] - 2026-10-21
 
@@ -1043,4 +1146,5 @@ read both releases first.
 [0.16.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.0...v0.16.1
 [0.17.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.1...v0.17.0
 [0.18.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.17.0...v0.18.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.18.0...HEAD
+[0.19.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.18.0...v0.19.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.19.0...HEAD

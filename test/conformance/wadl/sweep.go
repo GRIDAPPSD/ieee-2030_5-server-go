@@ -558,8 +558,7 @@ func checkRequiredFields(path string, body []byte, rows *[]Row) {
 
 const sepNS = "urn:ieee:std:2030.5:ns"
 
-// seedLFDI and the seed mRIDs are public identifiers, not credentials.
-const seedLFDI = "F445603B47AF81A58CF7841F89D3DAF464EECA1E"
+// The seed mRIDs are public identifiers, not credentials.
 
 type seed struct {
 	method  string
@@ -582,18 +581,16 @@ func seedSet() []seed {
 	return []seed{
 		{
 			method: http.MethodPost, path: "/edev", element: "EndDevice",
-			body: `<EndDevice xmlns="` + sepNS + `"><sFDI>655709971722</sFDI>` +
-				`<lFDI>` + seedLFDI + `</lFDI><changedTime>1785700000</changedTime>` +
+			// No sFDI or lFDI: the server takes the posting client's own
+			// certificate identity, and refuses a body that claims another (#1127).
+			body: `<EndDevice xmlns="` + sepNS + `"><changedTime>1785700000</changedTime>` +
 				`<enabled>true</enabled></EndDevice>`,
 		},
 		{
 			method: http.MethodPost, path: "/mup", element: "MirrorUsagePoint",
 			// No deviceLFDI: absent resolves to the posting client's own
-			// certificate identity (#720). seedLFDI names the seeded
-			// EndDevice above, a different certificate from the one this
-			// sweep posts as, and with no management pair between them a
-			// claimed seedLFDI here would now be refused with 403 instead of
-			// creating the seed mirror the walk needs.
+			// certificate identity (#720); a claimed
+			// identity other than the sweep's own would be refused with 403.
 			body: `<MirrorUsagePoint xmlns="` + sepNS + `">` +
 				`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FAA</mRID>` +
 				`<description>wadl sweep mup</description><roleFlags>03</roleFlags>` +

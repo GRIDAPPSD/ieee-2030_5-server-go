@@ -419,22 +419,13 @@ func (b *BootedServer) NewManagerClient(t *testing.T) *http.Client {
 		t.Fatal("csiptest: NewManagerClient needs Stores.EndDeviceManagers")
 	}
 	cert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGER-001")
-	managed := leafLFDI(t, mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGED-001"))
-	managerLFDI := leafLFDI(t, cert)
+	managedCert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGED-001")
+	_, managed := deriveServerIdentity(t, managedCert.Certificate)
+	_, managerLFDI := deriveServerIdentity(t, cert.Certificate)
 	if err := b.Stores.EndDeviceManagers.Assign(context.Background(), managerLFDI, managed); err != nil {
 		t.Fatalf("csiptest: assign manager %s of device %s: %v", managerLFDI, managed, err)
 	}
 	return b.HTTPClientFor(cert)
-}
-
-// leafLFDI returns the LFDI the server derives from cert's leaf.
-func leafLFDI(t *testing.T, cert tls.Certificate) string {
-	t.Helper()
-	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		t.Fatalf("csiptest: parse leaf: %v", err)
-	}
-	return sepTLS.LFDI(leaf)
 }
 
 // shutdown closes the http.Server, waits for the serve goroutine to

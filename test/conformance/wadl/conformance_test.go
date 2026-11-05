@@ -23,11 +23,26 @@ import (
 // assembly registers, on 2026-11-05.
 const outsidePolicyCeiling = 455
 
-// deviceNotForbiddenCeiling is the number of manager-only writes (restrictedWrites)
-// for which the ordinary device was not shown a 403 from an authority check. The
-// server has no such check yet, so it starts at every restricted write; it falls
-// to zero, and is then an equality, as the check lands.
-const deviceNotForbiddenCeiling = 24
+// outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
+// mode cannot hide behind a fall in another. The values sum to the total.
+var outsidePolicyByMode = map[wadl.Mode]int{
+	wadl.ModeMandatory:  195,
+	wadl.ModeOptional:   64,
+	wadl.ModeDeprecated: 47,
+	wadl.ModeError:      149,
+}
+
+// The manager-only writes (restrictedWrites) the sweep reaches are probed as the
+// ordinary device. restrictedProbedFloor is how many it reaches, and
+// restrictedNotForbiddenCeiling is how many of those the device is not refused
+// with a 403 from an authority check. The server has no such check yet, so every
+// probed pair is not refused; the ceiling falls to zero, and is then an equality,
+// as the check lands. The unreached remainder of the declared writes is not
+// probed and sits in neither number.
+const (
+	restrictedProbedFloor         = 5
+	restrictedNotForbiddenCeiling = 5
+)
 
 // notReachedCeiling is the number of WADL resources with a Mandatory or Optional
 // method that the crawl from /dcap misses though the schema names a link for
@@ -174,6 +189,26 @@ func TestMethodModePolicyRatchet(t *testing.T) {
 			"lower outsidePolicyCeiling to %d to lock the improvement in",
 			len(outside), outsidePolicyCeiling, len(outside))
 	}
+
+	byMode := map[wadl.Mode]int{}
+	for _, row := range outside {
+		byMode[row.Mode]++
+	}
+	for mode, ceiling := range outsidePolicyByMode {
+		if byMode[mode] > ceiling {
+			t.Errorf("methods outside the policy in mode %s = %d, which exceeds its ceiling of %d",
+				mode, byMode[mode], ceiling)
+		}
+		if byMode[mode] < ceiling {
+			t.Logf("mode %s = %d, below its ceiling of %d; lower outsidePolicyByMode[%s] to lock the improvement in",
+				mode, byMode[mode], ceiling, mode)
+		}
+	}
+	for mode, n := range byMode {
+		if _, pinned := outsidePolicyByMode[mode]; !pinned {
+			t.Errorf("%d methods outside the policy in mode %q, which has no ceiling in outsidePolicyByMode", n, mode)
+		}
+	}
 }
 
 // TestRestrictedWritesForbidDevice sweeps with a manager certificate and shows what
@@ -190,18 +225,26 @@ func TestRestrictedWritesForbidDevice(t *testing.T) {
 			"the two must pair, or the 403 assertion is vacuous", asManager, probed)
 	}
 
-	notForbidden := res.DeviceNotForbidden(model)
-	t.Logf("restricted writes: %d declared, %d probed as manager and device, %d without a device 403",
+	notForbidden := res.DeviceProbedNotForbidden()
+	t.Logf("restricted writes: %d declared, %d probed as manager and device, %d of those without a device 403",
 		wadl.RestrictedWrites(model), probed, notForbidden)
 
-	if notForbidden > deviceNotForbiddenCeiling {
-		t.Errorf("restricted writes without a device 403 = %d, which exceeds the ceiling of %d",
-			notForbidden, deviceNotForbiddenCeiling)
+	if probed < restrictedProbedFloor {
+		t.Errorf("restricted writes probed = %d, below the floor of %d: a pair the sweep used to reach is no longer probed",
+			probed, restrictedProbedFloor)
 	}
-	if notForbidden < deviceNotForbiddenCeiling {
-		t.Logf("restricted writes without a device 403 = %d, below the ceiling of %d; "+
-			"lower deviceNotForbiddenCeiling to %d to lock the improvement in",
-			notForbidden, deviceNotForbiddenCeiling, notForbidden)
+	if probed > restrictedProbedFloor {
+		t.Logf("restricted writes probed = %d, above the floor of %d; raise restrictedProbedFloor to %d to lock the new reach in",
+			probed, restrictedProbedFloor, probed)
+	}
+	if notForbidden > restrictedNotForbiddenCeiling {
+		t.Errorf("probed restricted writes without a device 403 = %d, which exceeds the ceiling of %d",
+			notForbidden, restrictedNotForbiddenCeiling)
+	}
+	if notForbidden < restrictedNotForbiddenCeiling {
+		t.Logf("probed restricted writes without a device 403 = %d, below the ceiling of %d; "+
+			"lower restrictedNotForbiddenCeiling to %d to lock the improvement in",
+			notForbidden, restrictedNotForbiddenCeiling, notForbidden)
 	}
 }
 

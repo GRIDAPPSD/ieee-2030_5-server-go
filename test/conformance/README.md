@@ -176,4 +176,6 @@ widening: it pins a ceiling on the number of methods outside the method-mode
 policy (Mandatory and Optional must be conformant, Deprecated conformant or 405,
 Error 400 or 405). A fix that lowers the number passes and logs the new value to
 pin. `TestRestrictedWritesForbidDevice` does the same for the manager-only
-writes: it pins how many an ordinary device is not answered 403 on.
+writes: it pins how many of the pairs the sweep reaches an ordinary device is
+not answered 403 on, and a floor on how many it reaches. The policy ratchet also
+pins each wx:mode separately.

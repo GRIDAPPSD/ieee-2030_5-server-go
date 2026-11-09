@@ -15,6 +15,7 @@
 import type { Component } from 'svelte'
 import type { Route } from '../lib/router'
 import AdminShell from '../AdminShell.svelte'
+import ApiDocs from '../ApiDocs.svelte'
 
 export const routeList: Route[] = [
   { path: '/', label: 'Dashboard' },
@@ -25,6 +26,8 @@ export const routeList: Route[] = [
   { path: '/ui/control', label: 'Control' },
   { path: '/ui/certificates', label: 'Certificates' },
   { path: '/ui/derms', label: 'DERMS' },
+  { path: '/ui/openapi', label: 'API Docs' },
+
 ]
 
 export const routes: Record<string, Component> = {
@@ -37,6 +40,7 @@ export const routes: Record<string, Component> = {
   '/ui/control': AdminShell,
   '/ui/certificates': AdminShell,
   '/ui/derms': AdminShell,
+  '/ui/openapi': ApiDocs,
 }
 
 export const defaultRoute: Component = AdminShell

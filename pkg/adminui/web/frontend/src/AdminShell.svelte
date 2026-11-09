@@ -43,11 +43,12 @@ import GridBlocksPane from './panels/GridBlocksPane.svelte'
   import PanelView from './panels/PanelView.svelte'
   import StreamPanel from './panels/StreamPanel.svelte'
   import ActionsPanel from './panels/ActionsPanel.svelte'
+  import ApiDocs from './ApiDocs.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
   // they alias overview.
-  type TabSlug = 'overview' | 'devices' | 'logs' | 'fsas' | 'control' | 'certificates' | 'derms'
+  type TabSlug = 'overview' | 'devices' | 'logs' | 'fsas' | 'control' | 'certificates' | 'derms' | 'api'
   const TABS: { slug: TabSlug; label: string }[] = [
     { slug: 'overview', label: 'Overview' },
     { slug: 'devices', label: 'Devices' },
@@ -56,6 +57,7 @@ import GridBlocksPane from './panels/GridBlocksPane.svelte'
     { slug: 'control', label: 'Control' },
     { slug: 'certificates', label: 'Certificates' },
     { slug: 'derms', label: 'DERMS' },
+    { slug: 'api', label: 'API' },
   ]
 
   // 'not-found' is issue 561 criterion 6: any /ui/ path that names no tab
@@ -313,6 +315,8 @@ import GridBlocksPane from './panels/GridBlocksPane.svelte'
       <GridRequestPane onCreated={() => gridBlocksKey++} />
       <GridBlocksPane refreshKey={gridBlocksKey} />
       <DispatchPane />
+    {:else if activeTab === 'api'}
+      <ApiDocs />
     {:else if activePanel}
       {#key activePanel.id}
         {#if activePanel.page !== undefined}

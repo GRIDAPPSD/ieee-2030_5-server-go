@@ -28,6 +28,9 @@ type Config struct {
 	KeyFile  string
 	CAFile   string
 
+	// Add KeyLogFile
+	KeyLogFile string
+
 	// ExtraClientCAs names additional client-CA bundles trusted alongside
 	// CAFile, for multi-root device-certificate trust.
 	ExtraClientCAs []string

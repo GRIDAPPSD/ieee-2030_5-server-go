@@ -778,7 +778,7 @@ func seedSet() []seed {
 			method: http.MethodGet, path: "/edev/" + devToken + "/fsa/1", element: "DERProgram",
 			direct: func(ctx context.Context, s *server.Stores, dev string) error {
 				progHref := coreder.DERProgramHref(dev, "1", "1")
-				fsa := sep2.FunctionSetAssignments{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD1"}
+				fsa := sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD1"}}
 				fsa.Href = "/edev/" + dev + "/fsa/1"
 				fsa.DERProgramListLink = &sep2.ListLink{Href: fsa.Href + "/derp", All: 1}
 				if err := s.FSAs.Create(ctx, dev, "1", fsa); err != nil {
@@ -804,7 +804,7 @@ func seedSet() []seed {
 			method: http.MethodGet, path: "/msg/1", element: "MessagingProgram",
 			direct: func(ctx context.Context, s *server.Stores, _ string) error {
 				mp := sep2.MessagingProgram{
-					MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FCC", Description: "wadl sweep msg", Primacy: 1,
+					IdentifiedObject: sep2.IdentifiedObject{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FCC", Description: "wadl sweep msg"}, Primacy: 1,
 					TextMessageListLink: &sep2.ListLink{Href: "/msg/1/tm"},
 				}
 				mp.Href = "/msg/1"

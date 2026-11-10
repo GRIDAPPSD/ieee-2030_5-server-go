@@ -30,7 +30,7 @@ func TestDERControlList_DeliveryCoveredAfterRetentionSweep(t *testing.T) {
 			first := start - (rate - 1)
 
 			postRate := uint32(rate)
-			mup := sep2.MirrorUsagePoint{MRID: "MUP1", DeviceLFDI: dcLFDI, PostRate: &postRate, RoleFlags: roleIsDER}
+			mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP1"}, DeviceLFDI: dcLFDI, PostRate: &postRate, RoleFlags: roleIsDER}
 			mup.Href = "/mup/1"
 			if err := d.mups.Create(ctx, "1", mup); err != nil {
 				t.Fatal(err)
@@ -41,10 +41,10 @@ func TestDERControlList_DeliveryCoveredAfterRetentionSweep(t *testing.T) {
 			for at := first; at < start+day; at += rate {
 				id := fmt.Sprintf("%020d", time.Unix(at, 0).UnixNano())
 				r := sep2.MirrorMeterReading{
-					MRID:           "W1",
-					LastUpdateTime: at,
-					Reading:        &sep2.Reading{Value: &watts},
-					ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: reverseDir()},
+					IdentifiedObject: sep2.IdentifiedObject{MRID: "W1"},
+					LastUpdateTime:   at,
+					Reading:          &sep2.Reading{Value: &watts},
+					ReadingType:      &sep2.ReadingType{Uom: &uom, FlowDirection: reverseDir()},
 				}
 				r.Href = "/mup/1/mr/" + id
 				if err := d.mmrs.Create(ctx, "1", id, r); err != nil {

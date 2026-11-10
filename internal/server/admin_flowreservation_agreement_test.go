@@ -58,14 +58,14 @@ func frAgreementFixtureAt(t *testing.T, now int64) (device *httptest.Server, adm
 	}
 	seed := func(id string, created, start int64, lc *dercontrol.LifecycleRecord) {
 		frq := sep2.FlowReservationRequest{
-			Resource: sep2.Resource{Href: "/edev/dev/frq/" + id}, MRID: "M-" + id, CreationTime: created,
+			Resource: sep2.Resource{Href: "/edev/dev/frq/" + id}, IdentifiedObject: sep2.IdentifiedObject{MRID: "M-" + id}, CreationTime: created,
 			IntervalRequested: &sep2.DateTimeInterval{Start: start, Duration: 3600},
 			EnergyRequested:   &sep2.SignedRealEnergy{Value: 1000},
 		}
 		frp := sep2.FlowReservationResponse{
 			Event: sep2.Event{
 				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev/frp/" + id}},
-				MRID:                 "R-" + id, CreationTime: created, Interval: &sep2.DateTimeInterval{Start: start, Duration: 3600},
+				IdentifiedObject:     sep2.IdentifiedObject{MRID: "R-" + id}, CreationTime: created, Interval: &sep2.DateTimeInterval{Start: start, Duration: 3600},
 			},
 			EnergyAvailable: &sep2.SignedRealEnergy{Value: 1000}, PowerAvailable: &sep2.ActivePower{Value: 500}, Subject: "M-" + id,
 		}
@@ -237,7 +237,7 @@ func TestAdminFlowReservationExecutionStatusThroughTheRouter(t *testing.T) {
 		ctrl := sep2.DERControl{
 			RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{
 				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/7/fsa/1/derp/1/derc/" + id}},
-				MRID:                 "C-" + id, CreationTime: now - 150, Interval: &sep2.DateTimeInterval{Start: now - 100, Duration: 600},
+				IdentifiedObject:     sep2.IdentifiedObject{MRID: "C-" + id}, CreationTime: now - 150, Interval: &sep2.DateTimeInterval{Start: now - 100, Duration: 600},
 			}},
 			DERControlBase: &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: -100}},
 		}

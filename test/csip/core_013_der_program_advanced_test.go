@@ -288,8 +288,7 @@ func buildCORE013Control(primacy int) sep2.DERControl {
 	dc := sep2.DERControl{
 		RandomizableEvent: sep2.RandomizableEvent{
 			Event: sep2.Event{
-				MRID:        fmt.Sprintf("CORE-013-CTRL-%d", primacy),
-				Description: fmt.Sprintf("primacy-%d control", primacy),
+				IdentifiedObject: sep2.IdentifiedObject{MRID: fmt.Sprintf("CORE-013-CTRL-%d", primacy), Description: fmt.Sprintf("primacy-%d control", primacy)},
 				Interval: &sep2.DateTimeInterval{
 					Duration: duration,
 					Start:    start,

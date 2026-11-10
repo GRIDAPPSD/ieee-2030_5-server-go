@@ -41,7 +41,7 @@ func curveStore(t *testing.T) *memory.Store[sep2.DERCurve] {
 	s := memory.NewStore[sep2.DERCurve]()
 	for _, c := range curveTypes {
 		id := "c" + strconv.Itoa(int(c.curveType))
-		curve := sep2.DERCurve{MRID: id, CurveType: c.curveType}
+		curve := sep2.DERCurve{IdentifiedObject: sep2.IdentifiedObject{MRID: id}, CurveType: c.curveType}
 		curve.Href = "/dc/" + id
 		if err := s.Create(context.Background(), id, curve); err != nil {
 			t.Fatal(err)

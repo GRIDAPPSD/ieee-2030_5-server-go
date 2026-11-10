@@ -31,8 +31,7 @@ func newPersistedAdminFSAStore(t *testing.T) (*memory.AdminFSAStore, string) {
 
 func mkFSA(mRID, description string, _ uint8) sep2.FunctionSetAssignments {
 	return sep2.FunctionSetAssignments{
-		MRID:        mRID,
-		Description: description,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mRID, Description: description},
 	}
 }
 

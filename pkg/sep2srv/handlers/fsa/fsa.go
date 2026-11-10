@@ -110,9 +110,8 @@ func HandleCreateFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) ht
 
 		fsaID := idmint.Prefixed("fsa")
 		fsa := sep2.FunctionSetAssignments{
-			Resource:    sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
-			MRID:        fsaID,
-			Description: "Function Set Assignment",
+			Resource:         sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: fsaID, Description: "Function Set Assignment"},
 			FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
 				DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
 			},

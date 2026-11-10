@@ -35,7 +35,7 @@ func deviceProgramStores(t *testing.T) *Stores {
 	if err := s.EndDevices.Create(ctx, "1", sep2.EndDevice{LFDI: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7", SFDI: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FSAs.Create(ctx, "1", "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := s.FSAs.Create(ctx, "1", "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	return s

@@ -72,8 +72,7 @@ func MemberHref(setID, rspID string) string {
 // DefaultSet returns the ResponseSet this server seeds.
 func DefaultSet() sep2.ResponseSet {
 	set := sep2.ResponseSet{
-		MRID:        DefaultSetMRID,
-		Description: DefaultSetDescription,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: DefaultSetMRID, Description: DefaultSetDescription},
 		ResponseListLink: &sep2.ListLink{
 			Href: ListHref(DefaultSetID),
 		},

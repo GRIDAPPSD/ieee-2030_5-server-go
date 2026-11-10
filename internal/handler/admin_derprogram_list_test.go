@@ -86,7 +86,7 @@ func newProgramListHandlerDirs(t *testing.T, programsDir, originsDir, fsasDir st
 		t.Fatal(err)
 	}
 	v := uint16(5)
-	fixture := sep2.DERProgram{MRID: "CCCC0000000000000000000000000001", Description: "from fixture", Primacy: 2, Version: &v}
+	fixture := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "CCCC0000000000000000000000000001", Description: "from fixture", Version: &v}, Primacy: 2}
 	fixture.Href = "/edev/2/fsa/fsa-B/derp/fx1"
 	if err := programs.Create(ctx, "2", "fx1", fixture); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestListPrograms_ABoundedReplyForManyPrograms(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 130; i++ {
 		id := "bulk" + strconv.Itoa(1000+i)
-		p := sep2.DERProgram{MRID: "DDDD" + strconv.Itoa(100000+i), Primacy: 2}
+		p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "DDDD" + strconv.Itoa(100000+i)}, Primacy: 2}
 		p.Href = "/edev/3/fsa/fsa-C/derp/" + id
 		if err := h.Programs.(*memory.DERProgramStore).Create(ctx, "3", id, p); err != nil {
 			t.Fatal(err)
@@ -267,7 +267,7 @@ func TestListPrograms_PartlyPersistedStores(t *testing.T) {
 func TestListPrograms_NoOriginEntryIsAFixtureWhateverItsId(t *testing.T) {
 	t.Parallel()
 	h := newProgramListHandler(t, t.TempDir())
-	p := sep2.DERProgram{MRID: "EEEE0000000000000000000000000001", Primacy: 2}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "EEEE0000000000000000000000000001"}, Primacy: 2}
 	p.Href = "/edev/4/fsa/fsa-A/derp/derp-00000000000000ab"
 	if err := h.Programs.(*memory.DERProgramStore).Create(context.Background(), "4", "derp-00000000000000ab", p); err != nil {
 		t.Fatal(err)
@@ -301,7 +301,7 @@ func TestListPrograms_OrderedByHrefAcrossFSAsOnOneDevice(t *testing.T) {
 	h := newProgramListHandler(t, "")
 	ctx := context.Background()
 	for _, c := range []struct{ fsa, id string }{{"fsa-B", "a"}, {"fsa-A", "z"}} {
-		p := sep2.DERProgram{MRID: "FFFF00000000000000000000000000" + c.id + "0", Primacy: 2}
+		p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "FFFF00000000000000000000000000" + c.id + "0"}, Primacy: 2}
 		p.Href = "/edev/0/fsa/" + c.fsa + "/derp/" + c.id
 		if err := h.Programs.(*memory.DERProgramStore).Create(ctx, "0", c.id, p); err != nil {
 			t.Fatal(err)
@@ -387,7 +387,7 @@ func TestListPrograms_UnparsableHrefIsLogged(t *testing.T) {
 	h := newProgramListHandler(t, "")
 	var logs bytes.Buffer
 	h.Logger = slog.New(slog.NewTextHandler(&logs, nil))
-	p := sep2.DERProgram{MRID: "ABAB0000000000000000000000000001", Primacy: 2}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "ABAB0000000000000000000000000001"}, Primacy: 2}
 	p.Href = "/edev/9/derp/odd"
 	if err := h.Programs.(*memory.DERProgramStore).Create(context.Background(), "9", "odd", p); err != nil {
 		t.Fatal(err)

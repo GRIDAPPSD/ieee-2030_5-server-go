@@ -273,7 +273,7 @@ func TestDERProgramControlListLinkAllReflectsLiveControls(t *testing.T) {
 	t.Parallel()
 
 	stores := testStores()
-	prog := sep2.DERProgram{MRID: "AAAA0000AAAA0000AAAA0000AAAA0000"}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "AAAA0000AAAA0000AAAA0000AAAA0000"}}
 	prog.Href = coreder.DERProgramHref(testLFDI, "1", "1")
 	prog.DERControlListLink = &sep2.ListLink{
 		Href: "/edev/" + testLFDI + "/fsa/1/derp/1/derc",
@@ -355,7 +355,7 @@ func TestDERControlListTable50Order(t *testing.T) {
 	t.Parallel()
 
 	stores := testStores()
-	prog := sep2.DERProgram{MRID: "BBBB0000BBBB0000BBBB0000BBBB0000"}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "BBBB0000BBBB0000BBBB0000BBBB0000"}}
 	prog.Href = coreder.DERProgramHref(testLFDI, "1", "p1")
 	prog.DERControlListLink = &sep2.ListLink{Href: "/edev/" + testLFDI + "/fsa/1/derp/p1/derc"}
 	if err := stores.DERPrograms.Create(context.Background(), testLFDI, "p1", prog); err != nil {

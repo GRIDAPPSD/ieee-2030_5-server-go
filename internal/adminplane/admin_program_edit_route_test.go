@@ -25,10 +25,10 @@ func programEditStores(t *testing.T) *Stores {
 	s := deviceProgramStores(t)
 	s.DERControls = memory.NewDERControlStore()
 	s.DERControlLifecycles = dercontrol.NewLifecycleStore()
-	if err := s.AdminFSAs.Create(context.Background(), "fsa-T", sep2.FunctionSetAssignments{MRID: "fsa-T"}); err != nil {
+	if err := s.AdminFSAs.Create(context.Background(), "fsa-T", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-T"}}); err != nil {
 		t.Fatal(err)
 	}
-	p := sep2.DERProgram{MRID: "0000000000000000000000000000F1C5", Description: "fixture", Primacy: 1}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000F1C5", Description: "fixture"}, Primacy: 1}
 	p.Href = "/edev/1/fsa/fsa-A/derp/0"
 	if err := s.DERPrograms.Create(context.Background(), "1", "0", p); err != nil {
 		t.Fatal(err)

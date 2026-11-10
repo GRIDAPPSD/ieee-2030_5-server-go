@@ -29,7 +29,7 @@ func (b *blockingFRP) Create(ctx context.Context, parentID, id string, r sep2.Fl
 
 func newBlockedFallback(t *testing.T, failCreates int) (*Queue, *blockingFRP) {
 	t.Helper()
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frp := &blockingFRP{

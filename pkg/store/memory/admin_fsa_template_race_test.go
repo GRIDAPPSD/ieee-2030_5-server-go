@@ -78,7 +78,7 @@ func raceStore(t *testing.T) (*AdminFSAStore, string) {
 	if err != nil {
 		t.Fatalf("NewAdminFSAStoreWithPersistence: %v", err)
 	}
-	if err := s.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{MRID: "MRa"}); err != nil {
+	if err := s.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "MRa"}}); err != nil {
 		t.Fatalf("Create fsa-A: %v", err)
 	}
 	return s, path
@@ -187,8 +187,12 @@ func TestAdminFSA_SecondWriterNeverPersistsRolledBackFSA(t *testing.T) {
 	s, path := raceStore(t)
 
 	_, errB := interleave(t, s,
-		func() error { return s.Create(ctx, "fsa-X", sep2.FunctionSetAssignments{MRID: "MRx"}) },
-		func() error { return s.Create(ctx, "fsa-Y", sep2.FunctionSetAssignments{MRID: "MRy"}) },
+		func() error {
+			return s.Create(ctx, "fsa-X", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "MRx"}})
+		},
+		func() error {
+			return s.Create(ctx, "fsa-Y", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "MRy"}})
+		},
 	)
 	if errB != nil {
 		t.Fatalf("writer b: %v", errB)

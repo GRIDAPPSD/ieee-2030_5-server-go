@@ -22,7 +22,7 @@ func TestEditCreatingDefault_ReplacesAnOrphanedDefaultAndLinksIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	seed := sep2.DefaultDERControl{MRID: "MINTED", SetGradW: u16(7)}
+	seed := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "MINTED"}, SetGradW: u16(7)}
 	ch, err := EditCreatingDefault(ctx, f.programs, f.defaults, f.ref, "scope", nil, seed)
 	if err != nil || ch != (Changes{Program: true, Default: true}) {
 		t.Fatalf("EditCreatingDefault over an orphan = %+v, %v", ch, err)
@@ -41,7 +41,7 @@ func TestEditCreatingDefault_FailedProgramWriteRestoresAnOrphan(t *testing.T) {
 	ctx := context.Background()
 	f := seedDefault(t, u16(4), u16(2))
 	_, err := EditCreatingDefault(ctx, failingProgramUpdate{ProgramStore: f.programs, err: errors.New("disk")}, f.defaults, f.ref, "scope", nil,
-		sep2.DefaultDERControl{MRID: "MINTED", SetGradW: u16(7)})
+		sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "MINTED"}, SetGradW: u16(7)})
 	if err == nil || errors.Is(err, ErrHalfApplied) {
 		t.Fatalf("err = %v, want a clean refusal", err)
 	}
@@ -82,7 +82,7 @@ func TestHalfAppliedCreate_OneContractFromBothCallers(t *testing.T) {
 	_ = f.programs.Update(ctx, "e1", "p1", p)
 	empty := newCopies(t)
 	ch, err := EditCreatingDefault(ctx, failingProgramUpdate{ProgramStore: f.programs, err: errors.New("disk")},
-		failingDefaultRestore{CopyDefaultStore: empty.Defaults}, f.ref, "fresh", nil, sep2.DefaultDERControl{MRID: "M"})
+		failingDefaultRestore{CopyDefaultStore: empty.Defaults}, f.ref, "fresh", nil, sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "M"}})
 	if !errors.Is(err, ErrHalfApplied) || !ch.Default || ch.Program {
 		t.Errorf("EditCreatingDefault = %+v, %v, want ErrHalfApplied and Changes{Default: true}", ch, err)
 	}

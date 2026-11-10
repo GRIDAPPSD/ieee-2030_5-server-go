@@ -31,8 +31,7 @@ func postWindowRequest(t *testing.T, srv *httptest.Server, edevID string) string
 	t.Helper()
 	duration := uint16(900)
 	body := mustMarshal(t, &sep2.FlowReservationRequest{
-		MRID:              "CAFE0000000000000000000000000001",
-		Description:       "evening charge",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: "CAFE0000000000000000000000000001", Description: "evening charge"},
 		DurationRequested: &duration,
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: 5000},
 		PowerRequested:    &sep2.ActivePower{Value: 3000},

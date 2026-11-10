@@ -27,7 +27,7 @@ func TestListCurves(t *testing.T) {
 		typ  uint8
 		desc string
 	}{{"vv1", sep2.CurveTypeOpModVoltVar, "volt-var A"}, {"fw", sep2.CurveTypeOpModFreqWatt, ""}} {
-		curve := sep2.DERCurve{CurveType: c.typ, Description: c.desc}
+		curve := sep2.DERCurve{CurveType: c.typ, IdentifiedObject: sep2.IdentifiedObject{Description: c.desc}}
 		curve.Href = "/dc/" + c.id
 		if err := s.Create(t.Context(), c.id, curve); err != nil {
 			t.Fatal(err)

@@ -59,9 +59,8 @@ func TestHandleFSA_StoredValueReturned(t *testing.T) {
 
 	fsaStore := memory.NewScopedStore[sep2.FunctionSetAssignments]()
 	fsa := sep2.FunctionSetAssignments{
-		Resource:    sep2.Resource{Href: "/edev/e1/fsa/f1"},
-		MRID:        "fsa-mrid-01",
-		Description: "Test FSA",
+		Resource:         sep2.Resource{Href: "/edev/e1/fsa/f1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-mrid-01", Description: "Test FSA"},
 		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
 			DERProgramListLink: &sep2.ListLink{
 				Href: "/edev/e1/fsa/f1/derp",

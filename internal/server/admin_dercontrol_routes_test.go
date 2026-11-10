@@ -35,7 +35,7 @@ func newDERControlRouter(t *testing.T, seeds ...func(*server.Stores)) http.Handl
 	if err := stores.EndDevices.Create(ctx, "0", sep2.EndDevice{SFDI: "1", LFDI: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"}); err != nil {
 		t.Fatal(err)
 	}
-	program := sep2.DERProgram{MRID: "P0", DERControlListLink: &sep2.ListLink{Href: "/edev/0/fsa/0/derp/0/derc"}}
+	program := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "P0"}, DERControlListLink: &sep2.ListLink{Href: "/edev/0/fsa/0/derp/0/derc"}}
 	program.Href = "/edev/0/fsa/0/derp/0"
 	if err := stores.DERPrograms.Create(ctx, "0", "0", program); err != nil {
 		t.Fatal(err)

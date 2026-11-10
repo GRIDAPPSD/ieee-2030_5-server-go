@@ -365,7 +365,7 @@ func (h *AdminFSAHandler) setDeviceDefault(r *http.Request, ref fsaprogram.Ref, 
 	}
 	b := base.Copy()
 	return fsaprogram.EditCreatingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
-		sep2.DefaultDERControl{MRID: m, DERControlBase: &b})
+		sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: m}, DERControlBase: &b})
 }
 
 // HandleDeleteDeviceProgram returns a handler for DELETE

@@ -251,7 +251,7 @@ func TestFlowReservationMalformedRequestHrefIsA500(t *testing.T) {
 	f := newFRFixture(t)
 	f.request(frqSpec{edev: "4", id: "frq-good", mrid: "G", created: frNow - 5})
 	if err := f.frqs.Create(context.Background(), "4", "frq-bad", sep2.FlowReservationRequest{
-		Resource: sep2.Resource{Href: "/edev/9/frq/frq-bad"}, MRID: "B", CreationTime: frNow,
+		Resource: sep2.Resource{Href: "/edev/9/frq/frq-bad"}, IdentifiedObject: sep2.IdentifiedObject{MRID: "B"}, CreationTime: frNow,
 	}); err != nil {
 		t.Fatal(err)
 	}

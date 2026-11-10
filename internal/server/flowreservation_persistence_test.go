@@ -29,7 +29,7 @@ type frpFixture struct {
 
 func newFRPFixture(start int64) frpFixture {
 	var f frpFixture
-	f.pending = sep2.FlowReservationRequest{MRID: "REQ-PENDING", Description: "pending", CreationTime: 100}
+	f.pending = sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ-PENDING", Description: "pending"}, CreationTime: 100}
 	f.pending.Href = "/edev/dev/frq/frq-1"
 	f.pending.IntervalRequested = &sep2.DateTimeInterval{Start: start, Duration: 600}
 	f.pending.RequestStatus = sep2.RequestStatus{DateTime: 100, RequestStatus: sep2.RequestStatusRequested}

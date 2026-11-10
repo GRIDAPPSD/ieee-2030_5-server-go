@@ -255,8 +255,8 @@ func TestHandleListFleets_MeasurementsExportPositiveSignConvention(t *testing.T)
 	// P: FlowDirectionForward ("delivered to customer") = import = negative
 	// under the export-positive convention.
 	f.postInlineReading("mup-p-forward", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID:           "p-fwd",
-		LastUpdateTime: 100,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "p-fwd"},
+		LastUpdateTime:   100,
 		ReadingType: &sep2.ReadingType{
 			Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionForward), PowerOfTenMultiplier: i8(0),
 		},
@@ -265,8 +265,8 @@ func TestHandleListFleets_MeasurementsExportPositiveSignConvention(t *testing.T)
 	// Q: FlowDirectionReverse ("received from customer") = export = already
 	// export-positive, unchanged.
 	f.postOutOfBandReading("mup-q-reverse", "r1", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID:           "q-rev",
-		LastUpdateTime: 100,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "q-rev"},
+		LastUpdateTime:   100,
 		ReadingType: &sep2.ReadingType{
 			Uom: u8(sep2.UomVars), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0),
 		},
@@ -274,17 +274,17 @@ func TestHandleListFleets_MeasurementsExportPositiveSignConvention(t *testing.T)
 	})
 	// V: no flow direction concept, raw magnitude, powerOfTenMultiplier -1.
 	f.postInlineReading("mup-v", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID:           "v1",
-		LastUpdateTime: 100,
-		ReadingType:    &sep2.ReadingType{Uom: u8(sep2.UomVolts), PowerOfTenMultiplier: i8(-1)},
-		Reading:        &sep2.Reading{Value: i64(2401)}, // 240.1 V
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "v1"},
+		LastUpdateTime:   100,
+		ReadingType:      &sep2.ReadingType{Uom: u8(sep2.UomVolts), PowerOfTenMultiplier: i8(-1)},
+		Reading:          &sep2.Reading{Value: i64(2401)}, // 240.1 V
 	})
 	// f: raw magnitude, powerOfTenMultiplier -2.
 	f.postInlineReading("mup-f", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID:           "f1",
-		LastUpdateTime: 100,
-		ReadingType:    &sep2.ReadingType{Uom: u8(33), PowerOfTenMultiplier: i8(-2)}, // 33 = Hz
-		Reading:        &sep2.Reading{Value: i64(6000)},                              // 60.00 Hz
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "f1"},
+		LastUpdateTime:   100,
+		ReadingType:      &sep2.ReadingType{Uom: u8(33), PowerOfTenMultiplier: i8(-2)}, // 33 = Hz
+		Reading:          &sep2.Reading{Value: i64(6000)},                              // 60.00 Hz
 	})
 
 	fleets := fetchFleets(t, f.handler())
@@ -329,7 +329,7 @@ func TestHandleListFleets_Rollup(t *testing.T) {
 		ReadingTime:      handlerTestNow(),
 	})
 	f.postInlineReading("mup-a", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID: "a-p", LastUpdateTime: handlerTestNow(),
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "a-p"}, LastUpdateTime: handlerTestNow(),
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(200)},
 	})
@@ -388,8 +388,8 @@ func TestHandleListFleets_FollowUpReadingInheritsReadingTypeByMRID(t *testing.T)
 
 	// The creating POST: carries ReadingType, establishes mRID "p-series".
 	f.postOutOfBandReading("mup-1", "r1", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID:           "p-series",
-		LastUpdateTime: 100,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "p-series"},
+		LastUpdateTime:   100,
 		ReadingType: &sep2.ReadingType{
 			Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0),
 		},
@@ -399,9 +399,9 @@ func TestHandleListFleets_FollowUpReadingInheritsReadingTypeByMRID(t *testing.T)
 	// entirely, with a later LastUpdateTime so it is the one that should
 	// win.
 	f.postOutOfBandReading("mup-1", "r2", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID:           "p-series",
-		LastUpdateTime: 200,
-		Reading:        &sep2.Reading{Value: i64(450)},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "p-series"},
+		LastUpdateTime:   200,
+		Reading:          &sep2.Reading{Value: i64(450)},
 	})
 
 	fleets := fetchFleets(t, f.handler())
@@ -571,17 +571,17 @@ func TestHandleListFleets_DirectionUnknownOnTheWire(t *testing.T) {
 	now := handlerTestNow()
 
 	f.postInlineReading("mup-a", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID: "a-p", LastUpdateTime: now,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "a-p"}, LastUpdateTime: now,
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionForward), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(200)},
 	})
 	f.postInlineReading("mup-a-v", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID: "a-v", LastUpdateTime: now,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "a-v"}, LastUpdateTime: now,
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomVolts), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(240)},
 	})
 	f.postInlineReading("mup-b", fleetDeviceBLFDI, sep2.MirrorMeterReading{
-		MRID: "b-q", LastUpdateTime: now,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "b-q"}, LastUpdateTime: now,
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomVars), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(50)},
 	})

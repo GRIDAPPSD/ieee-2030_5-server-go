@@ -71,7 +71,7 @@ func TestCheckDERProgramHrefsRefusesProgramsWithoutFSA(t *testing.T) {
 		{"e9", "y"}:  "",
 	}
 	for k, href := range seed {
-		p := sep2.DERProgram{MRID: "M-" + k[1]}
+		p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "M-" + k[1]}}
 		p.Href = href
 		if err := programs.Create(ctx, k[0], k[1], p); err != nil {
 			t.Fatalf("seed %v: %v", k, err)

@@ -18,7 +18,7 @@ func TestSeedStoresWithoutAnOriginIndexSkipsTheCopyRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := s.AdminFSAs.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := s.AdminFSAs.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AdminFSAs.AssignDevice(ctx, "fsa-A", "1"); err != nil {

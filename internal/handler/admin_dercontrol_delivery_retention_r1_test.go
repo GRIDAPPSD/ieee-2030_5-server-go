@@ -17,7 +17,7 @@ import (
 // putMirror stores a DER mirror for device 0 with the given inline readings.
 func (d *deliveryHarness) putMirror(t *testing.T, id string, postRate uint32, inline ...sep2.MirrorMeterReading) {
 	t.Helper()
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: dcLFDI, PostRate: &postRate, RoleFlags: roleIsDER, MirrorMeterReading: inline}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + id}, DeviceLFDI: dcLFDI, PostRate: &postRate, RoleFlags: roleIsDER, MirrorMeterReading: inline}
 	mup.Href = "/mup/" + id
 	if err := d.mups.Create(context.Background(), id, mup); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func (d *deliveryHarness) putMirror(t *testing.T, id string, postRate uint32, in
 func (d *deliveryHarness) putReading(t *testing.T, mupID string, nanos int64, mrid string, value *int64, rt *sep2.ReadingType) {
 	t.Helper()
 	id := fmt.Sprintf("%020d", nanos)
-	r := sep2.MirrorMeterReading{MRID: mrid, LastUpdateTime: time.Unix(0, nanos).Unix(), ReadingType: rt}
+	r := sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}, LastUpdateTime: time.Unix(0, nanos).Unix(), ReadingType: rt}
 	if value != nil {
 		r.Reading = &sep2.Reading{Value: value}
 	}
@@ -142,7 +142,7 @@ func TestDERControlList_InlineReadingKeepsOutOfBandType(t *testing.T) {
 	d := newDeliveryHarness(t)
 	now := time.Now().Unix()
 	w := int64(3600)
-	d.putMirror(t, "1", 300, sep2.MirrorMeterReading{MRID: "W", LastUpdateTime: now - 600, Reading: &sep2.Reading{Value: &w}})
+	d.putMirror(t, "1", 300, sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: "W"}, LastUpdateTime: now - 600, Reading: &sep2.Reading{Value: &w}})
 	d.putReading(t, "1", time.Unix(now-30*3600, 0).UnixNano(), "W", &w, exportWatts())
 	mrid := d.seedControl(t, "e", now-600, 300, dercontrol.LifecycleRecord{})
 

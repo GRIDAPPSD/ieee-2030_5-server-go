@@ -88,7 +88,7 @@ func TestAssign_ExistingAssignment(t *testing.T) {
 func TestAssign_NilDevicesSkipsTheScopedWrite(t *testing.T) {
 	ctx := context.Background()
 	admin := adminWith(t, "f", "f")
-	steps, err := Assign(ctx, admin, nil, "3", "f", sep2.FunctionSetAssignments{MRID: "f"}, RefuseIfAssigned)
+	steps, err := Assign(ctx, admin, nil, "3", "f", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "f"}}, RefuseIfAssigned)
 	if err != nil || len(steps) != 1 || steps[0].Part != "assignment" {
 		t.Errorf("steps = %v, err = %v, want only the assignment", partsOf(steps), err)
 	}
@@ -98,7 +98,7 @@ func TestAssign_ScopedFailureReturnsTheAssignmentStep(t *testing.T) {
 	ctx := context.Background()
 	admin := adminWith(t, "f", "f")
 	dev := failCreate{memory.NewScopedStore[sep2.FunctionSetAssignments]()}
-	steps, err := Assign(ctx, admin, dev, "3", "f", sep2.FunctionSetAssignments{MRID: "f"}, CompleteIfAssigned)
+	steps, err := Assign(ctx, admin, dev, "3", "f", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "f"}}, CompleteIfAssigned)
 	var ae *AssignError
 	if !errors.As(err, &ae) || ae.Stage != StageScopedWrite || !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v, want a scope_materialize error wrapping the store's", err)

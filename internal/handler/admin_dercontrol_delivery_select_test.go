@@ -43,10 +43,10 @@ func (r reading) mmr() sep2.MirrorMeterReading {
 	}
 	v := r.value
 	return sep2.MirrorMeterReading{
-		MRID:           r.mrid,
-		LastUpdateTime: r.at,
-		Reading:        &sep2.Reading{Value: &v, TimePeriod: r.period},
-		ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: r.dir, DataQualifier: r.qual, PowerOfTenMultiplier: r.mult, Phase: r.phase, Kind: r.kind, AccumulationBehaviour: r.acc},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: r.mrid},
+		LastUpdateTime:   r.at,
+		Reading:          &sep2.Reading{Value: &v, TimePeriod: r.period},
+		ReadingType:      &sep2.ReadingType{Uom: &uom, FlowDirection: r.dir, DataQualifier: r.qual, PowerOfTenMultiplier: r.mult, Phase: r.phase, Kind: r.kind, AccumulationBehaviour: r.acc},
 	}
 }
 
@@ -55,7 +55,7 @@ func (r reading) mmr() sep2.MirrorMeterReading {
 func (d *deliveryHarness) seedReadings(t *testing.T, id, lfdi string, roles sep2.RoleFlagsValue, postRate *uint32, rs ...reading) {
 	t.Helper()
 	ctx := context.Background()
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: lfdi, PostRate: postRate, RoleFlags: roles}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + id}, DeviceLFDI: lfdi, PostRate: postRate, RoleFlags: roles}
 	mup.Href = "/mup/" + id
 	if err := d.mups.Create(ctx, id, mup); err != nil {
 		t.Fatal(err)
@@ -329,7 +329,7 @@ func TestHandleListFleets_NegativeDirectedValueIsFlagged(t *testing.T) {
 	f := newFleetFixture(t)
 	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
 	f.postInlineReading("mup-a", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID: "a-p", LastUpdateTime: handlerTestNow(),
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "a-p"}, LastUpdateTime: handlerTestNow(),
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(-500)},
 	})

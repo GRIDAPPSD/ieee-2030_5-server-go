@@ -23,9 +23,8 @@ func seedMirrorUsagePoints(t *testing.T, stores *assembly.Stores, n int) {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("mup-%03d", i)
 		mup := sep2.MirrorUsagePoint{
-			MRID:        fmt.Sprintf("%024X", i),
-			Description: "content-length coverage fixture, padded so each entry contributes real bytes",
-			DeviceLFDI:  testLFDI,
+			IdentifiedObject: sep2.IdentifiedObject{MRID: fmt.Sprintf("%024X", i), Description: "content-length coverage fixture, padded so each entry contributes real bytes"},
+			DeviceLFDI:       testLFDI,
 		}
 		if err := stores.MirrorUsagePoints.Create(context.Background(), id, mup); err != nil {
 			t.Fatalf("seed MirrorUsagePoint %s: %v", id, err)

@@ -24,7 +24,7 @@ func TestSeedStoresCompletesAMissingFSAControlReplica(t *testing.T) {
 	if err := s.EndDevices.Create(ctx, "1", sep2.EndDevice{LFDI: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7", SFDI: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AdminFSAs.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := s.AdminFSAs.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	tmpl := memory.ProgramTemplate{ID: "derp-1", MRID: "0000000000000000000000000000A001", DefaultMRID: "0000000000000000000000000000D001"}
@@ -79,12 +79,12 @@ func TestSeedStoresSkipsAReplicaForASkippedCopy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	own := sep2.DERProgram{MRID: "0000000000000000000000000000B002", Primacy: 5}
+	own := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000B002"}, Primacy: 5}
 	own.Href = "/edev/2/fsa/other/derp/derp-1"
 	if err := s.DERPrograms.Create(ctx, "2", "derp-1", own); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AdminFSAs.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := s.AdminFSAs.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, tmpl := range []memory.ProgramTemplate{

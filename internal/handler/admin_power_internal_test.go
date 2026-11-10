@@ -58,7 +58,7 @@ func (p *powerHarness) post(deviceLFDI string, roles sep2.RoleFlagsValue, postRa
 	p.t.Helper()
 	p.n++
 	id := fmt.Sprint(p.n)
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: deviceLFDI, PostRate: &postRate, RoleFlags: roles}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + id}, DeviceLFDI: deviceLFDI, PostRate: &postRate, RoleFlags: roles}
 	mup.Href = "/mup/" + id
 	if err := p.mups.Create(context.Background(), id, mup); err != nil {
 		p.t.Fatal(err)
@@ -67,10 +67,10 @@ func (p *powerHarness) post(deviceLFDI string, roles sep2.RoleFlagsValue, postRa
 	for i, aw := range atWatts {
 		v := aw[1]
 		r := sep2.MirrorMeterReading{
-			MRID:           "W" + id,
-			LastUpdateTime: aw[0],
-			Reading:        &sep2.Reading{Value: &v},
-			ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: &dir},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: "W" + id},
+			LastUpdateTime:   aw[0],
+			Reading:          &sep2.Reading{Value: &v},
+			ReadingType:      &sep2.ReadingType{Uom: &uom, FlowDirection: &dir},
 		}
 		if err := p.mmrs.Create(context.Background(), id, fmt.Sprint(i), r); err != nil {
 			p.t.Fatal(err)
@@ -341,14 +341,14 @@ func benchPowerStores(b *testing.B) (*memory.Store[sep2.MirrorUsagePoint], *memo
 	uom, dir, rate := sep2.UomWatts, sep2.FlowDirectionReverse, uint32(5)
 	for d := range 58 {
 		id := fmt.Sprint(d)
-		mup := sep2.MirrorUsagePoint{MRID: "M" + id, DeviceLFDI: fmt.Sprintf("DDDD%036d", d), PostRate: &rate, RoleFlags: roleFlagIsDER}
+		mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "M" + id}, DeviceLFDI: fmt.Sprintf("DDDD%036d", d), PostRate: &rate, RoleFlags: roleFlagIsDER}
 		mup.Href = "/mup/" + id
 		if err := mups.Create(ctx, id, mup); err != nil {
 			b.Fatal(err)
 		}
 		for i := range 17280 {
 			v := int64(1000 + i%50)
-			r := sep2.MirrorMeterReading{MRID: "W", LastUpdateTime: powerNow - 86400 + int64(i)*5, Reading: &sep2.Reading{Value: &v}, ReadingType: &sep2.ReadingType{Uom: &uom, FlowDirection: &dir}}
+			r := sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: "W"}, LastUpdateTime: powerNow - 86400 + int64(i)*5, Reading: &sep2.Reading{Value: &v}, ReadingType: &sep2.ReadingType{Uom: &uom, FlowDirection: &dir}}
 			if err := mmrs.Create(ctx, id, fmt.Sprint(i), r); err != nil {
 				b.Fatal(err)
 			}

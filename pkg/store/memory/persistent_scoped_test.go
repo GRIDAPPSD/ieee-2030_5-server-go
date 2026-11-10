@@ -390,7 +390,7 @@ func seedFlowRecords(t *testing.T, reqs store.ScopedStore[sep2.FlowReservationRe
 	t.Helper()
 	ctx := context.Background()
 	for _, e := range []string{"1", "2"} {
-		if err := reqs.Create(ctx, e, "req-"+e, sep2.FlowReservationRequest{MRID: "req-" + e}); err != nil {
+		if err := reqs.Create(ctx, e, "req-"+e, sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-" + e}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := resps.Create(ctx, e, "resp-"+e, sep2.FlowReservationResponse{Subject: "req-" + e}); err != nil {
@@ -476,7 +476,7 @@ func TestPersistentScopedStore_EndDeviceDeleteRefusedWhenSnapshotFails(t *testin
 	if err := os.RemoveAll(reqPath + ".tmp"); err != nil {
 		t.Fatal(err)
 	}
-	if err := reqs.Create(ctx, "2", "req-2b", sep2.FlowReservationRequest{MRID: "req-2b"}); err != nil {
+	if err := reqs.Create(ctx, "2", "req-2b", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-2b"}}); err != nil {
 		t.Fatalf("Create after unblocking: %v", err)
 	}
 	reqs2, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](reqPath, "frq")

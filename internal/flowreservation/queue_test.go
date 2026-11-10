@@ -50,7 +50,7 @@ func storeRequest(t *testing.T, frqStore *memory.ScopedStore[sep2.FlowReservatio
 
 func testRequest() sep2.FlowReservationRequest {
 	return sep2.FlowReservationRequest{
-		MRID:              "REQ1",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: "REQ1"},
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: 10000},
 		PowerRequested:    &sep2.ActivePower{Value: 5000},
 		IntervalRequested: &sep2.DateTimeInterval{Start: time.Now().Add(time.Hour).Unix(), Duration: 3600},
@@ -328,7 +328,7 @@ func TestQueue_Answer_NoRequestedInterval_EventStatusActive(t *testing.T) {
 	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
-	frq := sep2.FlowReservationRequest{MRID: "REQ1"} // no IntervalRequested
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ1"}} // no IntervalRequested
 	storeRequest(t, frqStore, "dev1", "frq1", frq)
 	q.Submit("dev1", "frq1", frq, time.Now().Unix())
 
@@ -617,7 +617,7 @@ func TestQueue_Answer_BypassesTheGateWhenNothingIsCommitted(t *testing.T) {
 		t.Errorf("denial interval = %+v, want duration 0", denied.Interval)
 	}
 
-	storeRequest(t, frqStore, "dev1", "open", sep2.FlowReservationRequest{MRID: "REQ2"})
+	storeRequest(t, frqStore, "dev1", "open", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ2"}})
 	open, err := q.Answer(context.Background(), "dev1", "open", flowreservation.Decision{})
 	if err != nil {
 		t.Fatalf("Answer(Grant, no interval) err = %v, want nil", err)

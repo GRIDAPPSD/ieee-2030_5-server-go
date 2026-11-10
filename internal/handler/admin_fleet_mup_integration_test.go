@@ -77,10 +77,10 @@ func aggregatorIdentity(lfdi string) metering.LFDIProvider {
 func postMirrorAsAggregator(t *testing.T, mux *http.ServeMux, deviceLFDI, mrid string, watts int64) {
 	t.Helper()
 	mup := sep2.MirrorUsagePoint{
-		MRID:       mrid,
-		DeviceLFDI: deviceLFDI,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrid},
+		DeviceLFDI:       deviceLFDI,
 		MirrorMeterReading: []sep2.MirrorMeterReading{{
-			MRID: mrid + "-p",
+			IdentifiedObject: sep2.IdentifiedObject{MRID: mrid + "-p"},
 			ReadingType: &sep2.ReadingType{
 				Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0),
 			},

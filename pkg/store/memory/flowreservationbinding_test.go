@@ -335,7 +335,7 @@ func TestFlowReservationLinkedEndDeviceStore_DeleteCascadesRequestsAndResponses(
 	ctx := context.Background()
 
 	seedFlowReservationDevice(t, s, "1", "1111111111", "AAAA")
-	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-1"}}); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
 	if err := resps.Create(ctx, "1", "resp-1", sep2.FlowReservationResponse{Subject: "req-1"}); err != nil {
@@ -412,7 +412,7 @@ func TestFlowReservationLinkedEndDeviceStore_DeleteLeavesRequestsUntouchedWhenRe
 	s := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
 	ctx := context.Background()
 	seedFlowReservationDevice(t, s, "1", "1111111111", "AAAA")
-	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-1"}}); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
 
@@ -482,7 +482,7 @@ func TestFlowReservationUnservedEndDeviceStore_DeleteCascadesWhatTheInnerLayerOw
 func hrefRecords(t *testing.T, reqs store.ScopedStore[sep2.FlowReservationRequest], resps store.ScopedStore[sep2.FlowReservationResponse], edev, key string) (sep2.FlowReservationRequest, sep2.FlowReservationResponse) {
 	t.Helper()
 	ctx := context.Background()
-	frq := sep2.FlowReservationRequest{MRID: "MRID-" + key, Description: "request " + key, CreationTime: 100}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "MRID-" + key, Description: "request " + key}, CreationTime: 100}
 	frq.Href = "/edev/" + edev + "/frq/" + key
 	frq.IntervalRequested = &sep2.DateTimeInterval{Start: 5000, Duration: 600}
 	frp := sep2.FlowReservationResponse{Subject: "MRID-" + key}
@@ -753,7 +753,7 @@ func TestFlowReservationLinkedEndDeviceStore_DeleteRestoresUnderTheStoreKeyNotTh
 	ctx := context.Background()
 	reqs, resps, reqPath, _ := newPersistentFlowStores(t)
 	devs := memory.NewFlowReservationLinkedEndDeviceStore(failingDeleteDevices{EndDeviceStore: memory.NewEndDeviceStore()}, reqs, resps)
-	frq := sep2.FlowReservationRequest{MRID: "M"}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "M"}}
 	frq.Href = "/edev/1/frq/other"
 	if err := reqs.Create(ctx, "1", "frq-1", frq); err != nil {
 		t.Fatal(err)
@@ -777,7 +777,7 @@ func TestFlowReservationLinkedEndDeviceStore_DeleteRestoresUnderTheStoreKeyNotTh
 func TestPersistentScopedStore_TakeParentUndoLogsWhatItCouldNotRestore(t *testing.T) {
 	ctx := context.Background()
 	reqs, _, reqPath, _ := newPersistentFlowStores(t)
-	frq := sep2.FlowReservationRequest{MRID: "M"}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "M"}}
 	frq.Href = "/edev/1/frq/frq-7"
 	if err := reqs.Create(ctx, "1", "frq-7", frq); err != nil {
 		t.Fatal(err)
@@ -810,7 +810,7 @@ func TestFlowReservationLinkedEndDeviceStore_DeleteRestoresPlainStoresWhenTheDev
 	devs := memory.NewFlowReservationLinkedEndDeviceStore(failingDeleteDevices{EndDeviceStore: memory.NewEndDeviceStore()}, reqs, resps)
 	wantFrq, wantFrp := hrefRecords(t, reqs, resps, "1", "frq-1")
 	// A record whose href names a different id than its store key.
-	odd := sep2.FlowReservationRequest{MRID: "ODD"}
+	odd := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "ODD"}}
 	odd.Href = "/edev/1/frq/other"
 	if err := reqs.Create(ctx, "1", "frq-2", odd); err != nil {
 		t.Fatal(err)
@@ -954,8 +954,8 @@ func TestWithDependents_DeleteParentCascadesToTheDependentsAndCountsTheRemoved(t
 func TestPersistentScopedStore_TakeParentUndoRestoresTheRestPastAFailedRecord(t *testing.T) {
 	ctx := context.Background()
 	reqs, _, _, _ := newPersistentFlowStores(t)
-	a := sep2.FlowReservationRequest{MRID: "A"}
-	b := sep2.FlowReservationRequest{MRID: "B"}
+	a := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "A"}}
+	b := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "B"}}
 	for k, v := range map[string]sep2.FlowReservationRequest{"a": a, "b": b} {
 		if err := reqs.Create(ctx, "1", k, v); err != nil {
 			t.Fatal(err)
@@ -984,8 +984,8 @@ func TestPersistentScopedStore_TakeParentUndoRestoresTheRestPastAFailedRecord(t 
 func TestScopedStore_TakeParentCountsAndItsUndoRestoresTheRestPastAFailedRecord(t *testing.T) {
 	ctx := context.Background()
 	reqs := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	a := sep2.FlowReservationRequest{MRID: "A"}
-	b := sep2.FlowReservationRequest{MRID: "B"}
+	a := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "A"}}
+	b := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "B"}}
 	for k, v := range map[string]sep2.FlowReservationRequest{"a": a, "b": b} {
 		if err := reqs.Create(ctx, "1", k, v); err != nil {
 			t.Fatal(err)

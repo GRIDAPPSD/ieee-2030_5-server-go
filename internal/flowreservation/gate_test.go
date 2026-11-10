@@ -92,7 +92,7 @@ func must(t *testing.T, err error) {
 
 func windowRequest(mrid string, start int64, duration uint32, energyWh int64) sep2.FlowReservationRequest {
 	return sep2.FlowReservationRequest{
-		MRID:              mrid,
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: mrid},
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: energyWh},
 		PowerRequested:    &sep2.ActivePower{Value: 4000},
 		IntervalRequested: &sep2.DateTimeInterval{Start: start, Duration: duration},

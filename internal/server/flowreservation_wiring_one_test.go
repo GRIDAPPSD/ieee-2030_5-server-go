@@ -85,7 +85,7 @@ func TestAssembly_UsesTheQueueTheStoresCarry(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	duration := uint16(600)
-	body, err := xml.Marshal(&sep2.FlowReservationRequest{MRID: "0102030405060708090A0B0C0D0E0F10", DurationRequested: &duration})
+	body, err := xml.Marshal(&sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "0102030405060708090A0B0C0D0E0F10"}, DurationRequested: &duration})
 	if err != nil {
 		t.Fatal(err)
 	}

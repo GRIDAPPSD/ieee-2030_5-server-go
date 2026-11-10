@@ -23,7 +23,7 @@ func TestRunRefusesPersistedProgramWithoutFSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open program store: %v", err)
 	}
-	prog := sep2.DERProgram{MRID: "OLD-SHAPE"}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "OLD-SHAPE"}}
 	prog.Href = "/edev/e1/derp/p1"
 	if err := programs.Create(context.Background(), "e1", "p1", prog); err != nil {
 		t.Fatalf("persist program: %v", err)

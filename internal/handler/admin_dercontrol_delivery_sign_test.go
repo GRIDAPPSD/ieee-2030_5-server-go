@@ -48,7 +48,7 @@ func TestHandleListFleets_EPRISignedReadings(t *testing.T) {
 			now := handlerTestNow()
 			mup := sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/a"}, DeviceLFDI: fleetDeviceALFDI, RoleFlags: roleIsDER,
 				MirrorMeterReading: []sep2.MirrorMeterReading{{
-					MRID: "a-p", LastUpdateTime: now,
+					IdentifiedObject: sep2.IdentifiedObject{MRID: "a-p"}, LastUpdateTime: now,
 					ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(tc.dir), PowerOfTenMultiplier: i8(0)},
 					Reading:     &sep2.Reading{Value: i64(tc.value)},
 				}}}

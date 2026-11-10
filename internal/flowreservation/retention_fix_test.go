@@ -20,7 +20,7 @@ import (
 func (f *retentionFixture) storeOne(t *testing.T, edevID, frqID string, created int64, frp sep2.FlowReservationResponse) {
 	t.Helper()
 	ctx := context.Background()
-	frq := sep2.FlowReservationRequest{MRID: "REQ-" + frqID, CreationTime: created}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ-" + frqID}, CreationTime: created}
 	frq.Href = "/edev/" + edevID + "/frq/" + frqID
 	must(t, f.frq.Create(ctx, edevID, frqID, frq))
 	frp.Href = "/edev/" + edevID + "/frp/" + frqID
@@ -236,7 +236,7 @@ func TestRetention_FailedListStillLogsAndRunsTheOrphanPass(t *testing.T) {
 	orphan := f.seedChain(t, "R9", end-600, member{start: end - 600, dur: 600, created: end - 600})
 	must(t, f.frq.Delete(ctx, aggID, "R9"))
 	must(t, f.devices.Create(ctx, "z1", sep2.EndDevice{LFDI: standaloneLFDI}))
-	other := sep2.FlowReservationRequest{MRID: "Z"}
+	other := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "Z"}}
 	other.Href = "/edev/z1/frq/RZ"
 	must(t, f.frq.Create(ctx, "z1", "RZ", other))
 

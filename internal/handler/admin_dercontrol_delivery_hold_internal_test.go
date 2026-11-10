@@ -51,7 +51,7 @@ func TestReadingLegs(t *testing.T) {
 	fwd, rev := sep2.FlowDirectionForward, sep2.FlowDirectionReverse
 	val := int64(1)
 	rd := func(mrid string, rt *sep2.ReadingType) sep2.MirrorMeterReading {
-		return sep2.MirrorMeterReading{MRID: mrid, ReadingType: rt, Reading: &sep2.Reading{Value: &val}}
+		return sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}, ReadingType: rt, Reading: &sep2.Reading{Value: &val}}
 	}
 	in := []sep2.MirrorMeterReading{
 		rd("A", &sep2.ReadingType{Uom: &w, FlowDirection: &rev}),

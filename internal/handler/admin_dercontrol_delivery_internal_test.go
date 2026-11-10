@@ -16,10 +16,10 @@ func i64(v int64) *int64   { return &v }
 // wReading is a real-power reading received at t. dir and qualifier may be nil.
 func wReading(mrid string, t, watts int64, dir, qualifier *uint8, period *sep2.DateTimeInterval) sep2.MirrorMeterReading {
 	return sep2.MirrorMeterReading{
-		MRID:           mrid,
-		LastUpdateTime: t,
-		Reading:        &sep2.Reading{Value: i64(watts), TimePeriod: period},
-		ReadingType:    &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: dir, DataQualifier: qualifier},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrid},
+		LastUpdateTime:   t,
+		Reading:          &sep2.Reading{Value: i64(watts), TimePeriod: period},
+		ReadingType:      &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: dir, DataQualifier: qualifier},
 	}
 }
 

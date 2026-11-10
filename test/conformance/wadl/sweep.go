@@ -13,8 +13,13 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // This file walks a live IEEE 2030.5 server against the normative WADL.
@@ -357,12 +362,23 @@ type link struct {
 	typeName string
 }
 
+// linkRootExceptions names the links whose resource has a different root
+// element than the link name minus "Link", because sep.xsd types the link for
+// a role and the resource for its shape. A later Active list adds its row here.
+var linkRootExceptions = map[string]string{
+	// sep.xsd:4628 types ActiveDERControlListLink; the list it names is a
+	// DERControlList (the WADL resource ActiveDERControlList has no element
+	// of its own).
+	"ActiveDERControlListLink": "DERControlList",
+}
+
 // parseLinks extracts every advertised href from a response body.
 //
 // The expected root is the link element name with a trailing "Link" stripped,
 // which is the schema's own naming contract: a DERProgramListLink advertises a
-// DERProgramList. That contract is what lets a body check catch a link that
-// resolves but serves the wrong resource type.
+// DERProgramList, except the links in linkRootExceptions. That contract is
+// what lets a body check catch a link that resolves but serves the wrong
+// resource type.
 func parseLinks(body []byte, sourcePath string) []link {
 	if len(body) == 0 {
 		return nil
@@ -399,6 +415,9 @@ func parseLinks(body []byte, sourcePath string) []link {
 		expected := ""
 		if strings.HasSuffix(name, "Link") {
 			expected = strings.TrimSuffix(name, "Link")
+			if root, ok := linkRootExceptions[name]; ok {
+				expected = root
+			}
 		}
 		out = append(out, link{
 			href:         href,
@@ -750,6 +769,35 @@ func seedSet() []seed {
 				reg := sep2.Registration{DateTimeRegistered: 1785700000, PIN: 123455, PollRate: 900}
 				reg.Href = "/edev/" + dev + "/rg"
 				return s.Registrations.Create(ctx, dev, reg)
+			},
+		},
+		{
+			// An FSA, a DERProgram under it and one control in force, so the
+			// crawl can follow FSA -> program -> control lists, including the
+			// program's active list. No protocol route creates any of them.
+			method: http.MethodGet, path: "/edev/" + devToken + "/fsa/1", element: "DERProgram",
+			direct: func(ctx context.Context, s *server.Stores, dev string) error {
+				progHref := coreder.DERProgramHref(dev, "1", "1")
+				fsa := sep2.FunctionSetAssignments{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD1"}
+				fsa.Href = "/edev/" + dev + "/fsa/1"
+				fsa.DERProgramListLink = &sep2.ListLink{Href: fsa.Href + "/derp", All: 1}
+				if err := s.FSAs.Create(ctx, dev, "1", fsa); err != nil {
+					return err
+				}
+				prog := fsaprogram.CopyProgram(dev, "1", memory.ProgramTemplate{
+					ID: "1", MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD2", Description: "wadl sweep derp", Primacy: 1,
+				})
+				prog.DefaultDERControlLink = &sep2.Link{Href: coreder.DefaultHref(progHref)}
+				if err := s.DERPrograms.Create(ctx, dev, "1", prog); err != nil {
+					return err
+				}
+				now := sep2time.Now().Unix()
+				ctrl := sep2.DERControl{DERControlBase: &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: 1}}}
+				ctrl.MRID = "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD3"
+				ctrl.Href = progHref + "/derc/1"
+				ctrl.CreationTime = now - 200
+				ctrl.Interval = &sep2.DateTimeInterval{Start: now - 100, Duration: 3600}
+				return s.DERControls.Create(ctx, derhref.ScopeKey(dev, "1", "1"), "1", ctrl)
 			},
 		},
 		{

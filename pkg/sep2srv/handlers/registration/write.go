@@ -1,6 +1,7 @@
 package registration
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -37,6 +38,7 @@ func HandlePutRegistration(regs store.ResourceStore[sep2.Registration]) http.Han
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
+			srverr.LogBadRequest(r, err)
 			http.Error(w, "read body failed", http.StatusBadRequest)
 			return
 		}
@@ -50,33 +52,67 @@ func HandlePutRegistration(regs store.ResourceStore[sep2.Registration]) http.Han
 			return
 		}
 
-		existing, err := regs.Get(r.Context(), id)
-		switch {
-		case err == nil:
-			existing.PIN = in.PIN
-			if err := regs.Update(r.Context(), id, existing); err != nil {
-				srverr.Internal(w, r, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		case errors.Is(err, store.ErrNotFound):
-			href := memory.RegistrationHref(id)
-			reg := sep2.Registration{
-				Resource:           sep2.Resource{Href: href},
-				DateTimeRegistered: time.Now().Unix(),
-				PIN:                in.PIN,
-				PollRate:           memory.DefaultRegistrationPollRate,
-			}
-			if err := regs.Create(r.Context(), id, reg); err != nil {
-				srverr.Internal(w, r, err)
-				return
-			}
-			w.Header().Set("Location", href)
-			w.WriteHeader(http.StatusCreated)
-		default:
+		created, err := upsert(r.Context(), regs, id, in.PIN)
+		if err != nil {
 			srverr.Internal(w, r, err)
+			return
+		}
+		if created {
+			w.Header().Set("Location", memory.RegistrationHref(id))
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// upserter is the one-call create-or-replace a store may offer. The memory
+// RegistrationStore does, and it is what makes the PUT atomic.
+type upserter interface {
+	Upsert(ctx context.Context, id string, build func(current sep2.Registration, found bool) sep2.Registration) (created bool, err error)
+}
+
+// maxUpsertAttempts bounds the read-then-write fallback for a store without
+// Upsert: each retry follows a writer that changed the record between the read
+// and the write, so a few attempts is all contention can need.
+const maxUpsertAttempts = 4
+
+// upsert stores the pIN for id, keeping the record's href, registration time
+// and poll rate when it exists. A store without Upsert gets a read followed by
+// an update or a create, retried when a concurrent writer made the read stale.
+func upsert(ctx context.Context, regs store.ResourceStore[sep2.Registration], id string, pin uint32) (created bool, err error) {
+	build := func(cur sep2.Registration, found bool) sep2.Registration {
+		if found {
+			cur.PIN = pin
+			return cur
+		}
+		return sep2.Registration{
+			Resource:           sep2.Resource{Href: memory.RegistrationHref(id)},
+			DateTimeRegistered: time.Now().Unix(),
+			PIN:                pin,
+			PollRate:           memory.DefaultRegistrationPollRate,
 		}
 	}
+	if u, ok := regs.(upserter); ok {
+		return u.Upsert(ctx, id, build)
+	}
+	for range maxUpsertAttempts {
+		cur, gerr := regs.Get(ctx, id)
+		switch {
+		case gerr == nil:
+			err = regs.Update(ctx, id, build(cur, true))
+			created = false
+		case errors.Is(gerr, store.ErrNotFound):
+			err = regs.Create(ctx, id, build(sep2.Registration{}, false))
+			created = true
+		default:
+			return false, gerr
+		}
+		if err == nil || !(errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrAlreadyExists)) {
+			return created, err
+		}
+	}
+	return false, err
 }
 
 // HandleDeleteRegistration returns the handler for DELETE /edev/{id}/rg. Like

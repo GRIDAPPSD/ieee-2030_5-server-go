@@ -20,16 +20,15 @@ import (
 // TestMethodModePolicyRatchet logs the new value to use.
 //
 // Measured against the server csiptest boots, with the route set core's
-// assembly registers, on 2026-11-05. The sweep's manager manages a device other
-// than the one it probes, so PUT and DELETE on that device's Registration answer
-// 403 by design, which is two Optional rows outside the policy.
-const outsidePolicyCeiling = 455
+// assembly registers, on 2026-11-05. The manager-only writes go to the device
+// the sweep's manager manages, so they are measured as that manager's own.
+const outsidePolicyCeiling = 453
 
 // outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
 // mode cannot hide behind a fall in another. The values sum to the total.
 var outsidePolicyByMode = map[wadl.Mode]int{
 	wadl.ModeMandatory:  195,
-	wadl.ModeOptional:   64,
+	wadl.ModeOptional:   62,
 	wadl.ModeDeprecated: 47,
 	wadl.ModeError:      149,
 }
@@ -84,6 +83,7 @@ func bootTarget(t *testing.T, links *wadl.LinkSchema) *wadl.Target {
 		Links:           links,
 		Stores:          srv.Stores,
 		ManagerClient:   srv.NewManagerClient(t),
+		ManagedDeviceID: csiptest.ManagedDeviceID,
 	}
 }
 

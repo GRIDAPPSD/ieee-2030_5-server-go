@@ -192,6 +192,12 @@ type Target struct {
 	// ordinary Client's attempt at each is recorded as a restricted row. Nil
 	// sends every request with Client and records no restricted rows.
 	ManagerClient *http.Client
+	// ManagedDeviceID is the store id of the EndDevice ManagerClient manages.
+	// A manager acts only on its own device, so each restricted write under
+	// /edev/{id} is sent, as the manager and as the ordinary device alike, to
+	// this device in place of the one the crawl found. Empty leaves the path
+	// as crawled.
+	ManagedDeviceID string
 	// MountedPatterns is the router's own enumeration of the patterns it
 	// registered, as returned by assembly.BuildProtocolRouter. Supplying it
 	// enables the second, independent unrouted discriminator. Empty is
@@ -1004,6 +1010,7 @@ func (t *Target) phaseWADL(m *Model, discovered []string, reached *crawl, rows *
 		client := t.Client
 		asManager := false
 		if t.ManagerClient != nil && restrictedWrite(meth) {
+			path = t.pairedPath(path)
 			// The device goes first: a manager DELETE that succeeded would
 			// leave the device a 404 that says nothing about authority.
 			t.probeDeviceOnRestricted(rows, meth, path, body)
@@ -1241,4 +1248,17 @@ func (r *Results) Summary() []string {
 		out = append(out, fmt.Sprintf("%-10s %-34s %d", k.p, k.v, counts[k]))
 	}
 	return out
+}
+
+// edevSegment matches the leading /edev/{id} of a path.
+var edevSegment = regexp.MustCompile(`^/edev/[^/]+`)
+
+// pairedPath points a path under /edev/{id} at the manager's own device, so the
+// manager's write and the ordinary device's probe of it name the same record
+// and the manager is not refused for acting on a device it does not manage.
+func (t *Target) pairedPath(path string) string {
+	if t.ManagedDeviceID == "" {
+		return path
+	}
+	return edevSegment.ReplaceAllLiteralString(path, "/edev/"+t.ManagedDeviceID)
 }

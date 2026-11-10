@@ -403,6 +403,10 @@ func (b *BootedServer) HTTPClientFor(cert tls.Certificate) *http.Client {
 	}
 }
 
+// ManagedDeviceID is the store id of the device NewManagerClient seeds and
+// assigns to its manager.
+const ManagedDeviceID = "csiptest-managed"
+
 // NewManagerClient mints a second device certificate from this server's CA,
 // records it as the manager of a third device, whose record it seeds, and returns a client
 // presenting it. It is the manager identity a test uses to make writes the
@@ -427,8 +431,8 @@ func (b *BootedServer) NewManagerClient(t *testing.T) *http.Client {
 		// writes need its record.
 		enabled := true
 		dev := sep2.EndDevice{LFDI: managed, SFDI: managedSFDI, Enabled: &enabled}
-		dev.Href = "/edev/csiptest-managed"
-		if err := b.Stores.EndDevices.Create(context.Background(), "csiptest-managed", dev); err != nil {
+		dev.Href = "/edev/" + ManagedDeviceID
+		if err := b.Stores.EndDevices.Create(context.Background(), ManagedDeviceID, dev); err != nil {
 			t.Fatalf("csiptest: seed the managed device %s: %v", managed, err)
 		}
 	}

@@ -6,7 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -151,4 +154,143 @@ func TestRegistrationWritesRefuseOtherMethods(t *testing.T) {
 			t.Errorf("%s status = %d, want 405", method, w.Code)
 		}
 	}
+}
+
+func persistedRegs(t *testing.T) (*memory.RegistrationStore, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "registrations.json")
+	regs, err := memory.NewRegistrationStoreWithPersistence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return regs, path
+}
+
+// TestPutRegistrationConcurrentFirstPutsNeverFail sends many first PUTs at
+// once: exactly one creates (201), the rest replace (204), and none is a 500.
+func TestPutRegistrationConcurrentFirstPutsNeverFail(t *testing.T) {
+	regs, _ := persistedRegs(t)
+	mux := writeMux(regs)
+	const n = 24
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = send(mux, http.MethodPut, regBody("424242")).Code
+		}()
+	}
+	wg.Wait()
+	created := 0
+	for _, c := range codes {
+		switch c {
+		case http.StatusCreated:
+			created++
+		case http.StatusNoContent:
+		default:
+			t.Errorf("status = %d, want 201 or 204", c)
+		}
+	}
+	if created != 1 {
+		t.Errorf("%d PUTs answered 201, want exactly 1", created)
+	}
+}
+
+// TestPutRegistrationRacingDeleteNeverFails runs PUTs against DELETEs: a PUT
+// is 201 or 204 and a DELETE is 200 or 404, never a 500.
+func TestPutRegistrationRacingDeleteNeverFails(t *testing.T) {
+	regs, _ := persistedRegs(t)
+	mux := writeMux(regs)
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if c := send(mux, http.MethodPut, regBody("1")).Code; c != http.StatusCreated && c != http.StatusNoContent {
+				t.Errorf("PUT status = %d, want 201 or 204", c)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if c := send(mux, http.MethodDelete, "").Code; c != http.StatusOK && c != http.StatusNotFound {
+				t.Errorf("DELETE status = %d, want 200 or 404", c)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestPutRegistrationOnAStoreWithoutUpsertStillSucceedsUnderContention covers
+// the read-then-write fallback with a store that offers no Upsert.
+func TestPutRegistrationOnAStoreWithoutUpsertStillSucceedsUnderContention(t *testing.T) {
+	regs := memory.NewStore[sep2.Registration]()
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /edev/{id}/rg", registration.HandlePutRegistration(regs))
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if c := send(mux, http.MethodPut, regBody("9")).Code; c != http.StatusCreated && c != http.StatusNoContent {
+				t.Errorf("status = %d, want 201 or 204", c)
+			}
+		}()
+	}
+	wg.Wait()
+	if got, err := regs.Get(context.Background(), deviceID); err != nil || got.PIN != 9 {
+		t.Errorf("stored = (%+v, %v), want pin 9", got, err)
+	}
+}
+
+func blockSnapshot(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(path+".tmp", "keep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRegistrationWritesThatCannotPersistAnswer500AndChangeNothing pins that a
+// failed save is neither reported as success nor left standing in memory.
+func TestRegistrationWritesThatCannotPersistAnswer500AndChangeNothing(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("first PUT", func(t *testing.T) {
+		regs, path := persistedRegs(t)
+		blockSnapshot(t, path)
+		if w := send(writeMux(regs), http.MethodPut, regBody("1")); w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", w.Code)
+		}
+		if _, err := regs.Get(ctx, deviceID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the failed PUT left a record: err = %v", err)
+		}
+	})
+
+	t.Run("replacing PUT", func(t *testing.T) {
+		regs, path := persistedRegs(t)
+		if w := send(writeMux(regs), http.MethodPut, regBody("111")); w.Code != http.StatusCreated {
+			t.Fatalf("seed status = %d", w.Code)
+		}
+		blockSnapshot(t, path)
+		if w := send(writeMux(regs), http.MethodPut, regBody("222")); w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", w.Code)
+		}
+		if got, _ := regs.Get(ctx, deviceID); got.PIN != 111 {
+			t.Errorf("pin = %d, want the prior 111", got.PIN)
+		}
+	})
+
+	t.Run("DELETE", func(t *testing.T) {
+		regs, path := persistedRegs(t)
+		if w := send(writeMux(regs), http.MethodPut, regBody("111")); w.Code != http.StatusCreated {
+			t.Fatalf("seed status = %d", w.Code)
+		}
+		blockSnapshot(t, path)
+		if w := send(writeMux(regs), http.MethodDelete, ""); w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", w.Code)
+		}
+		if got, err := regs.Get(ctx, deviceID); err != nil || got.PIN != 111 {
+			t.Errorf("after a failed DELETE the record is (%+v, %v), want it still stored", got, err)
+		}
+	})
 }

@@ -58,6 +58,12 @@ type RegistrationStore struct {
 	keysMu sync.Mutex
 	keys   []string
 
+	// writeMu serializes every mutation end to end: the change, the key
+	// index, the snapshot write and any rollback. Without it a second writer's
+	// snapshot could capture a first writer's change that is about to be
+	// rolled back.
+	writeMu sync.Mutex
+
 	persistMu   sync.Mutex
 	persistPath string
 }
@@ -197,28 +203,109 @@ func (s *RegistrationStore) Count(ctx context.Context) (uint32, error) {
 	return s.inner.Count(ctx)
 }
 
-// Create stores a registration and flushes a snapshot.
+// Create stores a registration and flushes a snapshot. A failed flush is
+// undone before the error returns, so the collection never holds a record the
+// snapshot does not.
 func (s *RegistrationStore) Create(ctx context.Context, id string, reg sep2.Registration) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if err := s.inner.Create(ctx, id, reg); err != nil {
 		return err
 	}
 	s.addKey(id)
-	return s.persist(ctx)
+	if err := s.persist(ctx); err != nil {
+		s.undoCreate(ctx, id)
+		return err
+	}
+	return nil
 }
 
-// Update replaces a registration and flushes a snapshot.
+// Update replaces a registration and flushes a snapshot, restoring the prior
+// record when the flush fails.
 func (s *RegistrationStore) Update(ctx context.Context, id string, reg sep2.Registration) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	prior, err := s.inner.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := s.inner.Update(ctx, id, reg); err != nil {
 		return err
 	}
-	return s.persist(ctx)
+	if err := s.persist(ctx); err != nil {
+		s.undoUpdate(ctx, id, prior)
+		return err
+	}
+	return nil
 }
 
-// Delete removes a registration and flushes a snapshot.
+// Upsert creates the registration under id, or replaces the one there, as one
+// step: build receives the current record (and whether there is one) and
+// returns what to store. created reports whether the record is new. Because
+// the read and the write share one critical section, a concurrent first PUT
+// never meets ErrAlreadyExists and a PUT racing a Delete never meets
+// ErrNotFound. A failed flush restores the state the call found.
+func (s *RegistrationStore) Upsert(ctx context.Context, id string, build func(current sep2.Registration, found bool) sep2.Registration) (created bool, err error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	prior, err := s.inner.Get(ctx, id)
+	switch {
+	case err == nil:
+		if err := s.inner.Update(ctx, id, build(prior, true)); err != nil {
+			return false, err
+		}
+		if err := s.persist(ctx); err != nil {
+			s.undoUpdate(ctx, id, prior)
+			return false, err
+		}
+		return false, nil
+	case errors.Is(err, store.ErrNotFound):
+		if err := s.inner.Create(ctx, id, build(sep2.Registration{}, false)); err != nil {
+			return false, err
+		}
+		s.addKey(id)
+		if err := s.persist(ctx); err != nil {
+			s.undoCreate(ctx, id)
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, err
+	}
+}
+
+// Delete removes a registration and flushes a snapshot, putting the record
+// back when the flush fails.
 func (s *RegistrationStore) Delete(ctx context.Context, id string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	prior, err := s.inner.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := s.inner.Delete(ctx, id); err != nil {
 		return err
 	}
 	s.dropKey(id)
-	return s.persist(ctx)
+	if err := s.persist(ctx); err != nil {
+		// inner is this wrapper's own collection and writeMu is held, so the
+		// id is free and this cannot fail on a conflict.
+		if cerr := s.inner.Create(ctx, id, prior); cerr == nil {
+			s.addKey(id)
+		}
+		return err
+	}
+	return nil
+}
+
+// undoCreate and undoUpdate run under writeMu after a failed flush. The inner
+// collection is owned by this wrapper, so they cannot meet a conflicting
+// writer; an error from the inner call would mean the collection itself broke.
+func (s *RegistrationStore) undoCreate(ctx context.Context, id string) {
+	_ = s.inner.Delete(ctx, id)
+	s.dropKey(id)
+}
+
+func (s *RegistrationStore) undoUpdate(ctx context.Context, id string, prior sep2.Registration) {
+	_ = s.inner.Update(ctx, id, prior)
 }

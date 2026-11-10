@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	corelisthandler "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
@@ -191,6 +193,11 @@ func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint], opts 
 	for _, opt := range opts {
 		opt(&maxPoints)
 	}
+	// A cap of zero or below would refuse every POST /upt with a 507 that
+	// looks like a full store, so a bad option fails at wiring time.
+	if maxPoints <= 0 {
+		panic(fmt.Sprintf("metering: UsagePoint cap must be positive, got %d", maxPoints))
+	}
 	// Holds the count check and the Create together, so concurrent POSTs
 	// cannot each pass the check and overshoot the cap.
 	var createMu sync.Mutex
@@ -235,6 +242,7 @@ func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint], opts 
 		}
 		createMu.Unlock()
 		if errors.Is(createErr, errUsagePointCap) {
+			log.Printf("usage point cap of %d reached, refusing %s", maxPoints, logsafe.Str(srverr.Route(r)))
 			http.Error(w, errUsagePointCap.Error(), http.StatusInsufficientStorage)
 			return
 		}

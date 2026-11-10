@@ -102,6 +102,7 @@ type Stores struct {
 	// Server-side metering
 	UsagePoints   *memory.Store[sep2.UsagePoint]
 	MeterReadings *memory.ScopedStore[sep2.MeterReading]
+	ReadingSets   *memory.ScopedStore[sep2.ReadingSet]
 	Readings      *memory.ScopedStore[sep2.Reading]
 	ReadingTypes  *memory.Store[sep2.ReadingType]
 

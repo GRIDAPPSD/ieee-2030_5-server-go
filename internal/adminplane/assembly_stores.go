@@ -65,6 +65,7 @@ func StoresFromAssembly(s *assembly.Stores) (*Stores, error) {
 		Subscriptions:        s.Subscriptions,
 		UsagePoints:          concrete[*memory.Store[sep2.UsagePoint]](s.UsagePoints),
 		MeterReadings:        concrete[*memory.ScopedStore[sep2.MeterReading]](s.MeterReadings),
+		ReadingSets:          concrete[*memory.ScopedStore[sep2.ReadingSet]](s.ReadingSets),
 		Readings:             concrete[*memory.ScopedStore[sep2.Reading]](s.Readings),
 		ReadingTypes:         concrete[*memory.Store[sep2.ReadingType]](s.ReadingTypes),
 		Configurations:       concrete[*memory.ScopedStore[sep2.Configuration]](s.Configurations),

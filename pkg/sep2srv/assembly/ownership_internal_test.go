@@ -124,6 +124,7 @@ func fullStores() *Stores {
 		Subscriptions:            memory.NewSubscriptionStore(),
 		UsagePoints:              memory.NewStore[sep2.UsagePoint](),
 		MeterReadings:            memory.NewScopedStore[sep2.MeterReading](),
+		ReadingSets:              memory.NewScopedStore[sep2.ReadingSet](),
 		Readings:                 memory.NewScopedStore[sep2.Reading](),
 		ReadingTypes:             memory.NewStore[sep2.ReadingType](),
 		Configurations:           memory.NewScopedStore[sep2.Configuration](),

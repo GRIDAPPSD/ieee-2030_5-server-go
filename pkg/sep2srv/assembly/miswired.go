@@ -13,11 +13,11 @@ import (
 //
 // # The gates are per family, and the fix is not to make them per field
 //
-// Thirteen mount decisions cover roughly fifteen handles. Fifteen fields have
+// Thirteen mount decisions cover roughly sixteen handles. Sixteen fields have
 // no gate of their own: DERCapabilities, DERSettings, DERStatuses,
 // DERAvailabilities, DERPrograms, DERControls, DefaultDERControls and DERCurves
 // ride on DERs; MirrorMeterReadings rides on MirrorUsagePoints; MeterReadings,
-// Readings and ReadingTypes ride on UsagePoints; TextMessages rides on
+// ReadingSets, Readings and ReadingTypes ride on UsagePoints; TextMessages rides on
 // MessagingPrograms; FlowReservationResponses rides on
 // FlowReservationRequests; Responses rides on ResponseSets. Nothing forced the
 // siblings to arrive together, so a Stores holding EndDevices and DERs with

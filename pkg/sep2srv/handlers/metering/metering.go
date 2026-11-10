@@ -349,13 +349,25 @@ func HandleUsagePointList(s store.ResourceStore[sep2.UsagePoint], managers store
 
 // HandleReadingType returns a handler for GET /rt/{id}.
 func HandleReadingType(rtStore store.ResourceStore[sep2.ReadingType]) http.HandlerFunc {
+	return handleReadingTypeAt(rtStore, func(r *http.Request) string { return r.PathValue("id") })
+}
+
+// HandleMeterReadingType returns a handler for GET /upt/{uptId}/mr/{mrId}/rt,
+// the ReadingType a MeterReading carries. The record is kept under
+// [ReadingTypeKey] for the pair of path values.
+func HandleMeterReadingType(rtStore store.ResourceStore[sep2.ReadingType]) http.HandlerFunc {
+	return handleReadingTypeAt(rtStore, func(r *http.Request) string {
+		return ReadingTypeKey(r.PathValue("uptId"), r.PathValue("mrId"))
+	})
+}
+
+func handleReadingTypeAt(rtStore store.ResourceStore[sep2.ReadingType], keyOf func(r *http.Request) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
-		id := r.PathValue("id")
-		rt, err := rtStore.Get(r.Context(), id)
+		rt, err := rtStore.Get(r.Context(), keyOf(r))
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -365,6 +377,40 @@ func HandleReadingType(rtStore store.ResourceStore[sep2.ReadingType]) http.Handl
 			return
 		}
 		encoding.WriteXML(w, http.StatusOK, &rt)
+	}
+}
+
+// ReadingTypeKey is the store key of the ReadingType under a MeterReading.
+// The ReadingType store is flat and a MeterReading id is only unique within its
+// UsagePoint, so the key carries both.
+func ReadingTypeKey(uptID, mrID string) string {
+	return uptID + "/" + mrID
+}
+
+// ReadingSetScopeKey is the parent key the ReadingSets, and the Readings
+// listed directly under a MeterReading, are stored under.
+func ReadingSetScopeKey(uptID, mrID string) string {
+	return uptID + "/" + mrID
+}
+
+// ReadingScopeKey is the parent key the Readings of one ReadingSet are stored
+// under.
+func ReadingScopeKey(uptID, mrID, rsID string) string {
+	return uptID + "/" + mrID + "/" + rsID
+}
+
+// BuildReadingSetList constructs a ReadingSetList.
+func BuildReadingSetList(href string, result store.ListResult[sep2.ReadingSet], pollRate uint32) sep2.ReadingSetList {
+	return sep2.ReadingSetList{
+		ListResource: sep2.ListResource{
+			SubscribableResource: sep2.SubscribableResource{
+				Resource: sep2.Resource{Href: href},
+			},
+			All:      result.All,
+			Results:  result.Results,
+			PollRate: pollRate,
+		},
+		ReadingSet: result.Items,
 	}
 }
 

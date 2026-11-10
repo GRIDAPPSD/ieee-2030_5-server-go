@@ -117,7 +117,7 @@ import (
 // # THE GATE IS PER FAMILY, NOT PER FIELD
 //
 // The paragraph above says "every gate", and there are thirteen of them. Each
-// reads ONE ANCHOR field and mounts a whole family behind it; fifteen handles
+// reads ONE ANCHOR field and mounts a whole family behind it; sixteen handles
 // have no gate of their own and are mounted on the strength of a sibling:
 //
 //	anchor                    family members it also mounts
@@ -128,7 +128,7 @@ import (
 //	DERs                      DERCapabilities, DERSettings, DERStatuses,
 //	                          DERAvailabilities, DERPrograms, DERControls,
 //	                          DefaultDERControls, DERCurves
-//	UsagePoints               MeterReadings, Readings, ReadingTypes
+//	UsagePoints               MeterReadings, ReadingSets, Readings, ReadingTypes
 //	Configurations            (its own routes only)
 //	DeviceStatuses            (its own routes only)
 //	LogEvents                 (its own routes only)
@@ -252,6 +252,7 @@ type Stores struct {
 	// Server-side metering
 	UsagePoints   store.ResourceStore[sep2.UsagePoint]
 	MeterReadings store.ScopedStore[sep2.MeterReading]
+	ReadingSets   store.ScopedStore[sep2.ReadingSet]
 	Readings      store.ScopedStore[sep2.Reading]
 	ReadingTypes  store.ResourceStore[sep2.ReadingType]
 
@@ -1305,9 +1306,22 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
 	pollRate uint32,
 ) http.HandlerFunc {
+	return scopedListHandlerAt(deepScopeKey, scopedStore, sort, buildList, pollRate)
+}
+
+// scopedListHandlerAt creates a list handler scoped by the key scope derives
+// from the request, for a parent that is more than one path value deep. The
+// list route and the instance route of one resource kind pass the same scope
+// function, so they cannot disagree about where a record lives.
+func scopedListHandlerAt[T store.Copier[T], L any](
+	scope func(r *http.Request) string,
+	scopedStore store.ScopedStore[T],
+	sort store.SortKey,
+	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
+	pollRate uint32,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := deepScopeKey(r)
-		st := store.Under(scopedStore, key)
+		st := store.Under(scopedStore, scope(r))
 		h := corelisthandler.SortedListHandler[T, L](st, sort, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
@@ -1358,13 +1372,24 @@ func scopedResourceHandlerDeep[T store.Copier[T]](
 	idParam string,
 	stamp func(r *http.Request, resource *T),
 ) http.HandlerFunc {
+	return scopedResourceHandlerAt(deepScopeKey, scopedStore, idParam, stamp)
+}
+
+// scopedResourceHandlerAt is [scopedResourceHandlerDeep] with the scope taken
+// from scope rather than fixed to the DERProgram key, and keeps its contract.
+func scopedResourceHandlerAt[T store.Copier[T]](
+	scope func(r *http.Request) string,
+	scopedStore store.ScopedStore[T],
+	idParam string,
+	stamp func(r *http.Request, resource *T),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
 
-		resource, err := scopedStore.Get(r.Context(), deepScopeKey(r), r.PathValue(idParam))
+		resource, err := scopedStore.Get(r.Context(), scope(r), r.PathValue(idParam))
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -1552,9 +1577,10 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 	if !stores.serves(famUsagePoints) {
 		return
 	}
-	// None of these three has a gate of its own: all are mounted on the
+	// None of these four has a gate of its own: all are mounted on the
 	// strength of UsagePoints (see miswired.go).
 	meterReadings := requireScoped(stores.MeterReadings, "MeterReadings")
+	readingSets := requireScoped(stores.ReadingSets, "ReadingSets")
 	readings := requireScoped(stores.Readings, "Readings")
 	readingTypes := requireResource(stores.ReadingTypes, "ReadingTypes")
 	mux.HandleFunc("GET /upt", coremetering.HandleUsagePointList(
@@ -1563,16 +1589,41 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 	mux.HandleFunc("POST /upt", coremetering.HandleCreateUsagePoint(stores.UsagePoints))
 	mux.HandleFunc("GET /upt/{uptId}", coremetering.HandleUsagePoint(stores.UsagePoints))
 
-	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
-		meterReadings, "uptId", store.SortByIDAsc, coremetering.BuildMeterReadingList, 900,
-	))
+	// The reading hierarchy under a UsagePoint, at the WADL addresses
+	// (sep_wadl.xml: /upt/{id1}/mr/{id2} and below). Lists are served in the
+	// Table 39 order (IEEE 2030.5-2018 section 10.4.2). Reads only: the
+	// Optional writes are a separate slice.
+	meterReadingsOrdered := store.OrderedScoped(meterReadings, coremetering.CompareMeterReading)
+	readingSetsOrdered := store.OrderedScoped(readingSets, coremetering.CompareReadingSet)
+	readingsOrdered := store.OrderedScoped(readings, coremetering.CompareReading)
+	setScope := func(r *http.Request) string {
+		return coremetering.ReadingSetScopeKey(r.PathValue("uptId"), r.PathValue("mrId"))
+	}
+	readingScope := func(r *http.Request) string {
+		return coremetering.ReadingScopeKey(r.PathValue("uptId"), r.PathValue("mrId"), r.PathValue("rsId"))
+	}
 
-	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
-		key := r.PathValue("uptId") + "/" + r.PathValue("mrId")
-		st := store.Under(readings, key)
-		h := corelisthandler.ListHandler[sep2.Reading, sep2.ReadingList](st, coremetering.BuildReadingList, 900)
-		h.ServeHTTP(w, r)
-	})
+	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
+		meterReadingsOrdered, "uptId", store.SortByListOrdering, coremetering.BuildMeterReadingList, 900,
+	))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}",
+		scopedResourceHandler[sep2.MeterReading](meterReadings, "uptId", "mrId", itemMethods{}, nil))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rt", coremetering.HandleMeterReadingType(readingTypes))
+
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs", scopedListHandlerAt[sep2.ReadingSet, sep2.ReadingSetList](
+		setScope, readingSetsOrdered, store.SortByListOrdering, coremetering.BuildReadingSetList, 900,
+	))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs/{rsId}",
+		scopedResourceHandlerAt[sep2.ReadingSet](setScope, readingSets, "rsId", nil))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs/{rsId}/r", scopedListHandlerAt[sep2.Reading, sep2.ReadingList](
+		readingScope, readingsOrdered, store.SortByListOrdering, coremetering.BuildReadingList, 900,
+	))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+		scopedResourceHandlerAt[sep2.Reading](readingScope, readings, "rId", nil))
+
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", scopedListHandlerAt[sep2.Reading, sep2.ReadingList](
+		setScope, readingsOrdered, store.SortByListOrdering, coremetering.BuildReadingList, 900,
+	))
 
 	mux.HandleFunc("GET /rt", corelisthandler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
 		readingTypes, coremetering.BuildReadingTypeList, 900,

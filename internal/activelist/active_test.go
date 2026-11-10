@@ -32,6 +32,8 @@ func TestEventActive_Boundaries(t *testing.T) {
 		{"starts next second", ev(now+1, 600, now-10, nil), false},
 		{"ending now", ev(now-600, 600, now-700, active), false},
 		{"last second", ev(now-599, 600, now-700, active), true},
+		{"one second before the end, stamped", ev(now-599, 600, now-700, active), true},
+		{"one second before the end, no status", ev(now-599, 600, now-700, nil), true},
 		{"no interval", &sep2.Event{EventStatus: active}, false},
 		{"stamped scheduled", ev(now-5, 600, now-10, &sep2.EventStatus{CurrentStatus: sep2.EventStatusScheduled}), false},
 		{"stamped cancelled", ev(now-5, 600, now-10, &sep2.EventStatus{CurrentStatus: sep2.EventStatusCancelled}), false},

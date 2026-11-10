@@ -45,9 +45,7 @@ func NewActiveTextMessageStore(messages store.ScopedStore[sep2.TextMessage]) sto
 
 // TextMessageCounter is the read-only subset of a text message store the
 // program decorator needs.
-type TextMessageCounter interface {
-	Count(ctx context.Context, parentID string) (uint32, error)
-}
+type TextMessageCounter = activelist.Counter
 
 // ActiveLinkProgramStore decorates a MessagingProgram store so every served
 // program carries an ActiveTextMessageListLink whose all is the live count of
@@ -92,18 +90,8 @@ func (s *ActiveLinkProgramStore) stamp(ctx context.Context, id string, p *sep2.M
 	if id == "" {
 		return
 	}
-	n, err := s.active.Count(ctx, id)
-	if err != nil {
+	derive := func() (string, bool) { return ActiveTextMessageListHref("/msg/" + id) }
+	if err := activelist.StampLink(ctx, s.active, id, &p.ActiveTextMessageListLink, derive); err != nil {
 		log.Printf("messaging: counting active text messages for %s: %s; serving no ActiveTextMessageListLink", logsafe.Quote(id), logsafe.Err(err))
-		p.ActiveTextMessageListLink = nil
-		return
 	}
-	if p.ActiveTextMessageListLink == nil {
-		href, ok := ActiveTextMessageListHref("/msg/" + id)
-		if !ok {
-			return
-		}
-		p.ActiveTextMessageListLink = &sep2.ListLink{Href: href}
-	}
-	p.ActiveTextMessageListLink.All = n
 }

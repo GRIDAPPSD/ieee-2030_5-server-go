@@ -24,6 +24,7 @@ func EventActive(ev *sep2.Event, now int64) bool {
 	if ev.EventStatus != nil {
 		return ev.EventStatus.CurrentStatus == sep2.EventStatusActive
 	}
+	// An event with no status (never derived) is judged by the DER lifecycle rule.
 	return dercontrol.DeriveStatus(now, ev.CreationTime, ev.Interval.Start, dercontrol.LifecycleRecord{}).CurrentStatus == sep2.EventStatusActive
 }
 

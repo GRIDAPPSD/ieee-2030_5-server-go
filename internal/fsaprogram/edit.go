@@ -130,7 +130,7 @@ type DefaultCreator interface {
 // EditCreatingDefault edits a program that links no default control and gives
 // it seed as one. The program's version is raised once. The default takes the
 // program's new version, or one above a stored unlinked default it replaces
-// (whose mRID is kept) when that is higher, so no version is reused for other
+// (whose mRID is kept unless it has none) when that is higher, so no version is reused for other
 // content. The default is written first and put back if the program write
 // fails.
 func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults DefaultCreator, ref Ref, scope string,
@@ -156,7 +156,9 @@ func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults De
 	orphan, err := defaults.Get(ctx, scope, coresingleton.SingletonKey)
 	switch {
 	case err == nil:
-		seed.MRID = orphan.MRID
+		if orphan.MRID != "" {
+			seed.MRID = orphan.MRID
+		}
 		if next, err := NextVersion(orphan.Version); err != nil {
 			return Changes{}, err
 		} else if *next > v {

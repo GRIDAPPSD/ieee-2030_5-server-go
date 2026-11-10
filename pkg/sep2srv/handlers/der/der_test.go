@@ -330,3 +330,35 @@ func TestBuildDERCurveList(t *testing.T) {
 		t.Errorf("len(DERCurve) = %d, want 2", len(list.DERCurve))
 	}
 }
+
+// TestDefaultDERControlHandler_FallbackCarriesAStableMRID: with nothing
+// stored, the served shell has a 32-digit mRID that is the same on every
+// request for the program (#1299).
+func TestDefaultDERControlHandler_FallbackCarriesAStableMRID(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
+		coredel.DefaultDERControlHandler(memory.NewScopedStore[sep2.DefaultDERControl]()))
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		var got sep2.DefaultDERControl
+		if err := xml.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return got.MRID
+	}
+	a1 := get("/edev/e1/fsa/f1/derp/p1/dderc")
+	a2 := get("/edev/e1/fsa/f1/derp/p1/dderc")
+	b := get("/edev/e1/fsa/f1/derp/p2/dderc")
+	if len(a1) != 32 {
+		t.Fatalf("mRID = %q, want 32 hex digits", a1)
+	}
+	if a1 != a2 {
+		t.Errorf("mRID changed between requests: %q then %q", a1, a2)
+	}
+	if a1 == b {
+		t.Errorf("two programs share mRID %q", a1)
+	}
+}

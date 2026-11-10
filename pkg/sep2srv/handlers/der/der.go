@@ -13,6 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -207,6 +208,10 @@ func DefaultDERControlHandler(ddercStore store.ScopedStore[sep2.DefaultDERContro
 		func(r *http.Request) sep2.DefaultDERControl {
 			s := sep2.DefaultDERControl{}
 			s.Href = DefaultHref(DERProgramHref(r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId")))
+			// Derived from the href so the shell keeps one mRID across requests.
+			if m, err := mrid.Derived(s.Href, nil); err == nil {
+				s.MRID = m
+			}
 			return s
 		})
 

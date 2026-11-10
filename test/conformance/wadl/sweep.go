@@ -767,7 +767,7 @@ func seedSet() []seed {
 				uom := sep2.UomWattHours
 				rt := sep2.ReadingType{Uom: &uom}
 				rt.Href = mrHref + "/rt"
-				if err := s.ReadingTypes.Create(ctx, coremetering.ReadingTypeKey(upt, "1"), rt); err != nil {
+				if err := s.ReadingTypes.Create(ctx, upt, "1", rt); err != nil {
 					return err
 				}
 				set := sep2.ReadingSet{
@@ -776,13 +776,15 @@ func seedSet() []seed {
 					ReadingListLink:  &sep2.ListLink{Href: setHref + "/r", All: 1},
 				}
 				set.Href = setHref
-				if err := s.ReadingSets.Create(ctx, coremetering.ReadingSetScopeKey(upt, "1"), "1", set); err != nil {
+				setScope, _ := coremetering.ReadingSetScopeKey(upt, "1")
+				if err := s.ReadingSets.Create(ctx, setScope, "1", set); err != nil {
 					return err
 				}
 				value, localID := int64(42), sep2.HexBinary16(1)
 				reading := sep2.Reading{Value: &value, LocalID: &localID, TimePeriod: &sep2.DateTimeInterval{Start: 1785700000, Duration: 900}}
 				reading.Href = setHref + "/r/1"
-				return s.Readings.Create(ctx, coremetering.ReadingScopeKey(upt, "1", "1"), "1", reading)
+				readingScope, _ := coremetering.ReadingScopeKey(upt, "1", "1")
+				return s.Readings.Create(ctx, readingScope, "1", reading)
 			},
 		},
 		{

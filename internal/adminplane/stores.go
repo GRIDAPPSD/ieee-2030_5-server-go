@@ -104,7 +104,7 @@ type Stores struct {
 	MeterReadings *memory.ScopedStore[sep2.MeterReading]
 	ReadingSets   *memory.ScopedStore[sep2.ReadingSet]
 	Readings      *memory.ScopedStore[sep2.Reading]
-	ReadingTypes  *memory.Store[sep2.ReadingType]
+	ReadingTypes  *memory.ScopedStore[sep2.ReadingType]
 
 	// New function sets
 	Configurations           *memory.ScopedStore[sep2.Configuration]

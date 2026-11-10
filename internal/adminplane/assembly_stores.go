@@ -67,7 +67,7 @@ func StoresFromAssembly(s *assembly.Stores) (*Stores, error) {
 		MeterReadings:        concrete[*memory.ScopedStore[sep2.MeterReading]](s.MeterReadings),
 		ReadingSets:          concrete[*memory.ScopedStore[sep2.ReadingSet]](s.ReadingSets),
 		Readings:             concrete[*memory.ScopedStore[sep2.Reading]](s.Readings),
-		ReadingTypes:         concrete[*memory.Store[sep2.ReadingType]](s.ReadingTypes),
+		ReadingTypes:         concrete[*memory.ScopedStore[sep2.ReadingType]](s.ReadingTypes),
 		Configurations:       concrete[*memory.ScopedStore[sep2.Configuration]](s.Configurations),
 		DeviceStatuses:       concrete[*memory.ScopedStore[sep2.DeviceStatus]](s.DeviceStatuses),
 		LogEvents:            concrete[*memory.ScopedStore[sep2.LogEvent]](s.LogEvents),

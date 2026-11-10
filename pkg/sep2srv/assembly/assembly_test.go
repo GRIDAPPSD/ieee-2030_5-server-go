@@ -78,7 +78,7 @@ func testStores() *assembly.Stores {
 		MeterReadings: memory.NewScopedStore[sep2.MeterReading](),
 		ReadingSets:   memory.NewScopedStore[sep2.ReadingSet](),
 		Readings:      memory.NewScopedStore[sep2.Reading](),
-		ReadingTypes:  memory.NewStore[sep2.ReadingType](),
+		ReadingTypes:  memory.NewScopedStore[sep2.ReadingType](),
 
 		// New function sets
 		Configurations:           memory.NewScopedStore[sep2.Configuration](),

@@ -130,7 +130,7 @@ func fakeStores() *assembly.Stores {
 		MeterReadings: storetest.NewScopedFake[sep2.MeterReading](),
 		ReadingSets:   storetest.NewScopedFake[sep2.ReadingSet](),
 		Readings:      storetest.NewScopedFake[sep2.Reading](),
-		ReadingTypes:  storetest.NewFake[sep2.ReadingType](),
+		ReadingTypes:  storetest.NewScopedFake[sep2.ReadingType](),
 
 		Configurations:           storetest.NewScopedFake[sep2.Configuration](),
 		DeviceStatuses:           storetest.NewScopedFake[sep2.DeviceStatus](),

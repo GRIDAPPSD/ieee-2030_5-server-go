@@ -296,7 +296,7 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 		MeterReadings: storetest.NewFaultyScopedStore[sep2.MeterReading](memory.NewScopedStore[sep2.MeterReading](), fault),
 		ReadingSets:   storetest.NewFaultyScopedStore[sep2.ReadingSet](memory.NewScopedStore[sep2.ReadingSet](), fault),
 		Readings:      storetest.NewFaultyScopedStore[sep2.Reading](memory.NewScopedStore[sep2.Reading](), fault),
-		ReadingTypes:  storetest.NewFaultyResourceStore[sep2.ReadingType](memory.NewStore[sep2.ReadingType](), fault),
+		ReadingTypes:  storetest.NewFaultyScopedStore[sep2.ReadingType](memory.NewScopedStore[sep2.ReadingType](), fault),
 
 		Configurations:           storetest.NewFaultyScopedStore[sep2.Configuration](memory.NewScopedStore[sep2.Configuration](), fault),
 		DeviceStatuses:           storetest.NewFaultyScopedStore[sep2.DeviceStatus](memory.NewScopedStore[sep2.DeviceStatus](), fault),

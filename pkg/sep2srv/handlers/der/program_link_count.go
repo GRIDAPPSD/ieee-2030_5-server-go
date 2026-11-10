@@ -6,6 +6,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -27,6 +28,16 @@ type DERControlCounter interface {
 type DERControlCountedProgramStore struct {
 	programs store.ScopedStore[sep2.DERProgram]
 	controls DERControlCounter
+	active   DERControlCounter
+}
+
+// WithActiveList makes the store also serve each program's
+// ActiveDERControlListLink, its all being the count active reports for the
+// same scope. Without it no active link is served, since a link to a list
+// this server does not mount is a section 4.4 violation.
+func (s *DERControlCountedProgramStore) WithActiveList(active DERControlCounter) *DERControlCountedProgramStore {
+	s.active = active
+	return s
 }
 
 // NewDERControlCountedProgramStore decorates programs with controls.
@@ -77,6 +88,30 @@ func (s *DERControlCountedProgramStore) stampCount(ctx context.Context, p *sep2.
 		return
 	}
 	p.DERControlListLink.All = n
+	s.stampActive(ctx, p, scopeKey)
+}
+
+// stampActive serves the active list link: a stored link keeps its href and
+// has its all recomputed, an absent one is derived from the control list
+// link. A failed count serves no link rather than a wrong all.
+func (s *DERControlCountedProgramStore) stampActive(ctx context.Context, p *sep2.DERProgram, scopeKey string) {
+	if s.active == nil {
+		return
+	}
+	n, err := s.active.Count(ctx, scopeKey)
+	if err != nil {
+		log.Printf("der: counting active DERControls for %s: %s; serving no ActiveDERControlListLink", logsafe.Quote(p.DERControlListLink.Href), logsafe.Err(err))
+		p.ActiveDERControlListLink = nil
+		return
+	}
+	if p.ActiveDERControlListLink == nil {
+		href, ok := derhref.ActiveControlList(p.DERControlListLink.Href)
+		if !ok {
+			return
+		}
+		p.ActiveDERControlListLink = &sep2.ListLink{Href: href}
+	}
+	p.ActiveDERControlListLink.All = n
 }
 
 func (s *DERControlCountedProgramStore) Count(ctx context.Context, parentID string) (uint32, error) {

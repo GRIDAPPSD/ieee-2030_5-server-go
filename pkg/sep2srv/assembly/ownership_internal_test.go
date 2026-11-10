@@ -261,6 +261,7 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/fsa/{fsaId}/derp":                        true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}":               true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc":          true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/actderc":       true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}": true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc":         true,
 	// The PUT route a closed defect (#456) once refused was removed from the

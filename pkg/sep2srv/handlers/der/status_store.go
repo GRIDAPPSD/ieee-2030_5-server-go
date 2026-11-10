@@ -43,3 +43,11 @@ func NewDerivedStatusControlStoreFor(controls store.ScopedStore[sep2.DERControl]
 }
 
 var _ store.ScopedStore[sep2.DERControl] = (*DerivedStatusControlStore)(nil)
+
+// NewActiveControlStore serves only the controls of controls that are Active
+// at request time, with the paging and order the caller layers on top (see
+// [dercontrol.ActiveStore]). controls should be the status-deriving store, so
+// cancel and supersede count.
+func NewActiveControlStore(controls store.ScopedStore[sep2.DERControl]) store.ScopedStore[sep2.DERControl] {
+	return dercontrol.NewActiveStore(controls, func(c *sep2.DERControl) *sep2.Event { return &c.Event })
+}

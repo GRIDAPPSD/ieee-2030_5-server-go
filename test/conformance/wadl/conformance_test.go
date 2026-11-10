@@ -51,8 +51,8 @@ const (
 // them, and crawlReachedFloor is how many it finds. A resource served without a
 // link to it counts against the first and cannot raise the second.
 const (
-	notReachedCeiling = 89
-	crawlReachedFloor = 35
+	notReachedCeiling = 82
+	crawlReachedFloor = 42
 )
 
 // EnvArtifact names an optional file to write the full row-by-row sweep to.

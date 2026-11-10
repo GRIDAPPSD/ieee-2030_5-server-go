@@ -7,12 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-10
+
+This entry covers `v0.19.0..v0.20.0` (12 merged pull requests). It is a MINOR
+release under the 0.x carve-out: the range adds the active DER control list,
+operator-loaded content routes, manager-only registration writes and served
+links that follow what is mounted (`feature`), and changes served status codes,
+the `/upt` and `/mup` lists, exported Go surface and the core types a caller
+builds (`breaking`, see Changed). `ieee-2030_5-core-go` moves from v0.30.0 to
+v0.32.0.
+
+### Added
+
+- `GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/actderc` lists the program controls
+  that are Active at request time, in control-list order and paging. A DERProgram
+  now advertises `ActiveDERControlListLink` with the live active count (#1252).
+- Operator-loaded content for server-authored function sets on the admin
+  listener: `POST`, `PUT` and `DELETE /api/content/{family}/{id}` validate the
+  body against the registered core type, write the store the protocol handler
+  reads, persist it under the data directory and roll memory back when the write
+  fails. Writes need a real credential, and `/api/content/` is a sensitive read
+  prefix. The routes are mounted only when the content store is wired (#1245).
+- `PUT` and `DELETE /edev/{id}/rg`, new routes (only `GET` existed). A manager
+  certificate acting for a device it currently manages may use them; PUT replaces
+  only the `pIN` (at most 999999, else 400) and keeps `href`,
+  `dateTimeRegistered` and `pollRate`, and DELETE returns the removed record.
+  Concurrent first PUTs and a PUT racing a DELETE no longer answer 500 (#1263).
+
 ### Changed
 
-- The outer mount, the ACL rows and the href probe are built from one route
-  family table. A request under a path no family names is now refused with 403
-  before any handler (it was 404), and PUT and DELETE on a mirror usage point
+- **Breaking, core types.** The core pin moves v0.30.0 to v0.31.0 and v0.32.0.
+  A composite literal of `sep2.DeviceCapability` or `sep2.FunctionSetAssignments`
+  that sets one of ten link fields must wrap them in
+  `sep2.FunctionSetAssignmentsBase`, and a literal of any of 15 identified types
+  that sets `MRID`, `Description` or `Version` must wrap them in
+  `sep2.IdentifiedObject` (core v0.31.0 and v0.32.0 release notes). mRID is now
+  always emitted, so the fallback FSA, the fallback DefaultDERControl shell and
+  the default control a device program sends carry an mRID derived from their
+  href (#1286, #1299).
+- **Breaking, served status.** The outer mount, the ACL rows and the href probe
+  are built from one route family table. A request under a path no family names
+  is now refused with 403 before any handler (it was 404), ACL prefix matching
+  stops at a path-segment boundary, and PUT and DELETE on a mirror usage point
   pass the ACL and reach their handlers (#1246).
+- **Breaking, usage points.** `POST /upt` is now manager-only: a manager
+  certificate with at least one live pair whose EndDevice exists, else 403. It is
+  capped at 1000 records and answers 507 past the cap; a repeat of an existing
+  mRID still answers 200. `GET /upt` returns the records to a manager and an
+  empty list to anyone else. `GET /mup` lists only the mirrors the caller may act
+  for, and `all` counts that visible list. Single-resource reads are unchanged
+  (#1263).
+- **Breaking, Go surface.** `HandleDeviceCapability` takes `routefamily.Wired`
+  and a `CallerEndDevices` function, and `HandleFSA` takes `routefamily.Wired`;
+  a caller must pass them. Added without breaking a call site:
+  `HandleCreateUsagePoint` takes trailing `UsagePointOption`s,
+  `memory.RegistrationStore.Upsert`, `HandleUsagePointList`,
+  `HandleMirrorUsagePointList`, `HandlePutRegistration`,
+  `HandleDeleteRegistration`, `paging.Slice`, `identity.Require`, the
+  `routefamily` package and `coreedev.IsManager` and `HasLivePair`
+  (#1249, #1252, #1263).
+- Served links follow what is mounted. An EndDevice links its Configuration,
+  DeviceStatus and PowerStatus exactly when those routes are mounted;
+  DeviceCapability links come from the route family table and are written only
+  for a family the deployment serves; the FSA instance and list drop their
+  DERProgram link when the DER family is not wired. The `EndDeviceListLink` count
+  on `/dcap` is the count `GET /edev` lists for the caller, bounded so a stalled
+  management store cannot hold the entry point (#1249).
+
+### Fixed
+
+- Request, route, store and error text reaching log calls is escaped once, and a
+  double quote inside a quoted field can no longer end it, at the 41 sites
+  that had an open `go/log-injection` alert and the same-shape sites beside them
+  (#1236).
+- Every registration write undoes its in-memory change when the snapshot write
+  fails (#1263).
+
+### Tests and internal
+
+- The WADL conformance sweep boots the production store set, seeds every probed
+  resource and fails on a seed failure, finds resources by following links from
+  `/dcap`, and pins the methods outside the method-mode policy as per-mode
+  ceilings, lowered to the measured values as routes were mounted (#1235, #1244,
+  #1247, #1253).
 
 ## [0.19.0] - 2026-11-04
 
@@ -1159,4 +1236,5 @@ read both releases first.
 [0.17.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.1...v0.17.0
 [0.18.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.17.0...v0.18.0
 [0.19.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.18.0...v0.19.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.19.0...HEAD
+[0.20.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.19.0...v0.20.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.20.0...HEAD

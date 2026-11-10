@@ -28,7 +28,7 @@ const maxPIN = 999999
 //
 // 201 with Location when the device had no Registration, 204 when one was
 // replaced, 400 for a malformed body or a pIN above 999999.
-func HandlePutRegistration(regs store.ResourceStore[sep2.Registration]) http.HandlerFunc {
+func HandlePutRegistration(regs Upserter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			encoding.MethodNotAllowed(w, "PUT")
@@ -66,22 +66,17 @@ func HandlePutRegistration(regs store.ResourceStore[sep2.Registration]) http.Han
 	}
 }
 
-// upserter is the one-call create-or-replace a store may offer. The memory
-// RegistrationStore does, and it is what makes the PUT atomic.
-type upserter interface {
+// Upserter is the one-call create-or-replace the PUT needs. The memory
+// RegistrationStore provides it, and it is what makes the PUT atomic: a store
+// without it cannot serve the write.
+type Upserter interface {
 	Upsert(ctx context.Context, id string, build func(current sep2.Registration, found bool) sep2.Registration) (created bool, err error)
 }
 
-// maxUpsertAttempts bounds the read-then-write fallback for a store without
-// Upsert: each retry follows a writer that changed the record between the read
-// and the write, so a few attempts is all contention can need.
-const maxUpsertAttempts = 4
-
 // upsert stores the pIN for id, keeping the record's href, registration time
-// and poll rate when it exists. A store without Upsert gets a read followed by
-// an update or a create, retried when a concurrent writer made the read stale.
-func upsert(ctx context.Context, regs store.ResourceStore[sep2.Registration], id string, pin uint32) (created bool, err error) {
-	build := func(cur sep2.Registration, found bool) sep2.Registration {
+// and poll rate when it exists.
+func upsert(ctx context.Context, regs Upserter, id string, pin uint32) (created bool, err error) {
+	return regs.Upsert(ctx, id, func(cur sep2.Registration, found bool) sep2.Registration {
 		if found {
 			cur.PIN = pin
 			return cur
@@ -92,27 +87,7 @@ func upsert(ctx context.Context, regs store.ResourceStore[sep2.Registration], id
 			PIN:                pin,
 			PollRate:           memory.DefaultRegistrationPollRate,
 		}
-	}
-	if u, ok := regs.(upserter); ok {
-		return u.Upsert(ctx, id, build)
-	}
-	for range maxUpsertAttempts {
-		cur, gerr := regs.Get(ctx, id)
-		switch {
-		case gerr == nil:
-			err = regs.Update(ctx, id, build(cur, true))
-			created = false
-		case errors.Is(gerr, store.ErrNotFound):
-			err = regs.Create(ctx, id, build(sep2.Registration{}, false))
-			created = true
-		default:
-			return false, gerr
-		}
-		if err == nil || !(errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrAlreadyExists)) {
-			return created, err
-		}
-	}
-	return false, err
+	})
 }
 
 // HandleDeleteRegistration returns the handler for DELETE /edev/{id}/rg. Like

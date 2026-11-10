@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -213,11 +215,7 @@ func (s *RegistrationStore) Create(ctx context.Context, id string, reg sep2.Regi
 		return err
 	}
 	s.addKey(id)
-	if err := s.persist(ctx); err != nil {
-		s.undoCreate(ctx, id)
-		return err
-	}
-	return nil
+	return s.persistOrRollback(ctx, func() error { return s.undoCreate(ctx, id) })
 }
 
 // Update replaces a registration and flushes a snapshot, restoring the prior
@@ -232,11 +230,7 @@ func (s *RegistrationStore) Update(ctx context.Context, id string, reg sep2.Regi
 	if err := s.inner.Update(ctx, id, reg); err != nil {
 		return err
 	}
-	if err := s.persist(ctx); err != nil {
-		s.undoUpdate(ctx, id, prior)
-		return err
-	}
-	return nil
+	return s.persistOrRollback(ctx, func() error { return s.undoUpdate(ctx, id, prior) })
 }
 
 // Upsert creates the registration under id, or replaces the one there, as one
@@ -254,18 +248,13 @@ func (s *RegistrationStore) Upsert(ctx context.Context, id string, build func(cu
 		if err := s.inner.Update(ctx, id, build(prior, true)); err != nil {
 			return false, err
 		}
-		if err := s.persist(ctx); err != nil {
-			s.undoUpdate(ctx, id, prior)
-			return false, err
-		}
-		return false, nil
+		return false, s.persistOrRollback(ctx, func() error { return s.undoUpdate(ctx, id, prior) })
 	case errors.Is(err, store.ErrNotFound):
 		if err := s.inner.Create(ctx, id, build(sep2.Registration{}, false)); err != nil {
 			return false, err
 		}
 		s.addKey(id)
-		if err := s.persist(ctx); err != nil {
-			s.undoCreate(ctx, id)
+		if err := s.persistOrRollback(ctx, func() error { return s.undoCreate(ctx, id) }); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -287,25 +276,38 @@ func (s *RegistrationStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	s.dropKey(id)
-	if err := s.persist(ctx); err != nil {
-		// inner is this wrapper's own collection and writeMu is held, so the
-		// id is free and this cannot fail on a conflict.
-		if cerr := s.inner.Create(ctx, id, prior); cerr == nil {
-			s.addKey(id)
-		}
-		return err
+	return s.persistOrRollback(ctx, func() error { return s.undoDelete(ctx, id, prior) })
+}
+
+// persistOrRollback flushes a snapshot under writeMu and, when the flush
+// fails, runs undo and returns the flush error. A failed undo is logged: the
+// collection is this wrapper's own, so it means the collection itself broke
+// and the flush error alone would hide that.
+func (s *RegistrationStore) persistOrRollback(ctx context.Context, undo func() error) error {
+	err := s.persist(ctx)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if uerr := undo(); uerr != nil {
+		log.Printf("memory: registration rollback after a failed snapshot flush also failed: %v", logsafe.Err(uerr))
+	}
+	return err
 }
 
-// undoCreate and undoUpdate run under writeMu after a failed flush. The inner
-// collection is owned by this wrapper, so they cannot meet a conflicting
-// writer; an error from the inner call would mean the collection itself broke.
-func (s *RegistrationStore) undoCreate(ctx context.Context, id string) {
-	_ = s.inner.Delete(ctx, id)
+func (s *RegistrationStore) undoCreate(ctx context.Context, id string) error {
+	err := s.inner.Delete(ctx, id)
 	s.dropKey(id)
+	return err
 }
 
-func (s *RegistrationStore) undoUpdate(ctx context.Context, id string, prior sep2.Registration) {
-	_ = s.inner.Update(ctx, id, prior)
+func (s *RegistrationStore) undoUpdate(ctx context.Context, id string, prior sep2.Registration) error {
+	return s.inner.Update(ctx, id, prior)
+}
+
+func (s *RegistrationStore) undoDelete(ctx context.Context, id string, prior sep2.Registration) error {
+	err := s.inner.Create(ctx, id, prior)
+	if err == nil {
+		s.addKey(id)
+	}
+	return err
 }

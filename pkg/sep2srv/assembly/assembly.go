@@ -1000,7 +1000,11 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// (GRIDAPPSD/ieee-2030_5-server-go#170).
 	if !store.IsAbsent(stores.Registrations) {
 		mux.HandleFunc("GET /edev/{id}/rg", corereg.HandleGetRegistration(edevs, stores.Registrations, authPolicy.Identity))
-		mux.HandleFunc("PUT /edev/{id}/rg", corereg.HandlePutRegistration(stores.Registrations))
+		// A store without Upsert cannot make the PUT atomic, so the PUT is not
+		// mounted for it and the mux answers 405.
+		if up, ok := stores.Registrations.(corereg.Upserter); ok {
+			mux.HandleFunc("PUT /edev/{id}/rg", corereg.HandlePutRegistration(up))
+		}
 		mux.HandleFunc("DELETE /edev/{id}/rg", corereg.HandleDeleteRegistration(stores.Registrations))
 	}
 

@@ -221,28 +221,6 @@ func TestPutRegistrationRacingDeleteNeverFails(t *testing.T) {
 	wg.Wait()
 }
 
-// TestPutRegistrationOnAStoreWithoutUpsertStillSucceedsUnderContention covers
-// the read-then-write fallback with a store that offers no Upsert.
-func TestPutRegistrationOnAStoreWithoutUpsertStillSucceedsUnderContention(t *testing.T) {
-	regs := memory.NewStore[sep2.Registration]()
-	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /edev/{id}/rg", registration.HandlePutRegistration(regs))
-	var wg sync.WaitGroup
-	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if c := send(mux, http.MethodPut, regBody("9")).Code; c != http.StatusCreated && c != http.StatusNoContent {
-				t.Errorf("status = %d, want 201 or 204", c)
-			}
-		}()
-	}
-	wg.Wait()
-	if got, err := regs.Get(context.Background(), deviceID); err != nil || got.PIN != 9 {
-		t.Errorf("stored = (%+v, %v), want pin 9", got, err)
-	}
-}
-
 func blockSnapshot(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(path+".tmp", "keep"), 0o700); err != nil {

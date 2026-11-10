@@ -11,6 +11,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
@@ -212,6 +213,30 @@ func TestFaultProbeBodiesNameOnlyMountedPatterns(t *testing.T) {
 	}
 }
 
+// faultyRegistrations is the faulty Registration store with the one-call
+// Upsert the PUT route requires, failing it while the switch is armed.
+type faultyRegistrations struct {
+	store.ResourceStore[sep2.Registration]
+	inner *memory.RegistrationStore
+	fault *storetest.Fault
+}
+
+func newFaultyRegistrations(fault *storetest.Fault) *faultyRegistrations {
+	inner := memory.NewRegistrationStore()
+	return &faultyRegistrations{
+		ResourceStore: storetest.NewFaultyResourceStore[sep2.Registration](inner, fault),
+		inner:         inner,
+		fault:         fault,
+	}
+}
+
+func (s *faultyRegistrations) Upsert(ctx context.Context, id string, build func(sep2.Registration, bool) sep2.Registration) (bool, error) {
+	if err := s.fault.Err(); err != nil {
+		return false, err
+	}
+	return s.inner.Upsert(ctx, id, build)
+}
+
 // faultyStores builds a Stores whose every contract-typed field is the
 // PRODUCTION in-memory store wrapped in a fault decorator, all sharing one
 // switch.
@@ -249,7 +274,7 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 	return &assembly.Stores{
 		EndDeviceManagers:   managers,
 		EndDevices:          storetest.NewFaultyEndDeviceStore(device.raw, device.fault),
-		Registrations:       storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault),
+		Registrations:       newFaultyRegistrations(fault),
 		RegistrationPolicy:  testRegistrationPolicy(),
 		MirrorUsagePoints:   storetest.NewFaultyResourceStore[sep2.MirrorUsagePoint](memory.NewStore[sep2.MirrorUsagePoint](), fault),
 		MirrorMeterReadings: storetest.NewFaultyScopedStore[sep2.MirrorMeterReading](memory.NewScopedStore[sep2.MirrorMeterReading](), fault),

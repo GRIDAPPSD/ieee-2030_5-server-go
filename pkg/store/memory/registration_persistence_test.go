@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -310,6 +311,9 @@ func TestRegistrationUpsert_ConcurrentWritersAgree(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			c, err := s.Upsert(ctx, "rg-1", func(cur sep2.Registration, found bool) sep2.Registration {
+				// Widen the window between the read and the write: with the lock
+				// held writers queue behind it, without it they all read "absent".
+				time.Sleep(time.Millisecond)
 				cur.PIN = uint32(i + 1)
 				return cur
 			})

@@ -35,13 +35,13 @@ func mirrorListFixture(t *testing.T) (*memory.Store[sep2.MirrorUsagePoint], *mem
 	ctx := context.Background()
 	mups := memory.NewStore[sep2.MirrorUsagePoint]()
 	for id, dev := range map[string]string{"m1": listDeviceA, "m2": listDeviceB, "m3": listManagedD, "m4": listDeviceA} {
-		m := sep2.MirrorUsagePoint{MRID: "mrid-" + id, DeviceLFDI: dev}
+		m := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "mrid-" + id}, DeviceLFDI: dev}
 		m.Href = metering.MirrorHref(id)
 		if err := mups.Create(ctx, id, m); err != nil {
 			t.Fatal(err)
 		}
 	}
-	orphan := sep2.MirrorUsagePoint{MRID: "mrid-orphan"}
+	orphan := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "mrid-orphan"}}
 	orphan.Href = metering.MirrorHref("m5")
 	if err := mups.Create(ctx, "m5", orphan); err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestUsagePointList_OnlyAManagerSeesTheRecords(t *testing.T) {
 	ctx := context.Background()
 	upts := memory.NewStore[sep2.UsagePoint]()
 	for i := 1; i <= 2; i++ {
-		u := sep2.UsagePoint{MRID: "upt-" + strconv.Itoa(i)}
+		u := sep2.UsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "upt-" + strconv.Itoa(i)}}
 		u.Href = metering.UsagePointHref(strconv.Itoa(i))
 		if err := upts.Create(ctx, strconv.Itoa(i), u); err != nil {
 			t.Fatal(err)

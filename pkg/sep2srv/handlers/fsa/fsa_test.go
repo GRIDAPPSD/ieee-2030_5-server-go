@@ -13,6 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	corefsa "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/fsa"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -26,7 +27,7 @@ func TestHandleFSA_NotFoundReturnsDefault(t *testing.T) {
 
 	fsaStore := memory.NewScopedStore[sep2.FunctionSetAssignments]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(fsaStore))
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(fsaStore, allWired))
 
 	req := httptest.NewRequest(http.MethodGet, "/edev/e1/fsa/f1", nil)
 	w := httptest.NewRecorder()
@@ -72,7 +73,7 @@ func TestHandleFSA_StoredValueReturned(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(fsaStore))
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(fsaStore, allWired))
 
 	req := httptest.NewRequest(http.MethodGet, "/edev/e1/fsa/f1", nil)
 	w := httptest.NewRecorder()
@@ -95,7 +96,7 @@ func TestHandleFSA_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 
 	fsaStore := memory.NewScopedStore[sep2.FunctionSetAssignments]()
-	h := corefsa.HandleFSA(fsaStore)
+	h := corefsa.HandleFSA(fsaStore, allWired)
 
 	req := httptest.NewRequest(http.MethodPost, "/edev/e1/fsa/f1", nil)
 	w := httptest.NewRecorder()
@@ -177,3 +178,5 @@ func TestHandleCreateFSA_ParallelPostsGetDistinctIDs(t *testing.T) {
 		return httptest.NewRequest(http.MethodPost, "/api/fsa?edevId=e1", nil)
 	})
 }
+
+func allWired(routefamily.Anchor) bool { return true }

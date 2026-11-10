@@ -21,12 +21,12 @@ import (
 //
 // Measured against the server csiptest boots, with the route set core's
 // assembly registers, on 2026-11-05.
-const outsidePolicyCeiling = 441
+const outsidePolicyCeiling = 432
 
 // outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
 // mode cannot hide behind a fall in another. The values sum to the total.
 var outsidePolicyByMode = map[wadl.Mode]int{
-	wadl.ModeMandatory:  181,
+	wadl.ModeMandatory:  172,
 	wadl.ModeOptional:   64,
 	wadl.ModeDeprecated: 47,
 	wadl.ModeError:      149,
@@ -49,8 +49,8 @@ const (
 // them, and crawlReachedFloor is how many it finds. A resource served without a
 // link to it counts against the first and cannot raise the second.
 const (
-	notReachedCeiling = 85
-	crawlReachedFloor = 39
+	notReachedCeiling = 82
+	crawlReachedFloor = 42
 )
 
 // EnvArtifact names an optional file to write the full row-by-row sweep to.

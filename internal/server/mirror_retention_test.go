@@ -39,7 +39,7 @@ func TestRun_SweepsMirrorReadingsAtBoot(t *testing.T) {
 		for i, age := range []time.Duration{87301 * time.Second, time.Hour} {
 			nanos := at.Add(-age).UnixNano() + int64(i)
 			id := fmt.Sprintf("%020d", nanos)
-			m := sep2.MirrorMeterReading{MRID: "W", LastUpdateTime: time.Unix(0, nanos).Unix()}
+			m := sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: "W"}, LastUpdateTime: time.Unix(0, nanos).Unix()}
 			m.Href = "/mup/m1/mr/" + id
 			if err := s.MirrorMeterReadings.Create(ctx, "m1", id, m); err != nil {
 				seedErr = err

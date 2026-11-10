@@ -8,9 +8,7 @@ import "encoding/xml"
 type MessagingProgram struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MessagingProgram"`
 	SubscribableResource
-	MRID        string  `xml:"mRID,omitempty"`
-	Description string  `xml:"description,omitempty"`
-	Version     *uint16 `xml:"version,omitempty"`
+	IdentifiedObject
 
 	// XSD element order:
 	ActiveTextMessageListLink *ListLink `xml:"ActiveTextMessageListLink,omitempty"`
@@ -23,7 +21,7 @@ type MessagingProgram struct {
 func (m MessagingProgram) Copy() MessagingProgram {
 	c := m
 	c.SubscribableResource = m.SubscribableResource.Copy()
-	c.Version = clonePtr(m.Version)
+	c.IdentifiedObject = m.IdentifiedObject.Copy()
 	c.ActiveTextMessageListLink = clonePtr(m.ActiveTextMessageListLink)
 	c.TextMessageListLink = clonePtr(m.TextMessageListLink)
 	return c

@@ -580,3 +580,40 @@ func TestDeviceControl_ClearedDefault_IsAConflictForDefaultAndNoObstacleForPrima
 		t.Errorf("program primacy %d link %+v, want 2 and no link", p.Primacy, p.DefaultDERControlLink)
 	}
 }
+
+// #1299: a stored default that nothing links and that carries no mRID gets a
+// minted one when a send links it again.
+func TestDeviceControl_RelinkedDefaultWithoutMRID_GetsAMintedMRID(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	first := decodeDeviceControl(t, x.post("1", defaultBody(4000)))
+	ctx := context.Background()
+	scope := derhref.ScopeKey("1", first.FSA, first.Program)
+
+	p, err := x.f.copies.Programs.Get(ctx, "1", first.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.DefaultDERControlLink = nil
+	if err := x.f.copies.Programs.Update(ctx, "1", first.Program, p); err != nil {
+		t.Fatal(err)
+	}
+	d, err := x.f.copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.MRID = ""
+	if err := x.f.copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, d); err != nil {
+		t.Fatal(err)
+	}
+
+	if w := x.post("1", defaultBody(2500)); w.Code != http.StatusCreated {
+		t.Fatalf("relink send = %d %s, want 201", w.Code, w.Body.String())
+	}
+	got, err := x.f.copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.MRID) != 32 || got.MRID == p.MRID {
+		t.Errorf("stored default mRID = %q, want 32 hex digits and not the program's %q", got.MRID, p.MRID)
+	}
+}

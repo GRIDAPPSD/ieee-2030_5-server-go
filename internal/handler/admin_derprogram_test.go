@@ -70,7 +70,7 @@ func newTemplateFixtureWith(t *testing.T, programs *memory.DERProgramStore, devi
 		PEN:         &pen,
 		Retirer:     retirer,
 	}
-	if err := h.AdminFSAs.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A", Description: "roof"}); err != nil {
+	if err := h.AdminFSAs.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A", Description: "roof"}}); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
@@ -321,7 +321,7 @@ func TestCreateProgramTemplate_FSAMissing_404(t *testing.T) {
 func TestCreateProgramTemplate_FSAIDThatCannotFormAnHref_409(t *testing.T) {
 	t.Parallel()
 	f := newTemplateFixture(t)
-	if err := f.h.AdminFSAs.Create(context.Background(), "roof fleet", sep2.FunctionSetAssignments{MRID: "roof fleet"}); err != nil {
+	if err := f.h.AdminFSAs.Create(context.Background(), "roof fleet", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "roof fleet"}}); err != nil {
 		t.Fatal(err)
 	}
 	if w := f.do(http.MethodPost, "/api/fsas/roof%20fleet/der-programs", voltSupportBody); w.Code != http.StatusConflict {
@@ -355,7 +355,7 @@ func TestCreateProgramTemplate_DeviceMRIDConflict_409_WritesNothing(t *testing.T
 	f.assign(t, "1", "fsa-A")
 	f.assign(t, "2", "fsa-A")
 	f.notifier.take()
-	fixture := sep2.DERProgram{MRID: "0123456789ABCDEF0123456789ABCDEF"}
+	fixture := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0123456789ABCDEF0123456789ABCDEF"}}
 	fixture.Href = "/edev/2/fsa/fx/derp/0"
 	if err := f.copies.Programs.Create(context.Background(), "2", "0", fixture); err != nil {
 		t.Fatal(err)
@@ -495,7 +495,7 @@ func TestAssignDeviceFSA_ConflictingProgram_409_AssignsNothing(t *testing.T) {
 	if w := f.do(http.MethodPost, "/api/fsas/fsa-A/der-programs", `{"description":"d","primacy":1,"mRID":"0123456789ABCDEF0123456789ABCDEF","defaultControl":{"type":"connect"}}`); w.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
-	fixture := sep2.DERProgram{MRID: "0123456789ABCDEF0123456789ABCDEF"}
+	fixture := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0123456789ABCDEF0123456789ABCDEF"}}
 	fixture.Href = "/edev/3/fsa/fx/derp/0"
 	if err := f.copies.Programs.Create(context.Background(), "3", "0", fixture); err != nil {
 		t.Fatal(err)
@@ -556,7 +556,7 @@ func TestCreateProgramTemplate_ConflictIsFoundBeforeAnyWrite(t *testing.T) {
 	f.assign(t, "2", "fsa-A")
 	counting := &countingPrograms{CopyProgramStore: f.copies.Programs}
 	f.h.Copies = &fsaprogram.Copies{Programs: counting, Defaults: f.copies.Defaults, Origins: f.copies.Origins}
-	fixture := sep2.DERProgram{MRID: "0123456789ABCDEF0123456789ABCDEF"}
+	fixture := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0123456789ABCDEF0123456789ABCDEF"}}
 	fixture.Href = "/edev/2/fsa/fx/derp/0"
 	if err := f.copies.Programs.Create(context.Background(), "2", "0", fixture); err != nil {
 		t.Fatal(err)

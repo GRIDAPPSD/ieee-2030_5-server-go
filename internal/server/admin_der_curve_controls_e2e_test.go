@@ -15,7 +15,7 @@ import (
 // on the control route and on a program's default control alike.
 func TestAdminRouterChecksCurvesAgainstTheCurveStore(t *testing.T) {
 	router := newDERControlRouter(t, func(s *server.Stores) {
-		vv := sep2.DERCurve{MRID: "vv", CurveType: sep2.CurveTypeOpModVoltVar}
+		vv := sep2.DERCurve{IdentifiedObject: sep2.IdentifiedObject{MRID: "vv"}, CurveType: sep2.CurveTypeOpModVoltVar}
 		vv.Href = "/dc/vv"
 		if err := s.DERCurves.Create(context.Background(), "vv", vv); err != nil {
 			t.Fatal(err)

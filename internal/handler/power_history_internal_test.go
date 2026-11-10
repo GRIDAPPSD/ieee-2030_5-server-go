@@ -686,7 +686,7 @@ func TestPowerHistory_LateAverageDeviceDrawsEveryBucket(t *testing.T) {
 	// An Average covers the 300 s before its receipt, so a 305 s cadence
 	// leaves 5 s uncovered after each one.
 	postRate, uom, dq, flow := uint32(300), sep2.UomWatts, dataQualifierAverage, sep2.FlowDirectionReverse
-	mup := sep2.MirrorUsagePoint{MRID: "MUPA", DeviceLFDI: powerD1, PostRate: &postRate, RoleFlags: roleFlagIsDER}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUPA"}, DeviceLFDI: powerD1, PostRate: &postRate, RoleFlags: roleFlagIsDER}
 	mup.Href = "/mup/9"
 	if err := p.mups.Create(context.Background(), "9", mup); err != nil {
 		t.Fatal(err)
@@ -694,10 +694,10 @@ func TestPowerHistory_LateAverageDeviceDrawsEveryBucket(t *testing.T) {
 	for i, at := 0, powerNow-6*historyHour; at < powerNow; i, at = i+1, at+305 {
 		v := int64(1000)
 		r := sep2.MirrorMeterReading{
-			MRID:           "WA",
-			LastUpdateTime: at,
-			Reading:        &sep2.Reading{Value: &v},
-			ReadingType:    &sep2.ReadingType{Uom: &uom, DataQualifier: &dq, FlowDirection: &flow},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: "WA"},
+			LastUpdateTime:   at,
+			Reading:          &sep2.Reading{Value: &v},
+			ReadingType:      &sep2.ReadingType{Uom: &uom, DataQualifier: &dq, FlowDirection: &flow},
 		}
 		if err := p.mmrs.Create(context.Background(), "9", fmt.Sprint(i), r); err != nil {
 			t.Fatal(err)

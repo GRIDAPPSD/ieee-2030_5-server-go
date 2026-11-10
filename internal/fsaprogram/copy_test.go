@@ -139,7 +139,7 @@ func TestEnsure_PresentCopyIsLeftAlone(t *testing.T) {
 func TestEnsure_ConflictsWriteNothing(t *testing.T) {
 	tmpl := testTemplate()
 	fixture := func(id, mrid string) sep2.DERProgram {
-		p := sep2.DERProgram{MRID: mrid}
+		p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}}
 		p.Href = "/edev/7/fsa/fx/derp/" + id
 		return p
 	}
@@ -222,7 +222,7 @@ func TestReconcileCopies_RestoresMissingParts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Device 3: a fixture program holds the id, so its copy is skipped.
-	fx := sep2.DERProgram{MRID: "0000000000000000000000000000BEEF"}
+	fx := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000BEEF"}}
 	fx.Href = "/edev/3/fsa/fx/derp/" + tmpl.ID
 	if err := c.Programs.Create(ctx, "3", tmpl.ID, fx); err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestRemove_LeavesProgramsThatAreNotTheCopy(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := newCopies(t)
-			p := sep2.DERProgram{MRID: "0000000000000000000000000000BEEF"}
+			p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000BEEF"}}
 			p.Href = "/edev/7/fsa/fsa-A/derp/" + tmpl.ID
 			if err := c.Programs.Create(ctx, "7", tmpl.ID, p); err != nil {
 				t.Fatal(err)

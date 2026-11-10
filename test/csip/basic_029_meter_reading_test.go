@@ -151,9 +151,8 @@ func newMMR(spec mrSpec, lastUpdate int64) sep2.MirrorMeterReading {
 	flowFwd := sep2.FlowDirectionForward
 	powerOfTen := int8(0)
 	return sep2.MirrorMeterReading{
-		MRID:           spec.mrid,
-		Description:    spec.label,
-		LastUpdateTime: lastUpdate,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: spec.mrid, Description: spec.label},
+		LastUpdateTime:   lastUpdate,
 		// ReadingType extends Resource, not IdentifiedObject, so it carries
 		// no mRID of its own; the reading it describes owns the identity.
 		ReadingType: &sep2.ReadingType{
@@ -199,8 +198,7 @@ func TestBASIC_029_MeterReading(t *testing.T) {
 		value: 1234,
 	}
 	mupIn := sep2.MirrorUsagePoint{
-		MRID:                mupMRID,
-		Description:         "BASIC-029 four-reading inverter mirror",
+		IdentifiedObject:    sep2.IdentifiedObject{MRID: mupMRID, Description: "BASIC-029 four-reading inverter mirror"},
 		ServiceCategoryKind: 0,                      // 0 == "electricity" per V1.2 Section 10.4 ServiceKind
 		Status:              1,                      // 1 == "on" per V1.2 Section 10.4 UsagePointStatus
 		RoleFlags:           sep2.RoleFlagsValue(1), // 0x01 == "isPremisesAggregationPoint"

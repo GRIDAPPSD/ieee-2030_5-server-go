@@ -38,7 +38,7 @@ func ddercPath(edevID string) string {
 func seedDefaultDERControl(t *testing.T, stores *assembly.Stores, edevID, mrid string) {
 	t.Helper()
 	key := derhref.ScopeKey(edevID, ddercFSA, ddercDERP)
-	dc := sep2.DefaultDERControl{MRID: mrid}
+	dc := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}}
 	if err := stores.DefaultDERControls.Create(context.Background(), key, coresingleton.SingletonKey, dc); err != nil {
 		t.Fatalf("seed DefaultDERControl under %s: %v", key, err)
 	}

@@ -50,7 +50,7 @@ type failingTakeBack struct {
 func (s *failingTakeBack) Delete(context.Context, string, string) error { return s.err }
 
 func conflictRequest() sep2.FlowReservationRequest {
-	return sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	return sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 }
 
 // An answer-record conflict is not an existing response: Answer must not

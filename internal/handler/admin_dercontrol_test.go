@@ -135,7 +135,7 @@ func newDCHarnessWith(t *testing.T, pen *uint32, programs *memory.DERProgramStor
 
 func (d *dcHarness) seedProgram(t *testing.T, edev, fsa, derp, mrid string, primacy uint8, withLink bool) {
 	t.Helper()
-	p := sep2.DERProgram{MRID: mrid, Description: "program " + derp, Primacy: primacy}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid, Description: "program " + derp}, Primacy: primacy}
 	p.Href = "/edev/" + edev + "/fsa/" + fsa + "/derp/" + derp
 	if withLink {
 		p.DERControlListLink = &sep2.ListLink{Href: p.Href + "/derc"}
@@ -571,7 +571,7 @@ func TestDERControlList(t *testing.T) {
 	other := create("/edev/1/fsa/0/derp/0", 60)
 
 	// A fixture control with no lifecycle record is not admin-issued.
-	if err := d.controls.Create(ctx, "0/0/0", "fixture", sep2.DERControl{RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{MRID: "FIXTURE", SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/0/fsa/0/derp/0/derc/fixture"}}}}}); err != nil {
+	if err := d.controls.Create(ctx, "0/0/0", "fixture", sep2.DERControl{RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{IdentifiedObject: sep2.IdentifiedObject{MRID: "FIXTURE"}, SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/0/fsa/0/derp/0/derc/fixture"}}}}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -790,7 +790,7 @@ func TestDERControlListPrograms(t *testing.T) {
 // into either href.
 func TestDERControlNotifications(t *testing.T) {
 	d := newDCHarness(t, ptrU32(dcPEN))
-	p := sep2.DERProgram{MRID: "LINKED", DERControlListLink: &sep2.ListLink{Href: "/edev/0/fsa/3/derp/8/derc"}}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "LINKED"}, DERControlListLink: &sep2.ListLink{Href: "/edev/0/fsa/3/derp/8/derc"}}
 	p.Href = "/edev/0/fsa/3/derp/8"
 	if err := d.programs.Create(context.Background(), dcDevice, "8", p); err != nil {
 		t.Fatal(err)

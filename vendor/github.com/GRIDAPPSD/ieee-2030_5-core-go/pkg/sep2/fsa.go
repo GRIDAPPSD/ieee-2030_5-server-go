@@ -40,21 +40,20 @@ func (b FunctionSetAssignmentsBase) Copy() FunctionSetAssignmentsBase {
 // Spec reference: section 8.6
 //
 // The embedded FunctionSetAssignmentsBase's Link fields come FIRST, THEN
-// FunctionSetAssignments' own sequence (mRID, description; version omitted,
-// not yet modeled).
+// FunctionSetAssignments' own sequence (the embedded IdentifiedObject's mRID,
+// description and version).
 type FunctionSetAssignments struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns FunctionSetAssignments"`
 	Resource
 	FunctionSetAssignmentsBase
-
-	MRID        string `xml:"mRID,omitempty"`
-	Description string `xml:"description,omitempty"`
+	IdentifiedObject
 }
 
 // Copy returns an independent copy.
 func (f FunctionSetAssignments) Copy() FunctionSetAssignments {
 	c := f
 	c.FunctionSetAssignmentsBase = f.FunctionSetAssignmentsBase.Copy()
+	c.IdentifiedObject = f.IdentifiedObject.Copy()
 	return c
 }
 

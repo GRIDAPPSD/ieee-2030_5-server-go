@@ -16,10 +16,9 @@ func TestMirrorUsagePoints_SurviveARestart(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 	mup := sep2.MirrorUsagePoint{
-		Resource:    sep2.Resource{Href: "/mup/0A1B2C"},
-		MRID:        "pv-1",
-		Description: "pv power",
-		DeviceLFDI:  "3E4F45AB31EDFE5B67E343E5E4562E3100000000",
+		Resource:         sep2.Resource{Href: "/mup/0A1B2C"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "pv-1", Description: "pv power"},
+		DeviceLFDI:       "3E4F45AB31EDFE5B67E343E5E4562E3100000000",
 	}
 
 	s1, _, err := newRunStores(&config.Config{DataDir: dir})
@@ -61,7 +60,7 @@ func TestMirrorUsagePoints_NoDataDirStaysInMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MirrorUsagePoints.Create(context.Background(), "X", sep2.MirrorUsagePoint{MRID: "m"}); err != nil {
+	if err := s.MirrorUsagePoints.Create(context.Background(), "X", sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "m"}}); err != nil {
 		t.Fatal(err)
 	}
 }

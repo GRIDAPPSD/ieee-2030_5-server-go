@@ -63,9 +63,7 @@ func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgr
 	href := der.DERProgramHref(deviceID, fsaID, t.ID)
 	version := t.Version
 	p := sep2.DERProgram{
-		MRID:               t.MRID,
-		Description:        t.Description,
-		Version:            &version,
+		IdentifiedObject:   sep2.IdentifiedObject{MRID: t.MRID, Description: t.Description, Version: &version},
 		DERControlListLink: &sep2.ListLink{Href: href + "/derc"},
 		Primacy:            t.Primacy,
 	}
@@ -80,7 +78,7 @@ func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgr
 // names. It is only meaningful when t has a default control.
 func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultDERControl {
 	base := t.DefaultControlBase.Copy()
-	d := sep2.DefaultDERControl{MRID: t.DefaultMRID, DERControlBase: &base}
+	d := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: t.DefaultMRID}, DERControlBase: &base}
 	// 0 is left absent, as on every copy written before defaults had versions.
 	if t.DefaultVersion != 0 {
 		v := t.DefaultVersion

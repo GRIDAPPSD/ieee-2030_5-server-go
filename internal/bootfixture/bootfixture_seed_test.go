@@ -658,7 +658,7 @@ func TestReconcileAdoptsMatchingPersistedRecords(t *testing.T) {
 	if err := edevs.Create(ctx, "e1", pre); err != nil {
 		t.Fatalf("pre-populate e1: %v", err)
 	}
-	preProg := sep2.DERProgram{MRID: "B5B5B5B5B5B5B5B5", Primacy: 5}
+	preProg := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "B5B5B5B5B5B5B5B5"}, Primacy: 5}
 	preProg.Href = "/edev/e1/derp/p1"
 	if err := derps.Create(ctx, "e1", "p1", preProg); err != nil {
 		t.Fatalf("pre-populate p1: %v", err)

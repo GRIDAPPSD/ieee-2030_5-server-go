@@ -10,7 +10,7 @@ import (
 
 func requestWithWindow() sep2.FlowReservationRequest {
 	return sep2.FlowReservationRequest{
-		MRID:              "REQ1",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: "REQ1"},
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: 10000}, // charging positive
 		PowerRequested:    &sep2.ActivePower{Value: 5000},
 		IntervalRequested: &sep2.DateTimeInterval{Start: 1000, Duration: 3600},
@@ -158,7 +158,7 @@ func TestAnswerFor_Deny(t *testing.T) {
 // 0 is a real wire timestamp (1970-01-01), and nobody supplied it.
 func TestAnswerFor_DenyWithNoRequestedInterval(t *testing.T) {
 	t.Parallel()
-	frq := sep2.FlowReservationRequest{MRID: "REQ1", CreationTime: 123456}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ1"}, CreationTime: 123456}
 
 	frp, err := answerFor(frq, Decision{Kind: Deny})
 	if err != nil {
@@ -207,7 +207,7 @@ func TestAnswerFor_IntervalBounds(t *testing.T) {
 // when the request named none: there is nothing to validate "inside" against.
 func TestAnswerFor_IntervalWithNoRequestedWindow(t *testing.T) {
 	t.Parallel()
-	frq := sep2.FlowReservationRequest{MRID: "REQ1"}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ1"}}
 	_, err := answerFor(frq, Decision{Kind: Grant, Interval: &sep2.DateTimeInterval{Start: 0, Duration: 10}})
 	if !errors.Is(err, ErrNoRequestedWindow) {
 		t.Errorf("err = %v, want ErrNoRequestedWindow", err)
@@ -331,7 +331,7 @@ func TestAnswerFor_EnergyBounds_RequestMultiplierAboveGrant(t *testing.T) {
 // value when the request named none.
 func TestAnswerFor_EnergyWithNoRequestedEnergy(t *testing.T) {
 	t.Parallel()
-	frq := sep2.FlowReservationRequest{MRID: "REQ1"}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ1"}}
 	_, err := answerFor(frq, Decision{Kind: Grant, Energy: &sep2.SignedRealEnergy{Value: 1}})
 	if !errors.Is(err, ErrNoRequestedEnergy) {
 		t.Errorf("err = %v, want ErrNoRequestedEnergy", err)
@@ -422,7 +422,7 @@ func TestAnswerFor_PowerBounds_Multiplier(t *testing.T) {
 // when the request named none.
 func TestAnswerFor_PowerWithNoRequestedPower(t *testing.T) {
 	t.Parallel()
-	frq := sep2.FlowReservationRequest{MRID: "REQ1"}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ1"}}
 	_, err := answerFor(frq, Decision{Kind: Grant, Power: &sep2.ActivePower{Value: 1}})
 	if !errors.Is(err, ErrNoRequestedPower) {
 		t.Errorf("err = %v, want ErrNoRequestedPower", err)

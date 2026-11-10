@@ -6,6 +6,7 @@
 package mrid
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"strings"
@@ -51,4 +52,22 @@ func IsAllFF(b []byte) bool {
 		}
 	}
 	return true
+}
+
+// Derived mints the mRID of a resource the server serves without storing, from
+// the resource's href. It runs New over a randomness source seeded by key, so
+// the same key gives the same mRID on every request and restart, and the
+// all-F redraw still gets fresh bytes.
+func Derived(key string, pen *uint32) (string, error) {
+	var ctr uint64
+	return New(func(b []byte) (int, error) {
+		for off := 0; off < len(b); off += sha256.Size {
+			var c [8]byte
+			binary.BigEndian.PutUint64(c[:], ctr)
+			ctr++
+			sum := sha256.Sum256(append([]byte(key), c[:]...))
+			copy(b[off:], sum[:])
+		}
+		return len(b), nil
+	}, pen)
 }

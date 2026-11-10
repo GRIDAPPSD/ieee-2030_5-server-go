@@ -61,9 +61,8 @@ func wantDeviceFSA(t *testing.T, s *Stores, deviceID, fsaID, desc string) {
 		t.Fatalf("FSA %s on device %s: %v", fsaID, deviceID, err)
 	}
 	want := sep2.FunctionSetAssignments{
-		Resource:    sep2.Resource{Href: "/edev/" + deviceID + "/fsa/" + fsaID},
-		MRID:        fsaID,
-		Description: desc,
+		Resource:         sep2.Resource{Href: "/edev/" + deviceID + "/fsa/" + fsaID},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: fsaID, Description: desc},
 		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
 			DERProgramListLink: &sep2.ListLink{Href: "/edev/" + deviceID + "/fsa/" + fsaID + "/derp"},
 		},

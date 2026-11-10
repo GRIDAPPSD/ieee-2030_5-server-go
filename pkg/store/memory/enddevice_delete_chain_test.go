@@ -40,7 +40,7 @@ func TestFlowReservationOverLogEvent_DeleteLeavesFlowReservationRecordsUntouched
 	if err := s.Create(ctx, "1", dev); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-1"}}); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
 	if err := resps.Create(ctx, "1", "resp-1", sep2.FlowReservationResponse{Subject: "req-1"}); err != nil {
@@ -106,7 +106,7 @@ func TestFullChain_DeleteLeavesEveryLayerUntouchedWhenRegistrationsCascadeFails(
 	if err := s.Create(ctx, "1", dev); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-1"}}); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
 	if err := resps.Create(ctx, "1", "resp-1", sep2.FlowReservationResponse{Subject: "req-1"}); err != nil {
@@ -183,7 +183,7 @@ func TestFlowReservationOverLogEvent_DeleteLeavesRequestsAndResponsesUntouchedWh
 	if err := s.Create(ctx, "1", dev); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-1"}}); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
 	if err := resps.Create(ctx, "1", "resp-1", sep2.FlowReservationResponse{Subject: "req-1"}); err != nil {

@@ -129,7 +129,7 @@ func newFaultFixture(t *testing.T, persist bool) *faultFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := admin.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A", Description: "roof"}); err != nil {
+		if err := admin.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A", Description: "roof"}}); err != nil {
 			t.Fatal(err)
 		}
 		f.h.AdminFSAs = admin

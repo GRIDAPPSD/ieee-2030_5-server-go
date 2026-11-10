@@ -37,7 +37,7 @@ func seedTwoFSAPrograms(t *testing.T) *httptest.Server {
 		{"e1", "", "old", "z9", 0},
 	}
 	for _, p := range programs {
-		prog := sep2.DERProgram{MRID: p.mrid, Primacy: p.primacy}
+		prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: p.mrid}, Primacy: p.primacy}
 		prog.Href = coreder.DERProgramHref(p.edev, p.fsa, p.id)
 		if p.fsa == "" {
 			prog.Href = "/edev/" + p.edev + "/derp/" + p.id

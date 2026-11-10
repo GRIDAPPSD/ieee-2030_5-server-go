@@ -7,8 +7,7 @@ import "encoding/xml"
 type DemandResponseProgram struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DemandResponseProgram"`
 	SubscribableResource
-	MRID                           string    `xml:"mRID,omitempty"`
-	Description                    string    `xml:"description,omitempty"`
+	IdentifiedObject
 	Primacy                        uint8     `xml:"primacy"`
 	ActiveEndDeviceControlListLink *ListLink `xml:"ActiveEndDeviceControlListLink,omitempty"`
 	EndDeviceControlListLink       *ListLink `xml:"EndDeviceControlListLink,omitempty"`
@@ -18,6 +17,7 @@ type DemandResponseProgram struct {
 func (d DemandResponseProgram) Copy() DemandResponseProgram {
 	c := d
 	c.SubscribableResource = d.SubscribableResource.Copy()
+	c.IdentifiedObject = d.IdentifiedObject.Copy()
 	c.ActiveEndDeviceControlListLink = clonePtr(d.ActiveEndDeviceControlListLink)
 	c.EndDeviceControlListLink = clonePtr(d.EndDeviceControlListLink)
 	return c

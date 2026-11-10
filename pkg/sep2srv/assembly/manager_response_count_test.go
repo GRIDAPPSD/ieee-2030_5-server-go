@@ -53,7 +53,7 @@ func TestAdminControlList_CountsResponsesAManagerSentForItsDevice(t *testing.T) 
 	mux.HandleFunc("POST /api/der/controls", ctlH.HandleCreate())
 	mux.HandleFunc("GET /api/der/controls", ctlH.HandleList())
 
-	prog := sep2.DERProgram{MRID: "00000000000000000000000000000064", Primacy: 1}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "00000000000000000000000000000064"}, Primacy: 1}
 	prog.Href = "/edev/" + managerID + "/fsa/0/derp/0"
 	prog.DERControlListLink = &sep2.ListLink{Href: prog.Href + "/derc"}
 	if err := stores.DERPrograms.Create(context.Background(), managerID, "0", prog); err != nil {

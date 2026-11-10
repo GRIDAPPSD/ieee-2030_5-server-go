@@ -100,8 +100,7 @@ func postFlowReservationRequest(t *testing.T, srv *httptest.Server, edevID, mrid
 
 	duration := uint16(3600)
 	body, err := xml.Marshal(&sep2.FlowReservationRequest{
-		MRID:              mrid,
-		Description:       "fast charge",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: mrid, Description: "fast charge"},
 		DurationRequested: &duration,
 	})
 	if err != nil {
@@ -184,7 +183,7 @@ func TestFlowReservationRequest_HoldsUntilTheConfiguredDeadline(t *testing.T) {
 	duration := uint32(3600)
 	farFuture := time.Now().Add(time.Hour).Unix()
 	body, err := xml.Marshal(&sep2.FlowReservationRequest{
-		MRID:              "7172737475767778797A7B7C7D7E7F80",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: "7172737475767778797A7B7C7D7E7F80"},
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: 1000},
 		IntervalRequested: &sep2.DateTimeInterval{Start: farFuture, Duration: duration},
 	})

@@ -22,7 +22,7 @@ func TestFlowReservation_FallbackConsultsTheCommitmentLedger(t *testing.T) {
 
 	for i, edev := range []string{"e1", "deviceA"} {
 		body, err := xml.Marshal(&sep2.FlowReservationRequest{
-			MRID:              []string{"A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1", "B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2"}[i],
+			IdentifiedObject:  sep2.IdentifiedObject{MRID: []string{"A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1", "B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2"}[i]},
 			EnergyRequested:   &sep2.SignedRealEnergy{Value: 1000},
 			IntervalRequested: &sep2.DateTimeInterval{Start: start + int64(i)*60, Duration: 600},
 		})

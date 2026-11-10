@@ -151,7 +151,7 @@ func TestEndDeviceDelete_FailsClosedWhenFlowReservationResponsesIsMiswired(t *te
 	t.Cleanup(srv.Close)
 
 	ctx := context.Background()
-	if err := stores.FlowReservationRequests.Create(ctx, "e1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+	if err := stores.FlowReservationRequests.Create(ctx, "e1", "req-1", sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "req-1"}}); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
 	if n, err := stores.FlowReservationRequests.Count(ctx, "e1"); err != nil || n != 1 {

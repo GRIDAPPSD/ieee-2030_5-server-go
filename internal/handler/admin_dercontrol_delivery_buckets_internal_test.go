@@ -28,10 +28,10 @@ func TestIntegrateBuckets_HoldFillsBucketsAndGapsAfter(t *testing.T) {
 	for i, w := range watts {
 		v := w
 		rs = append(rs, sep2.MirrorMeterReading{
-			MRID:           "W",
-			LastUpdateTime: base + int64(i)*60,
-			Reading:        &sep2.Reading{Value: &v},
-			ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: &export},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: "W"},
+			LastUpdateTime:   base + int64(i)*60,
+			Reading:          &sep2.Reading{Value: &v},
+			ReadingType:      &sep2.ReadingType{Uom: &uom, FlowDirection: &export},
 		})
 	}
 	lr := powerLegs([]deviceMirror{{isDER: true, postRate: &post, readings: rs}}, Edition2018, base, we)

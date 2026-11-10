@@ -117,7 +117,7 @@ func (e *frRunEnv) protocolClient() *http.Client {
 func (e *frRunEnv) postRequest(t *testing.T) {
 	t.Helper()
 	duration := uint16(600)
-	body, err := xml.Marshal(&sep2.FlowReservationRequest{MRID: frRunRequestMRID, Description: "run test", DurationRequested: &duration})
+	body, err := xml.Marshal(&sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: frRunRequestMRID, Description: "run test"}, DurationRequested: &duration})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestRun_UnrepairableRequestIsLoggedAndBootContinues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad := sep2.FlowReservationRequest{MRID: "BAD", CreationTime: 100}
+	bad := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "BAD"}, CreationTime: 100}
 	bad.Href = "/not/an/frq/href"
 	if err := seed.Create(context.Background(), "0", "bad", bad); err != nil {
 		t.Fatal(err)
@@ -277,7 +277,7 @@ func TestRun_StopDuringRecoveryIsACleanStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := sep2.FlowReservationRequest{MRID: "REQ", CreationTime: 100}
+	req := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ"}, CreationTime: 100}
 	req.Href = "/edev/0/frq/r1"
 	if err := seed.Create(context.Background(), "0", "r1", req); err != nil {
 		t.Fatal(err)
@@ -338,7 +338,7 @@ func TestRun_NoQueueTimerSurvivesAnErrorExitAfterRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := sep2.FlowReservationRequest{MRID: "REQ", CreationTime: time.Now().Unix()}
+	req := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "REQ"}, CreationTime: time.Now().Unix()}
 	req.Href = "/edev/0/frq/r1"
 	if err := seed.Create(context.Background(), "0", "r1", req); err != nil {
 		t.Fatal(err)

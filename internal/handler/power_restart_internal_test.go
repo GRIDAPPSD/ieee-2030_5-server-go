@@ -43,7 +43,7 @@ type twinDevice struct {
 }
 
 func twinW(mrid string, at int64, watts int64, rt *sep2.ReadingType) sep2.MirrorMeterReading {
-	return sep2.MirrorMeterReading{MRID: mrid, LastUpdateTime: at, Reading: &sep2.Reading{Value: &watts}, ReadingType: rt}
+	return sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}, LastUpdateTime: at, Reading: &sep2.Reading{Value: &watts}, ReadingType: rt}
 }
 
 func twinType(dir uint8, average bool) *sep2.ReadingType {
@@ -129,7 +129,7 @@ func newTwinSide(t *testing.T, devices []twinDevice) *twinSide {
 	}
 	for _, d := range devices {
 		rate := d.postRate
-		mup := sep2.MirrorUsagePoint{MRID: "MUP" + d.mup, DeviceLFDI: d.lfdi, PostRate: &rate, RoleFlags: roleFlagIsDER}
+		mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + d.mup}, DeviceLFDI: d.lfdi, PostRate: &rate, RoleFlags: roleFlagIsDER}
 		mup.Href = "/mup/" + d.mup
 		if err := s.mups.Create(ctx, d.mup, mup); err != nil {
 			t.Fatal(err)

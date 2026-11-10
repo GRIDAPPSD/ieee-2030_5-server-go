@@ -138,8 +138,7 @@ func seedMeterReading(t *testing.T, stores *assembly.Stores, uptID, mrID, descri
 		SubscribableResource: sep2.SubscribableResource{
 			Resource: sep2.Resource{Href: "/upt/" + uptID + "/mr/" + mrID},
 		},
-		MRID:        mrID,
-		Description: description,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrID, Description: description},
 	}
 	if err := stores.MeterReadings.Create(context.Background(), uptID, mrID, mr); err != nil {
 		t.Fatalf("seeding MeterReading %s under %s: %v", mrID, uptID, err)

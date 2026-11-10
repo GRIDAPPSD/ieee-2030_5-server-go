@@ -137,7 +137,7 @@ func TestUnassignDeviceFSA_RemovesTheTemplateCopies(t *testing.T) {
 	f.assign(t, "2", "fsa-A")
 	a, b := f.createTemplate(t), f.createTemplate(t)
 	ctx := context.Background()
-	fixture := sep2.DERProgram{MRID: "0000000000000000000000000000BEEF"}
+	fixture := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000BEEF"}}
 	fixture.Href = "/edev/1/fsa/fx/derp/fixture-0"
 	if err := f.copies.Programs.Create(ctx, "1", "fixture-0", fixture); err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestCreateProgramTemplate_FailedTemplateDeleteIsReported(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 	f.h.AdminFSAs = admin
-	if err := admin.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := admin.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	f.assign(t, "1", "fsa-A")

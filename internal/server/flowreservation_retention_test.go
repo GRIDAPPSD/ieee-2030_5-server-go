@@ -87,7 +87,7 @@ func (e *frRetentionEnv) seed(t *testing.T, id string, members ...frSeed) {
 	t.Helper()
 	ctx := context.Background()
 	frq := sep2.FlowReservationRequest{
-		Resource: sep2.Resource{Href: "/edev/dev/frq/" + id}, MRID: "M-" + id, CreationTime: members[0].created,
+		Resource: sep2.Resource{Href: "/edev/dev/frq/" + id}, IdentifiedObject: sep2.IdentifiedObject{MRID: "M-" + id}, CreationTime: members[0].created,
 		IntervalRequested: &sep2.DateTimeInterval{Start: members[0].start, Duration: members[0].dur},
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: 1000},
 	}
@@ -102,7 +102,7 @@ func (e *frRetentionEnv) seed(t *testing.T, id string, members ...frSeed) {
 		frp := sep2.FlowReservationResponse{
 			Event: sep2.Event{
 				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev/frp/" + rid}},
-				MRID:                 "R-" + rid, CreationTime: m.created, Interval: &sep2.DateTimeInterval{Start: m.start, Duration: m.dur},
+				IdentifiedObject:     sep2.IdentifiedObject{MRID: "R-" + rid}, CreationTime: m.created, Interval: &sep2.DateTimeInterval{Start: m.start, Duration: m.dur},
 			},
 			EnergyAvailable: &sep2.SignedRealEnergy{Value: 1000}, PowerAvailable: &sep2.ActivePower{Value: 500}, Subject: "M-" + id,
 		}
@@ -290,7 +290,7 @@ func TestRun_RetentionSweepsAtBootAfterRecoveryAndStopsBeforeTheQueueCloses(t *t
 		t.Fatal(err)
 	}
 	ended := time.Now().Unix() - frGraceSeconds - 60
-	frq := sep2.FlowReservationRequest{MRID: "OLD", CreationTime: ended - 600, IntervalRequested: &sep2.DateTimeInterval{Start: ended - 600, Duration: 600}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "OLD"}, CreationTime: ended - 600, IntervalRequested: &sep2.DateTimeInterval{Start: ended - 600, Duration: 600}}
 	frq.Href = "/edev/0/frq/frq-old"
 	if err := reqs.Create(ctx, "0", "frq-old", frq); err != nil {
 		t.Fatal(err)
@@ -378,7 +378,7 @@ func seedEndedRequest(t *testing.T, e *frRunEnv, endedAgo time.Duration) {
 		t.Fatal(err)
 	}
 	ended := time.Now().Add(-endedAgo).Unix()
-	frq := sep2.FlowReservationRequest{MRID: "OLD", CreationTime: ended - 600, IntervalRequested: &sep2.DateTimeInterval{Start: ended - 600, Duration: 600}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "OLD"}, CreationTime: ended - 600, IntervalRequested: &sep2.DateTimeInterval{Start: ended - 600, Duration: 600}}
 	frq.Href = "/edev/0/frq/frq-old"
 	if err := reqs.Create(ctx, "0", "frq-old", frq); err != nil {
 		t.Fatal(err)

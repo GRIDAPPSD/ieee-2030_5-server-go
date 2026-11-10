@@ -95,7 +95,7 @@ func TestSeedDefaultSetYieldsToAConsumersOwnSet(t *testing.T) {
 	ctx := context.Background()
 
 	const consumerMRID = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
-	own := sep2.ResponseSet{MRID: consumerMRID, Description: "operator set"}
+	own := sep2.ResponseSet{IdentifiedObject: sep2.IdentifiedObject{MRID: consumerMRID, Description: "operator set"}}
 	own.Href = coreresponse.SetHref(coreresponse.DefaultSetID)
 	if err := sets.Create(ctx, coreresponse.DefaultSetID, own); err != nil {
 		t.Fatalf("create consumer set: %v", err)

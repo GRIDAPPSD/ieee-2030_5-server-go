@@ -71,8 +71,7 @@ func TestCreateMirrorUsagePoint_ServerPostRateIsServed(t *testing.T) {
 	})
 
 	served := createMUP(t, mux, sep2.MirrorUsagePoint{
-		MRID:        "INV001",
-		Description: "Inverter 1",
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV001", Description: "Inverter 1"},
 	})
 
 	if !strings.Contains(served, "<postRate>30</postRate>") {
@@ -97,8 +96,8 @@ func TestCreateMirrorUsagePoint_ServerPostRateOverridesClient(t *testing.T) {
 
 	clientRate := uint32(7200)
 	served := createMUP(t, mux, sep2.MirrorUsagePoint{
-		MRID:     "INV002",
-		PostRate: &clientRate,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV002"},
+		PostRate:         &clientRate,
 	})
 
 	if !strings.Contains(served, "<postRate>30</postRate>") {
@@ -120,8 +119,8 @@ func TestCreateMirrorUsagePoint_NilProviderPreservesClientPostRate(t *testing.T)
 
 	clientRate := uint32(7200)
 	served := createMUP(t, mux, sep2.MirrorUsagePoint{
-		MRID:     "INV003",
-		PostRate: &clientRate,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV003"},
+		PostRate:         &clientRate,
 	})
 
 	if !strings.Contains(served, "<postRate>7200</postRate>") {
@@ -140,7 +139,7 @@ func TestCreateMirrorUsagePoint_NilProviderOmitsAbsentPostRate(t *testing.T) {
 
 	mux := postRateMUPMux("TEST_LFDI_ABCDEF", nil)
 
-	served := createMUP(t, mux, sep2.MirrorUsagePoint{MRID: "INV004"})
+	served := createMUP(t, mux, sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV004"}})
 
 	if strings.Contains(served, "postRate") {
 		t.Errorf("postRate present with no server policy and no client value; got:\n%s", served)
@@ -161,8 +160,8 @@ func TestCreateMirrorUsagePoint_DecliningProviderPreservesClientPostRate(t *test
 
 	clientRate := uint32(7200)
 	served := createMUP(t, mux, sep2.MirrorUsagePoint{
-		MRID:     "INV005",
-		PostRate: &clientRate,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV005"},
+		PostRate:         &clientRate,
 	})
 
 	if !strings.Contains(served, "<postRate>7200</postRate>") {
@@ -185,7 +184,7 @@ func TestCreateMirrorUsagePoint_PostRateProviderIsKeyedOnCallerLFDI(t *testing.T
 		return 45, true
 	})
 
-	served := createMUP(t, mux, sep2.MirrorUsagePoint{MRID: "INV006"})
+	served := createMUP(t, mux, sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV006"}})
 
 	if gotLFDI != "DEVICE_A_LFDI" {
 		t.Errorf("provider received lfdi %q, want DEVICE_A_LFDI (the creating client)", gotLFDI)
@@ -212,9 +211,8 @@ func TestCreateMirrorUsagePoint_StampedPostRateKeepsElementOrder(t *testing.T) {
 	})
 
 	served := createMUP(t, mux, sep2.MirrorUsagePoint{
-		MRID:        "INV007",
-		Description: "Inverter 7",
-		Status:      1,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV007", Description: "Inverter 7"},
+		Status:           1,
 	})
 
 	// MirrorMeterReading is stripped on GET (rule (c)), so the surviving

@@ -39,7 +39,7 @@ func TestHandleCreateMirrorUsagePoint_LeadingZeroSelfClaimAccepted(t *testing.T)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(canonicalSelfLFDI), nil))
 
-	mup := sep2.MirrorUsagePoint{MRID: "INV_LZ", DeviceLFDI: truncatedLowerSelfClaim}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV_LZ"}, DeviceLFDI: truncatedLowerSelfClaim}
 	body, err := xml.Marshal(&mup)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -71,7 +71,7 @@ func TestHandleCreateMirrorUsagePoint_LowercaseFullWidthSelfClaimCanonicalized(t
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
 
-	mup := sep2.MirrorUsagePoint{MRID: "INV_LC", DeviceLFDI: strings.ToLower(caller)}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV_LC"}, DeviceLFDI: strings.ToLower(caller)}
 	body, _ := xml.Marshal(&mup)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
@@ -101,7 +101,7 @@ func TestHandleCreateMirrorUsagePoint_OverLongDeviceLFDIRejected(t *testing.T) {
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
 
 	overLong := caller + "AA" // 42 hex chars
-	mup := sep2.MirrorUsagePoint{MRID: "INV_OL", DeviceLFDI: overLong}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV_OL"}, DeviceLFDI: overLong}
 	body, _ := xml.Marshal(&mup)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
@@ -125,7 +125,7 @@ func TestHandleCreateMirrorUsagePoint_OddLengthDeviceLFDIRejected(t *testing.T) 
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
 
 	odd := "ABC" // 3 hex chars: odd length
-	mup := sep2.MirrorUsagePoint{MRID: "INV_ODD", DeviceLFDI: odd}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV_ODD"}, DeviceLFDI: odd}
 	body, _ := xml.Marshal(&mup)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
@@ -179,7 +179,7 @@ func TestHandleCreateMirrorUsagePoint_NonHexEvenLengthDeviceLFDIRejected(t *test
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
 
-	mup := sep2.MirrorUsagePoint{MRID: "INV_NONHEX", DeviceLFDI: evenLengthNonHex}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV_NONHEX"}, DeviceLFDI: evenLengthNonHex}
 	body, _ := xml.Marshal(&mup)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
@@ -225,7 +225,7 @@ func TestHandleCreateMirrorUsagePoint_WhitespacePaddedSelfClaimAccepted(t *testi
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
 
-	mup := sep2.MirrorUsagePoint{MRID: "INV_WS", DeviceLFDI: " " + caller + "\n"}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV_WS"}, DeviceLFDI: " " + caller + "\n"}
 	body, err := xml.Marshal(&mup)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)

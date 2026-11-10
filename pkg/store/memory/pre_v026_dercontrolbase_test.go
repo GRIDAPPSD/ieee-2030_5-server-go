@@ -127,7 +127,7 @@ func baseStores() []baseStore {
 					t.Fatal(err)
 				}
 				for _, id := range []string{"a", "b"} {
-					if err := s.Create(ctx, id, sep2.FunctionSetAssignments{MRID: "FSA-" + id}); err != nil {
+					if err := s.Create(ctx, id, sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "FSA-" + id}}); err != nil {
 						t.Fatal(err)
 					}
 					if err := s.CreateTemplate(ctx, id, memory.ProgramTemplate{ID: "t", MRID: "T-" + id, DefaultControlBase: &base}); err != nil {

@@ -40,9 +40,7 @@ type ResponseList struct {
 type ResponseSet struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ResponseSet"`
 	Resource
-	MRID        string  `xml:"mRID,omitempty"`
-	Description string  `xml:"description,omitempty"`
-	Version     *uint16 `xml:"version,omitempty"`
+	IdentifiedObject
 
 	ResponseListLink *ListLink `xml:"ResponseListLink,omitempty"`
 }
@@ -50,7 +48,7 @@ type ResponseSet struct {
 // Copy returns an independent copy.
 func (r ResponseSet) Copy() ResponseSet {
 	c := r
-	c.Version = clonePtr(r.Version)
+	c.IdentifiedObject = r.IdentifiedObject.Copy()
 	c.ResponseListLink = clonePtr(r.ResponseListLink)
 	return c
 }

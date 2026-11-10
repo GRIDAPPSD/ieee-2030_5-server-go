@@ -71,7 +71,7 @@ func TestAdminFSAIntegration_FullLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	prog := sep2.DERProgram{MRID: "prog-1"}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "prog-1"}}
 	prog.Href = "/edev/dev-X/fsa/anyfsa/derp/p1"
 	if err := stores.DERPrograms.Create(ctx, "dev-X", "p1", prog); err != nil {
 		t.Fatal(err)

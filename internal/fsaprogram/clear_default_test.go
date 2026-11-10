@@ -143,7 +143,7 @@ func TestReconcileCopies_FinishesARemovalThatLeftAnUnlinkedDefault(t *testing.T)
 		t.Fatal(err)
 	}
 	admin := memory.NewAdminFSAStore()
-	if err := admin.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := admin.Create(ctx, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	cleared := tmpl.Copy()

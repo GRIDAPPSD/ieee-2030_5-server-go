@@ -55,7 +55,7 @@ func seedOrderFixtures(t *testing.T, stores *assembly.Stores) {
 		primacy uint8
 	}{{"a", 2}, {"b", 0}, {"c", 1}, {"d", 0}, {"e", 2}}
 	for _, p := range programs {
-		prog := sep2.DERProgram{MRID: "0" + p.id, Primacy: p.primacy}
+		prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0" + p.id}, Primacy: p.primacy}
 		prog.Href = coreder.DERProgramHref(orderEdev, "f1", p.id)
 		if err := stores.DERPrograms.Create(ctx, orderEdev, p.id, prog); err != nil {
 			t.Fatalf("seed DERProgram %s: %v", p.id, err)
@@ -83,7 +83,7 @@ func seedOrderFixtures(t *testing.T, stores *assembly.Stores) {
 		creation int64
 	}{{"a", 100}, {"b", 300}, {"c", 200}, {"d", 300}, {"e", 100}}
 	for _, c := range curves {
-		curve := sep2.DERCurve{MRID: "0" + c.id, CreationTime: c.creation}
+		curve := sep2.DERCurve{IdentifiedObject: sep2.IdentifiedObject{MRID: "0" + c.id}, CreationTime: c.creation}
 		if err := stores.DERCurves.Create(ctx, c.id, curve); err != nil {
 			t.Fatalf("seed DERCurve %s: %v", c.id, err)
 		}
@@ -208,7 +208,7 @@ func TestListOrder_OtherListsKeepIDOrder(t *testing.T) {
 	stores := testStores()
 	ctx := context.Background()
 	for _, id := range []string{"b", "c", "a"} {
-		if err := stores.MessagingPrograms.Create(ctx, id, sep2.MessagingProgram{MRID: "0" + id}); err != nil {
+		if err := stores.MessagingPrograms.Create(ctx, id, sep2.MessagingProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0" + id}}); err != nil {
 			t.Fatalf("seed MessagingProgram %s: %v", id, err)
 		}
 	}

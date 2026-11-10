@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
@@ -72,8 +73,16 @@ func HandleFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments], wired ro
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				// Return empty default FSA with DERProgramListLink
+				href := fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)
+				// Derived from the href so the default keeps one mRID across requests.
+				m, mErr := mrid.Derived(href, nil)
+				if mErr != nil {
+					srverr.Internal(w, r, mErr)
+					return
+				}
 				defaultFSA := sep2.FunctionSetAssignments{
-					Resource: sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
+					Resource:         sep2.Resource{Href: href},
+					IdentifiedObject: sep2.IdentifiedObject{MRID: m},
 					FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
 						DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
 					},
@@ -110,9 +119,8 @@ func HandleCreateFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) ht
 
 		fsaID := idmint.Prefixed("fsa")
 		fsa := sep2.FunctionSetAssignments{
-			Resource:    sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
-			MRID:        fsaID,
-			Description: "Function Set Assignment",
+			Resource:         sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: fsaID, Description: "Function Set Assignment"},
 			FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
 				DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
 			},

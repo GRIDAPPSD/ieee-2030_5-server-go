@@ -88,7 +88,7 @@ func TestHandleCreateUsagePoint_Created(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /upt", metering.HandleCreateUsagePoint(s))
 
-	upt := sep2.UsagePoint{MRID: "UPT001"}
+	upt := sep2.UsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "UPT001"}}
 	body, _ := xml.Marshal(&upt)
 
 	req := httptest.NewRequest(http.MethodPost, "/upt", bytes.NewReader(body))
@@ -233,8 +233,7 @@ func TestHandleCreateMirrorUsagePoint_Created(t *testing.T) {
 	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider("TEST_LFDI_ABCDEF"), nil))
 
 	mup := sep2.MirrorUsagePoint{
-		MRID:        "INV001",
-		Description: "Inverter 1",
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV001", Description: "Inverter 1"},
 	}
 	body, _ := xml.Marshal(&mup)
 
@@ -306,23 +305,19 @@ func TestHandleCreateMirrorUsagePoint_InlineReadingsAreServerStamped(t *testing.
 	const forgedTime = int64(1)
 	valA, valB := int64(1000), int64(2000)
 	mup := sep2.MirrorUsagePoint{
-		MRID: "INV001",
-		// No DeviceLFDI: absent means the caller (#720). This test is about
-		// the inline readings' href and lastUpdateTime stamping, not the
-		// deviceLFDI claim path, which mirror_putdelete_test.go and the
-		// aggregator tests below cover directly.
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV001"},
 		MirrorMeterReading: []sep2.MirrorMeterReading{
 			{
-				Resource:       sep2.Resource{Href: forgedHref},
-				MRID:           "MMR_A",
-				LastUpdateTime: forgedTime,
-				Reading:        &sep2.Reading{Value: &valA},
+				Resource:         sep2.Resource{Href: forgedHref},
+				IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR_A"},
+				LastUpdateTime:   forgedTime,
+				Reading:          &sep2.Reading{Value: &valA},
 			},
 			{
-				Resource:       sep2.Resource{Href: forgedHref},
-				MRID:           "MMR_B",
-				LastUpdateTime: forgedTime,
-				Reading:        &sep2.Reading{Value: &valB},
+				Resource:         sep2.Resource{Href: forgedHref},
+				IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR_B"},
+				LastUpdateTime:   forgedTime,
+				Reading:          &sep2.Reading{Value: &valB},
 			},
 		},
 	}
@@ -430,9 +425,9 @@ func TestHandlePostMirrorMeterReading_Created(t *testing.T) {
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	_ = mupStore.Create(context.Background(), "inv1", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/inv1"},
-		MRID:       "INV1",
-		DeviceLFDI: "DEVICE_A_LFDI",
+		Resource:         sep2.Resource{Href: "/mup/inv1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV1"},
+		DeviceLFDI:       "DEVICE_A_LFDI",
 	})
 
 	val := int64(5000)
@@ -440,12 +435,11 @@ func TestHandlePostMirrorMeterReading_Created(t *testing.T) {
 	const forgedHref = "/mup/VICTIM/mr/00000000000000000001"
 	const forgedTime = int64(1)
 	mmr := sep2.MirrorMeterReading{
-		Resource:       sep2.Resource{Href: forgedHref},
-		MRID:           "MMR01",
-		Description:    "Active Power",
-		LastUpdateTime: forgedTime,
-		ReadingType:    &sep2.ReadingType{Uom: &uom},
-		Reading:        &sep2.Reading{Value: &val},
+		Resource:         sep2.Resource{Href: forgedHref},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01", Description: "Active Power"},
+		LastUpdateTime:   forgedTime,
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &val},
 	}
 	body, _ := xml.Marshal(&mmr)
 
@@ -523,9 +517,9 @@ func TestHandlePostMirrorMeterReading_InvalidXMLDoesNotLeakDecoderDetail(t *test
 	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 	_ = mupStore.Create(context.Background(), "inv1", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/inv1"},
-		MRID:       "INV1",
-		DeviceLFDI: "DEVICE_A_LFDI",
+		Resource:         sep2.Resource{Href: "/mup/inv1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV1"},
+		DeviceLFDI:       "DEVICE_A_LFDI",
 	})
 
 	mux := http.NewServeMux()
@@ -587,7 +581,7 @@ func TestHandlePostMirrorMeterReading_ViaLocationHeader(t *testing.T) {
 	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider("DEVICE_A_LFDI")))
 
 	// Step 1: create the MirrorUsagePoint, exactly the client's first exchange.
-	mup := sep2.MirrorUsagePoint{MRID: "INV001"}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV001"}}
 	body, _ := xml.Marshal(&mup)
 	createReq := httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body))
 	createW := httptest.NewRecorder()
@@ -605,10 +599,9 @@ func TestHandlePostMirrorMeterReading_ViaLocationHeader(t *testing.T) {
 	val := int64(4200)
 	uom := sep2.UomWatts
 	mmr := sep2.MirrorMeterReading{
-		MRID:        "MMR01",
-		Description: "Active Power",
-		ReadingType: &sep2.ReadingType{Uom: &uom},
-		Reading:     &sep2.Reading{Value: &val},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01", Description: "Active Power"},
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &val},
 	}
 	mmrBody, _ := xml.Marshal(&mmr)
 	postReq := httptest.NewRequest(http.MethodPost, loc, bytes.NewReader(mmrBody))
@@ -725,9 +718,9 @@ func assertNoBodyLeak(t *testing.T, w *httptest.ResponseRecorder, secrets ...str
 func seedOwnedMirror(t *testing.T, s *memory.Store[sep2.MirrorUsagePoint], id, mrid, owner string) {
 	t.Helper()
 	err := s.Create(context.Background(), id, sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/" + id},
-		MRID:       mrid,
-		DeviceLFDI: owner,
+		Resource:         sep2.Resource{Href: "/mup/" + id},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrid},
+		DeviceLFDI:       owner,
 	})
 	if err != nil {
 		t.Fatalf("seed MirrorUsagePoint %q: %v", id, err)
@@ -758,9 +751,9 @@ func readingBody(t *testing.T, mrid string, value int64) []byte {
 	t.Helper()
 	uom := sep2.UomWatts
 	body, err := xml.Marshal(&sep2.MirrorMeterReading{
-		MRID:        mrid,
-		ReadingType: &sep2.ReadingType{Uom: &uom},
-		Reading:     &sep2.Reading{Value: &value},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrid},
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &value},
 	})
 	if err != nil {
 		t.Fatalf("marshal MirrorMeterReading: %v", err)
@@ -921,7 +914,7 @@ func TestHandlePostMirrorMeterReading_AggregatorOwnsMultipleMirrors(t *testing.T
 	}
 	mirrorIDs := make(map[string]string, len(devices))
 	for _, d := range devices {
-		body, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: d.mrid, DeviceLFDI: d.device})
+		body, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: d.mrid}, DeviceLFDI: d.device})
 		if err != nil {
 			t.Fatalf("marshal MirrorUsagePoint %q: %v", d.mrid, err)
 		}
@@ -990,7 +983,7 @@ func TestHandlePostMirrorMeterReading_AggregatorOwnsMultipleMirrors(t *testing.T
 
 	// The aggregator may not claim a device it does not manage: refused at
 	// create time, nothing stored (#720's "refuses an unassigned manager").
-	unmanagedBody, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: "DER_THREE", DeviceLFDI: unmanagedDeviceLFDI})
+	unmanagedBody, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "DER_THREE"}, DeviceLFDI: unmanagedDeviceLFDI})
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint for the unmanaged device: %v", err)
 	}
@@ -1079,8 +1072,8 @@ func TestHandlePostMirrorMeterReading_UnstampedMirrorDeniesEveryone(t *testing.T
 func TestBuildMirrorUsagePointList(t *testing.T) {
 	t.Parallel()
 	items := []sep2.MirrorUsagePoint{
-		{Resource: sep2.Resource{Href: "/mup/a"}, MRID: "A"},
-		{Resource: sep2.Resource{Href: "/mup/b"}, MRID: "B"},
+		{Resource: sep2.Resource{Href: "/mup/a"}, IdentifiedObject: sep2.IdentifiedObject{MRID: "A"}},
+		{Resource: sep2.Resource{Href: "/mup/b"}, IdentifiedObject: sep2.IdentifiedObject{MRID: "B"}},
 	}
 	result := metering.BuildMirrorUsagePointList("/mup", store.ListResult[sep2.MirrorUsagePoint]{
 		Items:   items,
@@ -1110,10 +1103,10 @@ func TestBuildMirrorUsagePointList_OmitsMirrorMeterReading(t *testing.T) {
 	t.Parallel()
 	items := []sep2.MirrorUsagePoint{
 		{
-			Resource: sep2.Resource{Href: "/mup/a"},
-			MRID:     "A",
+			Resource:         sep2.Resource{Href: "/mup/a"},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: "A"},
 			MirrorMeterReading: []sep2.MirrorMeterReading{
-				{MRID: "MMR01"},
+				{IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01"}},
 			},
 		},
 	}
@@ -1152,11 +1145,11 @@ func TestHandleMirrorUsagePoint_OmitsMirrorMeterReading(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	val := int64(5000)
 	stored := sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/inv1"},
-		MRID:       "INV001",
-		DeviceLFDI: "DEVICE_A_LFDI",
+		Resource:         sep2.Resource{Href: "/mup/inv1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV001"},
+		DeviceLFDI:       "DEVICE_A_LFDI",
 		MirrorMeterReading: []sep2.MirrorMeterReading{
-			{MRID: "MMR01", Reading: &sep2.Reading{Value: &val}},
+			{IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01"}, Reading: &sep2.Reading{Value: &val}},
 		},
 	}
 	if err := s.Create(context.Background(), "inv1", stored); err != nil {
@@ -1223,12 +1216,11 @@ func TestHandleMirrorUsagePoint_NonOwnerDenied(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	val := int64(5000)
 	err := s.Create(context.Background(), "device-a", sep2.MirrorUsagePoint{
-		Resource:    sep2.Resource{Href: "/mup/device-a"},
-		MRID:        "DEVICE_A",
-		Description: "Customer meter",
-		DeviceLFDI:  ownerLFDI,
+		Resource:         sep2.Resource{Href: "/mup/device-a"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "DEVICE_A", Description: "Customer meter"},
+		DeviceLFDI:       ownerLFDI,
 		MirrorMeterReading: []sep2.MirrorMeterReading{
-			{MRID: "MMR01", Reading: &sep2.Reading{Value: &val}},
+			{IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01"}, Reading: &sep2.Reading{Value: &val}},
 		},
 	})
 	if err != nil {
@@ -1253,8 +1245,8 @@ func TestHandleMirrorUsagePoint_NoIdentityDenied(t *testing.T) {
 	t.Parallel()
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	if err := s.Create(context.Background(), "device-a", sep2.MirrorUsagePoint{
-		MRID:       "DEVICE_A",
-		DeviceLFDI: "DEVICE_A_LFDI",
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "DEVICE_A"},
+		DeviceLFDI:       "DEVICE_A_LFDI",
 	}); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
@@ -1283,11 +1275,11 @@ func TestHandleMirrorUsagePoint_OwnerServedWithRuleC(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	val := int64(5000)
 	err := s.Create(context.Background(), "device-a", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/device-a"},
-		MRID:       "DEVICE_A",
-		DeviceLFDI: ownerLFDI,
+		Resource:         sep2.Resource{Href: "/mup/device-a"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "DEVICE_A"},
+		DeviceLFDI:       ownerLFDI,
 		MirrorMeterReading: []sep2.MirrorMeterReading{
-			{MRID: "MMR01", Reading: &sep2.Reading{Value: &val}},
+			{IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01"}, Reading: &sep2.Reading{Value: &val}},
 		},
 	})
 	if err != nil {
@@ -1345,7 +1337,7 @@ func createMirrorMux(s *memory.Store[sep2.MirrorUsagePoint], caller string) *htt
 // postMirror POSTs a MirrorUsagePoint carrying mrid and returns the recorder.
 func postMirror(t *testing.T, h http.Handler, mrid string) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: mrid, Description: "d"})
+	body, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid, Description: "d"}})
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint: %v", err)
 	}
@@ -1508,7 +1500,7 @@ func TestHandleCreateMirrorUsagePoint_RepostOverwritesStoredRecord(t *testing.T)
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := createMirrorMux(s, mupKeyLFDIA)
 
-	firstBody, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: mrid, Description: "first description"})
+	firstBody, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid, Description: "first description"}})
 	if err != nil {
 		t.Fatalf("marshal first body: %v", err)
 	}
@@ -1527,7 +1519,7 @@ func TestHandleCreateMirrorUsagePoint_RepostOverwritesStoredRecord(t *testing.T)
 		t.Fatalf("stored Description before overwrite = %q, want %q", before.Description, "first description")
 	}
 
-	secondBody, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: mrid, Description: "second description"})
+	secondBody, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid, Description: "second description"}})
 	if err != nil {
 		t.Fatalf("marshal second body: %v", err)
 	}
@@ -1673,7 +1665,7 @@ func TestHandleCreateMirrorUsagePoint_NoMRID_Rejected(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := createMirrorMux(s, mupKeyLFDIA)
 
-	mup := sep2.MirrorUsagePoint{Description: "no mRID supplied"}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{Description: "no mRID supplied"}}
 	body, err := xml.Marshal(&mup)
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)

@@ -47,7 +47,7 @@ func (d *deliveryHarness) seedControl(t *testing.T, id string, start int64, dura
 	mrid := fmt.Sprintf("%031d%s", 0, strings.ToUpper(id))
 	ctrl := sep2.DERControl{
 		RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{
-			MRID:                 mrid,
+			IdentifiedObject:     sep2.IdentifiedObject{MRID: mrid},
 			SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/0/fsa/0/derp/0/derc/" + id}},
 			CreationTime:         start - 60,
 			Interval:             &sep2.DateTimeInterval{Start: start, Duration: duration},
@@ -68,7 +68,7 @@ func (d *deliveryHarness) seedControl(t *testing.T, id string, start int64, dura
 func (d *deliveryHarness) seedMirror(t *testing.T, id, lfdi string, postRate uint32, watts int64, dir *uint8, times ...int64) {
 	t.Helper()
 	ctx := context.Background()
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: lfdi, PostRate: &postRate, RoleFlags: roleIsDER}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + id}, DeviceLFDI: lfdi, PostRate: &postRate, RoleFlags: roleIsDER}
 	mup.Href = "/mup/" + id
 	if err := d.mups.Create(ctx, id, mup); err != nil {
 		t.Fatal(err)
@@ -76,10 +76,10 @@ func (d *deliveryHarness) seedMirror(t *testing.T, id, lfdi string, postRate uin
 	uom := sep2.UomWatts
 	for i, at := range times {
 		r := sep2.MirrorMeterReading{
-			MRID:           "W" + id,
-			LastUpdateTime: at,
-			Reading:        &sep2.Reading{Value: &watts},
-			ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: dir},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: "W" + id},
+			LastUpdateTime:   at,
+			Reading:          &sep2.Reading{Value: &watts},
+			ReadingType:      &sep2.ReadingType{Uom: &uom, FlowDirection: dir},
 		}
 		if err := d.mmrs.Create(ctx, id, fmt.Sprint(i), r); err != nil {
 			t.Fatal(err)

@@ -44,14 +44,14 @@ func TestCompareDERControl_MissingIntervalSortsLast(t *testing.T) {
 // must still compare unequal, or their order would depend on the store.
 func TestCompare_LastKeyIsMRIDDescending(t *testing.T) {
 	t.Parallel()
-	if c := coreder.CompareDERProgram(sep2.DERProgram{MRID: "01"}, sep2.DERProgram{MRID: "02"}); c <= 0 {
+	if c := coreder.CompareDERProgram(sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "01"}}, sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "02"}}); c <= 0 {
 		t.Errorf("DERProgram 01 vs 02 = %d, want > 0", c)
 	}
 	start := int64(5)
 	if c := coreder.CompareDERControl(control("01", 1, &start), control("02", 1, &start)); c <= 0 {
 		t.Errorf("DERControl 01 vs 02 = %d, want > 0", c)
 	}
-	if c := coreder.CompareDERCurve(sep2.DERCurve{MRID: "01"}, sep2.DERCurve{MRID: "02"}); c <= 0 {
+	if c := coreder.CompareDERCurve(sep2.DERCurve{IdentifiedObject: sep2.IdentifiedObject{MRID: "01"}}, sep2.DERCurve{IdentifiedObject: sep2.IdentifiedObject{MRID: "02"}}); c <= 0 {
 		t.Errorf("DERCurve 01 vs 02 = %d, want > 0", c)
 	}
 }

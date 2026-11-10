@@ -37,8 +37,7 @@ type RoleFlagsValue = HexBinary16
 type MirrorUsagePoint struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MirrorUsagePoint"`
 	Resource
-	MRID        string `xml:"mRID,omitempty"`
-	Description string `xml:"description,omitempty"`
+	IdentifiedObject
 	// roleFlags is required (min=1) in sep.xsd's UsagePointBase sequence
 	// (sep.xsd:6577-6588); "omitempty" would drop the element entirely when
 	// RoleFlags is the legitimate value 0 (no roles set), serving a document
@@ -55,6 +54,7 @@ type MirrorUsagePoint struct {
 // Copy returns an independent copy.
 func (m MirrorUsagePoint) Copy() MirrorUsagePoint {
 	c := m
+	c.IdentifiedObject = m.IdentifiedObject.Copy()
 	c.PostRate = clonePtr(m.PostRate)
 	c.MirrorMeterReading = cloneCopySlice(m.MirrorMeterReading)
 	return c
@@ -73,22 +73,17 @@ type MirrorUsagePointList struct {
 // MirrorMeterReading -> MeterReadingBase -> IdentifiedObject -> Resource
 // (sep.xsd:6416, :6452, :5324): mRID, description, version,
 // lastUpdateTime, MirrorReadingSet, nextUpdateTime, Reading, ReadingType.
-// This struct implements mRID (position 1), description (position 2),
-// lastUpdateTime (position 4), MirrorReadingSet (position 5), Reading
-// (position 7), and ReadingType (position 8); Reading is declared before
-// ReadingType below to match.
+// The embedded IdentifiedObject supplies positions 1 to 3; the struct also
+// implements lastUpdateTime (position 4), MirrorReadingSet (position 5),
+// Reading (position 7), and ReadingType (position 8); Reading is declared
+// before ReadingType below to match.
 // Prior code emitted ReadingType before Reading, which was latent while
 // the only client behavior was posting ReadingType alone, but breaks a
 // strict sequence-validating parser the moment both are present.
-//
-// MRID has no omitempty: it is minOccurs=1 via IdentifiedObject
-// (sep.xsd:5324), so a zero-value mRID must still serialize; omitempty
-// would silently drop a required element.
 type MirrorMeterReading struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MirrorMeterReading"`
 	Resource
-	MRID             string             `xml:"mRID"`
-	Description      string             `xml:"description,omitempty"`
+	IdentifiedObject
 	LastUpdateTime   int64              `xml:"lastUpdateTime,omitempty"`
 	MirrorReadingSet []MirrorReadingSet `xml:"MirrorReadingSet,omitempty"`
 	Reading          *Reading           `xml:"Reading,omitempty"`
@@ -98,6 +93,7 @@ type MirrorMeterReading struct {
 // Copy returns an independent copy.
 func (m MirrorMeterReading) Copy() MirrorMeterReading {
 	c := m
+	c.IdentifiedObject = m.IdentifiedObject.Copy()
 	c.MirrorReadingSet = cloneCopySlice(m.MirrorReadingSet)
 	c.ReadingType = cloneCopyPtr(m.ReadingType)
 	c.Reading = cloneCopyPtr(m.Reading)
@@ -122,16 +118,15 @@ type MirrorMeterReadingList struct {
 // IdentifiedObject sequence: mRID, description, version, timePeriod,
 // then the contained Reading elements, confirmed by the standard's own
 // POX example, which serves mRID, timePeriod, and the Reading list in
-// that order. This struct implements mRID (position 1) and timePeriod
-// (own position); description and version are not implemented.
+// that order. The embedded IdentifiedObject supplies mRID, description and
+// version; TimePeriod follows.
 //
-// MRID and TimePeriod have no omitempty: both are required (minOccurs=1)
-// via IdentifiedObject and ReadingSetBase respectively, so a zero value
-// must still serialize.
+// TimePeriod has no omitempty: it is required (minOccurs=1) via
+// ReadingSetBase, so a zero value must still serialize.
 type MirrorReadingSet struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MirrorReadingSet"`
 	Resource
-	MRID       string           `xml:"mRID"`
+	IdentifiedObject
 	TimePeriod DateTimeInterval `xml:"timePeriod"`
 	Reading    []Reading        `xml:"Reading,omitempty"`
 }
@@ -139,6 +134,7 @@ type MirrorReadingSet struct {
 // Copy returns an independent copy.
 func (m MirrorReadingSet) Copy() MirrorReadingSet {
 	c := m
+	c.IdentifiedObject = m.IdentifiedObject.Copy()
 	c.Reading = cloneCopySlice(m.Reading)
 	return c
 }

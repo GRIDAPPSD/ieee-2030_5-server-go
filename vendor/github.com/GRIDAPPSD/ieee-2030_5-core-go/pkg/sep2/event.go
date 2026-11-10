@@ -66,19 +66,12 @@ type Event struct {
 	// depends on.
 	ResponseRequired *HexBinary8 `xml:"responseRequired,attr,omitempty"`
 
-	MRID        string `xml:"mRID,omitempty"`
-	Description string `xml:"description,omitempty"`
-
-	// Version is the VersionType revision of this event: a child ELEMENT
-	// declared minOccurs="0" maxOccurs="1" after description and before
-	// creationTime (sep.xsd:5474, inherited from
-	// RespondableSubscribableIdentifiedObject; type VersionType, a UInt16,
-	// sep.xsd:6231). The standard says an absent version means 0 and that a
-	// modification keeps the mRID and increments the version.
-	//
-	// The pointer is load-bearing: omitempty omits only nil, so an explicit
-	// version 0 still reaches the wire and stays distinguishable from unset.
-	Version *uint16 `xml:"version,omitempty"`
+	// IdentifiedObject carries mRID, description and version, which precede
+	// creationTime (sep.xsd:5474, RespondableSubscribableIdentifiedObject).
+	// The standard says an absent version means 0 and that a modification
+	// keeps the mRID and increments the version; Version is a pointer so an
+	// explicit 0 stays distinguishable from unset.
+	IdentifiedObject
 
 	// CreationTime is the TimeType instant at which the server created
 	// this event. It is a REQUIRED element: the 2023 XSD declares
@@ -114,7 +107,7 @@ func (e Event) Copy() Event {
 	c := e
 	c.SubscribableResource = e.SubscribableResource.Copy()
 	c.ResponseRequired = clonePtr(e.ResponseRequired)
-	c.Version = clonePtr(e.Version)
+	c.IdentifiedObject = e.IdentifiedObject.Copy()
 	c.EventStatus = cloneCopyPtr(e.EventStatus)
 	c.Interval = clonePtr(e.Interval)
 	return c

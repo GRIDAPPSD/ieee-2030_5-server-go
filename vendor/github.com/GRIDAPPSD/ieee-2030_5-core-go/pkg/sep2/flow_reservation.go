@@ -18,9 +18,7 @@ type RequestStatus struct {
 type FlowReservationRequest struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns FlowReservationRequest"`
 	Resource
-	MRID        string  `xml:"mRID,omitempty"`
-	Description string  `xml:"description,omitempty"`
-	Version     *uint16 `xml:"version,omitempty"`
+	IdentifiedObject
 
 	// XSD element order:
 	CreationTime      int64             `xml:"creationTime"`
@@ -37,7 +35,7 @@ type FlowReservationRequest struct {
 // Copy returns an independent copy.
 func (f FlowReservationRequest) Copy() FlowReservationRequest {
 	c := f
-	c.Version = clonePtr(f.Version)
+	c.IdentifiedObject = f.IdentifiedObject.Copy()
 	c.DurationRequested = clonePtr(f.DurationRequested)
 	c.EnergyRequested = clonePtr(f.EnergyRequested)
 	c.IntervalRequested = clonePtr(f.IntervalRequested)

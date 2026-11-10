@@ -7,8 +7,7 @@ import "encoding/xml"
 type UsagePoint struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns UsagePoint"`
 	SubscribableResource
-	MRID                string         `xml:"mRID,omitempty"`
-	Description         string         `xml:"description,omitempty"`
+	IdentifiedObject
 	RoleFlags           RoleFlagsValue `xml:"roleFlags,omitempty"`
 	ServiceCategoryKind uint8          `xml:"serviceCategoryKind"`
 	Status              uint8          `xml:"status"`
@@ -20,6 +19,7 @@ type UsagePoint struct {
 func (u UsagePoint) Copy() UsagePoint {
 	c := u
 	c.SubscribableResource = u.SubscribableResource.Copy()
+	c.IdentifiedObject = u.IdentifiedObject.Copy()
 	c.MeterReadingListLink = clonePtr(u.MeterReadingListLink)
 	return c
 }
@@ -35,8 +35,7 @@ type UsagePointList struct {
 type MeterReading struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MeterReading"`
 	SubscribableResource
-	MRID        string `xml:"mRID,omitempty"`
-	Description string `xml:"description,omitempty"`
+	IdentifiedObject
 
 	ReadingTypeLink    *Link     `xml:"ReadingTypeLink,omitempty"`
 	ReadingLink        *Link     `xml:"ReadingLink,omitempty"`
@@ -47,6 +46,7 @@ type MeterReading struct {
 func (m MeterReading) Copy() MeterReading {
 	c := m
 	c.SubscribableResource = m.SubscribableResource.Copy()
+	c.IdentifiedObject = m.IdentifiedObject.Copy()
 	c.ReadingTypeLink = clonePtr(m.ReadingTypeLink)
 	c.ReadingLink = clonePtr(m.ReadingLink)
 	c.ReadingSetListLink = clonePtr(m.ReadingSetListLink)
@@ -58,6 +58,37 @@ type MeterReadingList struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MeterReadingList"`
 	ListResource
 	MeterReading []MeterReading `xml:"MeterReading,omitempty"`
+}
+
+// ReadingSet is a set of Readings of the ReadingType named by the parent
+// MeterReading.
+//
+// Field order follows the sep.xsd ReadingSet sequence (sep.xsd:2029): the
+// IdentifiedObject elements mRID, description, version, then ReadingSetBase's
+// timePeriod, then ReadingListLink. MRID and TimePeriod are minOccurs=1, so
+// they carry no omitempty.
+type ReadingSet struct {
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ReadingSet"`
+	Resource
+	IdentifiedObject
+	TimePeriod DateTimeInterval `xml:"timePeriod"`
+
+	ReadingListLink *ListLink `xml:"ReadingListLink,omitempty"`
+}
+
+// Copy returns an independent copy.
+func (r ReadingSet) Copy() ReadingSet {
+	c := r
+	c.IdentifiedObject = r.IdentifiedObject.Copy()
+	c.ReadingListLink = clonePtr(r.ReadingListLink)
+	return c
+}
+
+// ReadingSetList is a list of ReadingSet resources.
+type ReadingSetList struct {
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ReadingSetList"`
+	ListResource
+	ReadingSet []ReadingSet `xml:"ReadingSet,omitempty"`
 }
 
 // DateTimeInterval represents a time period with start and duration.

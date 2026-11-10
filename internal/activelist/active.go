@@ -1,9 +1,10 @@
-package dercontrol
+package activelist
 
 import (
 	"context"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -15,15 +16,15 @@ import (
 // decides; one with none (never derived) reads as a record with no lifecycle.
 //
 // ev is read as a store serves it, so a store wrapped by
-// [NewDerivedStatusStore] hands this its derived cancel and supersede.
+// [dercontrol.NewDerivedStatusStore] hands this its derived cancel and supersede.
 func EventActive(ev *sep2.Event, now int64) bool {
-	if intervalOver(ev.Interval, now) {
+	if dercontrol.IntervalOver(ev.Interval, now) {
 		return false
 	}
 	if ev.EventStatus != nil {
 		return ev.EventStatus.CurrentStatus == sep2.EventStatusActive
 	}
-	return DeriveStatus(now, ev.CreationTime, ev.Interval.Start, LifecycleRecord{}).CurrentStatus == sep2.EventStatusActive
+	return dercontrol.DeriveStatus(now, ev.CreationTime, ev.Interval.Start, dercontrol.LifecycleRecord{}).CurrentStatus == sep2.EventStatusActive
 }
 
 // ActiveStore decorates a scoped store of events so List and Count see only

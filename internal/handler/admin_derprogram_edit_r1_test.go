@@ -103,7 +103,7 @@ func TestTemplateRoutes_SkipADeviceWithAConflictingProgram(t *testing.T) {
 	f := newTemplateFixture(t)
 	f.assign(t, "1", "fsa-A")
 	v := f.createTemplate(t)
-	other := sep2.DERProgram{MRID: v.MRID, Description: "own"}
+	other := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: v.MRID, Description: "own"}}
 	other.Href = "/edev/2/fsa/0/derp/0"
 	if err := f.copies.Programs.Create(ctx, "2", "0", other); err != nil {
 		t.Fatal(err)

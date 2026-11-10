@@ -566,9 +566,14 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 	var ch fsaprogram.Changes
 	if setDefault && pBefore.DefaultDERControlLink == nil {
 		// Stored but unlinked: the send replaces it and links it again.
+		m, mErr := h.mintDefaultMRID(pBefore.MRID)
+		if mErr != nil {
+			h.templateFailed(w, r, "default_mrid", mErr)
+			return false
+		}
 		b := defaultBase.Copy()
 		ch, err = fsaprogram.EditCreatingDefault(ctx, h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
-			sep2.DefaultDERControl{DERControlBase: &b})
+			sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: m}, DERControlBase: &b})
 	} else {
 		ch, err = fsaprogram.EditWithDefault(ctx, h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, mutateDefault)
 	}

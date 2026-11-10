@@ -259,12 +259,12 @@ func TestRemoveProgram_DeletesEveryPart(t *testing.T) {
 func seedFixture(t *testing.T, c Copies, dev, fsa, id string) {
 	t.Helper()
 	ctx := context.Background()
-	fixture := sep2.DERProgram{MRID: "0000000000000000000000000000BEEF"}
+	fixture := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000BEEF"}}
 	fixture.Href = "/edev/" + dev + "/fsa/" + fsa + "/derp/" + id
 	if err := c.Programs.Create(ctx, dev, id, fixture); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Defaults.Create(ctx, derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey, sep2.DefaultDERControl{MRID: "D0"}); err != nil {
+	if err := c.Defaults.Create(ctx, derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey, sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "D0"}}); err != nil {
 		t.Fatal(err)
 	}
 }

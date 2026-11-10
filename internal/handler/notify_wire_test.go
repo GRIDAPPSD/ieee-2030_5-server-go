@@ -69,7 +69,7 @@ func requireStatusZeroOnWire(t *testing.T, bodies []string) {
 
 func TestDERControlNotificationsCarryStatusZeroOnWire(t *testing.T) {
 	d := newDCHarness(t, ptrU32(dcPEN))
-	p := sep2.DERProgram{MRID: "LINKED", DERControlListLink: &sep2.ListLink{Href: "/edev/0/fsa/3/derp/8/derc"}}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "LINKED"}, DERControlListLink: &sep2.ListLink{Href: "/edev/0/fsa/3/derp/8/derc"}}
 	p.Href = "/edev/0/fsa/3/derp/8"
 	if err := d.programs.Create(context.Background(), dcDevice, "8", p); err != nil {
 		t.Fatal(err)

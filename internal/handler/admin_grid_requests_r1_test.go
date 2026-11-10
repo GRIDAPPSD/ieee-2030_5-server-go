@@ -186,7 +186,7 @@ func TestGridRequest_UnassignableDeviceIsNamed(t *testing.T) {
 	first := decodeGridCreated(t, g.post(gridBody(gridRow("discharge", 40, 3, sep2time.Now().Unix()+3600, 600))))
 	g.addManaged(t, "a3", gridA3)
 	tmpl := first.Rows[0].Shares[0].Program
-	clash := sep2.DERProgram{MRID: "CLASH", Description: "device's own"}
+	clash := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "CLASH", Description: "device's own"}}
 	clash.Href = "/edev/a3/fsa/own/derp/" + tmpl
 	if err := g.dc.programs.Create(ctx, "a3", tmpl, clash); err != nil {
 		t.Fatal(err)

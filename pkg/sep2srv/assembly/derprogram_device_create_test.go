@@ -22,7 +22,7 @@ func TestDeviceProgramCreate_IsServedUnderItsOwnFSAOnly(t *testing.T) {
 	ctx := context.Background()
 	seedOwnedDevices(t, stores.EndDevices, "e1")
 	for _, fsa := range []string{"f1", "f2"} {
-		if err := stores.FSAs.Create(ctx, "e1", fsa, sep2.FunctionSetAssignments{MRID: fsa}); err != nil {
+		if err := stores.FSAs.Create(ctx, "e1", fsa, sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: fsa}}); err != nil {
 			t.Fatal(err)
 		}
 	}

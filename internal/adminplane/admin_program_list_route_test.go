@@ -85,7 +85,7 @@ func TestProgramListRoute_PersistentStoresReportKept(t *testing.T) {
 	if _, err := copies.EnsureDevice(context.Background(), "1", "fsa-A", own); err != nil {
 		t.Fatal(err)
 	}
-	fx := sep2.DERProgram{MRID: "CCCC0000000000000000000000000001", Primacy: 2}
+	fx := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "CCCC0000000000000000000000000001"}, Primacy: 2}
 	fx.Href = "/edev/1/fsa/fsa-A/derp/fx1"
 	if err := programs.Create(context.Background(), "1", "fx1", fx); err != nil {
 		t.Fatal(err)

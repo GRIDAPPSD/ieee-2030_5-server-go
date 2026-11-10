@@ -32,10 +32,10 @@ func fu32(v uint32) *uint32 { return &v }
 
 func readingWithFlow(uom uint8, flow *uint8, value int64) sep2.MirrorMeterReading {
 	return sep2.MirrorMeterReading{
-		MRID:           "m",
-		LastUpdateTime: 1,
-		ReadingType:    &sep2.ReadingType{Uom: f8(uom), FlowDirection: flow, PowerOfTenMultiplier: fi8(0)},
-		Reading:        &sep2.Reading{Value: fi64(value)},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "m"},
+		LastUpdateTime:   1,
+		ReadingType:      &sep2.ReadingType{Uom: f8(uom), FlowDirection: flow, PowerOfTenMultiplier: fi8(0)},
+		Reading:          &sep2.Reading{Value: fi64(value)},
 	}
 }
 
@@ -745,18 +745,18 @@ func memoryMirrorUsagePointsFor(t *testing.T, lfdi string) store.ResourceReader[
 
 func typedReading(mrid string, updateTime int64, uom uint8, flow *uint8, value int64) sep2.MirrorMeterReading {
 	return sep2.MirrorMeterReading{
-		MRID:           mrid,
-		LastUpdateTime: updateTime,
-		ReadingType:    &sep2.ReadingType{Uom: f8(uom), FlowDirection: flow, PowerOfTenMultiplier: fi8(0)},
-		Reading:        &sep2.Reading{Value: fi64(value)},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrid},
+		LastUpdateTime:   updateTime,
+		ReadingType:      &sep2.ReadingType{Uom: f8(uom), FlowDirection: flow, PowerOfTenMultiplier: fi8(0)},
+		Reading:          &sep2.Reading{Value: fi64(value)},
 	}
 }
 
 func untypedReading(mrid string, updateTime int64, value int64) sep2.MirrorMeterReading {
 	return sep2.MirrorMeterReading{
-		MRID:           mrid,
-		LastUpdateTime: updateTime,
-		Reading:        &sep2.Reading{Value: fi64(value)},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mrid},
+		LastUpdateTime:   updateTime,
+		Reading:          &sep2.Reading{Value: fi64(value)},
 	}
 }
 

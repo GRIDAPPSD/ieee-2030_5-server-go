@@ -59,7 +59,7 @@ func TestDeviceControl_IsReadOnTheWireByThatDevicesPoll(t *testing.T) {
 	mux.HandleFunc("POST /api/devices/{id}/controls", (&handler.AdminDeviceControlHandler{FSAs: fsaH, Controls: ctlH}).HandleCreate())
 
 	// e1 already follows a primacy-100 program, which the new one must beat.
-	other := sep2.DERProgram{MRID: "00000000000000000000000000000064", Description: "feeder", Primacy: 100}
+	other := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "00000000000000000000000000000064", Description: "feeder"}, Primacy: 100}
 	other.Href = "/edev/e1/fsa/f1/derp/p100"
 	other.DERControlListLink = &sep2.ListLink{Href: other.Href + "/derc"}
 	if err := stores.DERPrograms.Create(t.Context(), "e1", "p100", other); err != nil {

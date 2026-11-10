@@ -22,7 +22,7 @@ func seedProgramInFSA(t *testing.T, stores *server.Stores, edevID, fsaID, derpID
 	t.Helper()
 	ctx := context.Background()
 	base := "/edev/" + edevID + "/fsa/" + fsaID + "/derp/" + derpID
-	prog := sep2.DERProgram{MRID: "PROG-" + derpID, Primacy: 3}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "PROG-" + derpID}, Primacy: 3}
 	prog.Href = base
 	prog.DefaultDERControlLink = &sep2.Link{Href: base + "/dderc"}
 	prog.DERControlListLink = &sep2.ListLink{Href: base + "/derc", All: 1}
@@ -41,7 +41,7 @@ func seedProgramInFSA(t *testing.T, stores *server.Stores, edevID, fsaID, derpID
 	if err := stores.DERControlLifecycles.Create(ctx, scope, "c-"+derpID, dercontrol.LifecycleRecord{CancelReason: "kept-" + derpID}); err != nil {
 		t.Fatalf("seed lifecycle %s: %v", derpID, err)
 	}
-	dd := sep2.DefaultDERControl{MRID: "DD-" + derpID}
+	dd := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "DD-" + derpID}}
 	dd.Href = base + "/dderc"
 	if err := stores.DefaultDERControls.Create(ctx, scope, "default", dd); err != nil {
 		t.Fatalf("seed default control %s: %v", derpID, err)

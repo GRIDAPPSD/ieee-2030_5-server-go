@@ -37,7 +37,7 @@ func journalStores(t *testing.T, dataDir string) *Stores {
 func journalMirror(t *testing.T, s *Stores) {
 	t.Helper()
 	rate := uint32(60)
-	mup := sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/m1"}, MRID: "pv-1", DeviceLFDI: journalDevice, RoleFlags: 1 << 3, PostRate: &rate}
+	mup := sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/m1"}, IdentifiedObject: sep2.IdentifiedObject{MRID: "pv-1"}, DeviceLFDI: journalDevice, RoleFlags: 1 << 3, PostRate: &rate}
 	if err := s.MirrorUsagePoints.Create(context.Background(), "m1", mup); err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +51,9 @@ func postAverage(t *testing.T, s *Stores) int {
 	v := int64(1500)
 	now := time.Now().Unix()
 	mmr := sep2.MirrorMeterReading{
-		MRID:        "PV-W",
-		ReadingType: &sep2.ReadingType{Uom: &uom, DataQualifier: &q, FlowDirection: &dir},
-		Reading:     &sep2.Reading{Value: &v, TimePeriod: &sep2.DateTimeInterval{Start: now - 1000, Duration: 1000}},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "PV-W"},
+		ReadingType:      &sep2.ReadingType{Uom: &uom, DataQualifier: &q, FlowDirection: &dir},
+		Reading:          &sep2.Reading{Value: &v, TimePeriod: &sep2.DateTimeInterval{Start: now - 1000, Duration: 1000}},
 	}
 	body, err := xml.Marshal(&mmr)
 	if err != nil {
@@ -203,17 +203,17 @@ func TestMirrorMeterReadings_RetentionAcrossARestart(t *testing.T) {
 		v := int64(100 * i)
 		id := fmt.Sprintf("%019d", now.Add(time.Duration(i-5)*time.Second).UnixNano())
 		r := sep2.MirrorMeterReading{
-			Resource:       sep2.Resource{Href: "/mup/m1/mr/" + id},
-			MRID:           "PV-W",
-			LastUpdateTime: now.Unix() - int64(5-i),
-			ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: &dirn},
-			Reading:        &sep2.Reading{Value: &v},
+			Resource:         sep2.Resource{Href: "/mup/m1/mr/" + id},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: "PV-W"},
+			LastUpdateTime:   now.Unix() - int64(5-i),
+			ReadingType:      &sep2.ReadingType{Uom: &uom, FlowDirection: &dirn},
+			Reading:          &sep2.Reading{Value: &v},
 		}
 		if err := s1.MirrorMeterReadings.Create(ctx, "m1", id, r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s1.MirrorMeterReadings.Create(ctx, "gone", "x", sep2.MirrorMeterReading{MRID: "X"}); err != nil {
+	if err := s1.MirrorMeterReadings.Create(ctx, "gone", "x", sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: "X"}}); err != nil {
 		t.Fatal(err)
 	}
 	sweep := func(s *Stores) int {

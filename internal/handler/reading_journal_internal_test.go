@@ -14,7 +14,7 @@ import (
 
 func journalReading(mrid string, at int64, rt *sep2.ReadingType) sep2.MirrorMeterReading {
 	v := int64(1)
-	return sep2.MirrorMeterReading{MRID: mrid, LastUpdateTime: at, Reading: &sep2.Reading{Value: &v}, ReadingType: rt}
+	return sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}, LastUpdateTime: at, Reading: &sep2.Reading{Value: &v}, ReadingType: rt}
 }
 
 func voltsType() *sep2.ReadingType {

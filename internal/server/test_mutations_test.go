@@ -755,9 +755,8 @@ func TestMutationSurface_GET_NotAllowed(t *testing.T) {
 func seedFSA(t *testing.T, stores *server.Stores, edevID, fsaID string) sep2.FunctionSetAssignments {
 	t.Helper()
 	fsa := sep2.FunctionSetAssignments{
-		Resource:    sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + fsaID},
-		MRID:        "MRID-" + fsaID,
-		Description: "seeded fsa " + fsaID,
+		Resource:         sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + fsaID},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "MRID-" + fsaID, Description: "seeded fsa " + fsaID},
 		FunctionSetAssignmentsBase: sep2.FunctionSetAssignmentsBase{
 			DERProgramListLink: &sep2.ListLink{
 				Href: "/edev/" + edevID + "/fsa/" + fsaID + "/derp",
@@ -1560,7 +1559,7 @@ func TestDERProgPrimacy_ExhaustedVersionIs409(t *testing.T) {
 	h, stores := newRouterWithTokenAndStores(t)
 	ctx := context.Background()
 	max := uint16(65535)
-	if err := stores.DERPrograms.Create(ctx, "edev-1", "prog-1", sep2.DERProgram{Primacy: 1, Version: &max}); err != nil {
+	if err := stores.DERPrograms.Create(ctx, "edev-1", "prog-1", sep2.DERProgram{Primacy: 1, IdentifiedObject: sep2.IdentifiedObject{Version: &max}}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := postJSON(t, h, tmPrimacy, tmTestToken, map[string]any{
@@ -1627,14 +1626,14 @@ func TestFSASwap_ExhaustedVersionIs409AndMovesNothing(t *testing.T) {
 			prog := sep2.DERProgram{
 				SubscribableResource:  sep2.SubscribableResource{Resource: sep2.Resource{Href: oldHref}},
 				DefaultDERControlLink: &sep2.Link{Href: oldHref + "/dderc"},
-				Version:               &pv,
+				IdentifiedObject:      sep2.IdentifiedObject{Version: &pv},
 			}
 			if err := stores.DERPrograms.Create(ctx, "edev-1", "p1", prog); err != nil {
 				t.Fatal(err)
 			}
 			dd := sep2.DefaultDERControl{
 				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: oldHref + "/dderc"}},
-				Version:              &dv,
+				IdentifiedObject:     sep2.IdentifiedObject{Version: &dv},
 			}
 			if err := stores.DefaultDERControls.Create(ctx, "edev-1/fsa-old/p1", coresingleton.SingletonKey, dd); err != nil {
 				t.Fatal(err)

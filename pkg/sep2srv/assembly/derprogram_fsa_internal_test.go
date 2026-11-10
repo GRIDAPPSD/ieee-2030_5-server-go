@@ -28,7 +28,7 @@ func seedViewPrograms(t *testing.T, hrefs map[string]string) store.ScopedStore[s
 	t.Helper()
 	s := memory.NewScopedStore[sep2.DERProgram]()
 	for id, href := range hrefs {
-		p := sep2.DERProgram{MRID: "M-" + id}
+		p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "M-" + id}}
 		p.Href = href
 		if err := s.Create(context.Background(), "e1", id, p); err != nil {
 			t.Fatalf("seed %s: %v", id, err)

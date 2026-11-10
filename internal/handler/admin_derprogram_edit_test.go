@@ -248,14 +248,14 @@ func TestUpdateDeviceProgram_RaisesVersionsOnce(t *testing.T) {
 func seedFixtureProgram(t *testing.T, f *templateFixture, dev, fsa, id string, withDefault bool) string {
 	t.Helper()
 	href := "/edev/" + dev + "/fsa/" + fsa + "/derp/" + id
-	p := sep2.DERProgram{MRID: "0000000000000000000000000000F1C5", Description: "fixture", Primacy: 1,
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000F1C5", Description: "fixture"}, Primacy: 1,
 		DERControlListLink: &sep2.ListLink{Href: href + "/derc"}}
 	p.Href = href
 	if err := f.copies.Programs.Create(context.Background(), dev, id, p); err != nil {
 		t.Fatal(err)
 	}
 	if withDefault {
-		d := sep2.DefaultDERControl{MRID: "0000000000000000000000000000D1C5", SetGradW: ptrU16(50)}
+		d := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000D1C5"}, SetGradW: ptrU16(50)}
 		d.Href = href + "/dderc"
 		p.DefaultDERControlLink = &sep2.Link{Href: d.Href}
 		if err := f.copies.Programs.Update(context.Background(), dev, id, p); err != nil {
@@ -468,7 +468,7 @@ func assertControlKept(t *testing.T, d *dcHarness, mrid string) {
 func TestDeleteDeviceProgram_RefusedWhileAControlIsLive(t *testing.T) {
 	t.Parallel()
 	f, d := liveFixture(t)
-	if err := f.h.DeviceFSAs.Create(context.Background(), dcDeviceB, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := f.h.DeviceFSAs.Create(context.Background(), dcDeviceB, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	v := f.createDeviceProgram(t, dcDeviceB, "fsa-A", voltSupportBody)
@@ -534,7 +534,7 @@ func TestDeleteProgramTemplate_RefusedWhileAnyCopyHoldsALiveControl(t *testing.T
 func TestDeleteDeviceProgram_ChecksTheControlListLinkScope(t *testing.T) {
 	t.Parallel()
 	f, d := liveFixture(t)
-	p := sep2.DERProgram{MRID: "0000000000000000000000000000F1C6", DERControlListLink: &sep2.ListLink{Href: "/edev/" + dcDeviceB + "/fsa/other/derp/9/derc"}}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "0000000000000000000000000000F1C6"}, DERControlListLink: &sep2.ListLink{Href: "/edev/" + dcDeviceB + "/fsa/other/derp/9/derc"}}
 	p.Href = "/edev/" + dcDeviceB + "/fsa/0/derp/9"
 	if err := d.programs.Create(context.Background(), dcDeviceB, "9", p); err != nil {
 		t.Fatal(err)

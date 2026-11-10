@@ -34,7 +34,7 @@ func fsaWriteStores(t *testing.T) *server.Stores {
 	}
 	ctx := context.Background()
 	for id, href := range map[string]string{"p1": fsaProgramHref, "p2": fsaProgram2Href} {
-		prog := sep2.DERProgram{MRID: id}
+		prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: id}}
 		prog.Href = href
 		if err := stores.DERPrograms.Create(ctx, "dev-X", id, prog); err != nil {
 			t.Fatal(err)
@@ -49,7 +49,7 @@ func fsaWriteStores(t *testing.T) *server.Stores {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := stores.AdminFSAs.Create(ctx, "fsa-solar", sep2.FunctionSetAssignments{MRID: "fsa-solar", Description: "Solar template"}); err != nil {
+	if err := stores.AdminFSAs.Create(ctx, "fsa-solar", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-solar", Description: "Solar template"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := stores.AdminFSAs.AttachProgram(ctx, "fsa-solar", fsaProgramHref); err != nil {

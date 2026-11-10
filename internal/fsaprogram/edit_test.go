@@ -25,7 +25,7 @@ func versionOf(v *uint16) int {
 func seedProgram(t *testing.T, version *uint16) *memory.DERProgramStore {
 	t.Helper()
 	s := memory.NewDERProgramStore()
-	p := sep2.DERProgram{MRID: "P1", Description: "d", Primacy: 1, Version: version}
+	p := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "P1", Description: "d", Version: version}, Primacy: 1}
 	if err := s.Create(context.Background(), "e1", "p1", p); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func seedDefault(t *testing.T, progVersion, defVersion *uint16) defaultFixture {
 		defaults: memory.NewScopedStore[sep2.DefaultDERControl](),
 		ref:      Ref{DeviceID: "e1", ProgramID: "p1"},
 	}
-	d := sep2.DefaultDERControl{MRID: "D1", Version: defVersion, SetGradW: u16(100)}
+	d := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "D1", Version: defVersion}, SetGradW: u16(100)}
 	if err := f.defaults.Create(ctx, "scope", coresingleton.SingletonKey, d); err != nil {
 		t.Fatal(err)
 	}

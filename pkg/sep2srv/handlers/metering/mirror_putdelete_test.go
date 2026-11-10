@@ -95,8 +95,7 @@ func seedDerivedMirror(t *testing.T, s *memory.Store[sep2.MirrorUsagePoint], own
 	id := metering.MirrorStoreID(owner, mrid)
 	err := s.Create(context.Background(), id, sep2.MirrorUsagePoint{
 		Resource:            sep2.Resource{Href: metering.MirrorHref(id)},
-		MRID:                mrid,
-		Description:         description,
+		IdentifiedObject:    sep2.IdentifiedObject{MRID: mrid, Description: description},
 		DeviceLFDI:          owner,
 		RoleFlags:           sep2.RoleFlagsValue(9),
 		ServiceCategoryKind: 0,
@@ -113,9 +112,9 @@ func seedReading(t *testing.T, s *memory.ScopedStore[sep2.MirrorMeterReading], p
 	t.Helper()
 	v := value
 	err := s.Create(context.Background(), parentID, id, sep2.MirrorMeterReading{
-		Resource: sep2.Resource{Href: fmt.Sprintf("/mup/%s/mr/%s", parentID, id)},
-		MRID:     "MMR_" + id,
-		Reading:  &sep2.Reading{Value: &v},
+		Resource:         sep2.Resource{Href: fmt.Sprintf("/mup/%s/mr/%s", parentID, id)},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR_" + id},
+		Reading:          &sep2.Reading{Value: &v},
 	})
 	if err != nil {
 		t.Fatalf("seed MirrorMeterReading %q under %q: %v", id, parentID, err)
@@ -508,7 +507,7 @@ func TestHandlePutMirrorUsagePoint_MatchingMRIDIsWrittenOverWith204AndLocation(t
 	if err != nil {
 		t.Fatalf("get seeded record: %v", err)
 	}
-	seeded.MirrorMeterReading = []sep2.MirrorMeterReading{{MRID: "STALE_INLINE"}}
+	seeded.MirrorMeterReading = []sep2.MirrorMeterReading{{IdentifiedObject: sep2.IdentifiedObject{MRID: "STALE_INLINE"}}}
 	if err := mupStore.Update(context.Background(), idA, seeded); err != nil {
 		t.Fatalf("seed inline reading: %v", err)
 	}
@@ -621,7 +620,7 @@ func TestHandleDeleteMirrorUsagePoint_CascadesReadingsAndServesTheStrippedRecord
 	if err != nil {
 		t.Fatalf("get seeded record: %v", err)
 	}
-	withChild.MirrorMeterReading = []sep2.MirrorMeterReading{{MRID: "INLINE_CHILD"}}
+	withChild.MirrorMeterReading = []sep2.MirrorMeterReading{{IdentifiedObject: sep2.IdentifiedObject{MRID: "INLINE_CHILD"}}}
 	if err := mupStore.Update(context.Background(), idA, withChild); err != nil {
 		t.Fatalf("seed inline reading: %v", err)
 	}

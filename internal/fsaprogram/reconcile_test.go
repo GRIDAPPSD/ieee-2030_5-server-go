@@ -11,7 +11,7 @@ import (
 )
 
 func TestScoped_Fields(t *testing.T) {
-	got := Scoped("3", "f", sep2.FunctionSetAssignments{MRID: "f", Description: "d"})
+	got := Scoped("3", "f", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "f", Description: "d"}})
 	if got.Href != "/edev/3/fsa/f" || got.MRID != "f" || got.Description != "d" ||
 		got.DERProgramListLink == nil || got.DERProgramListLink.Href != "/edev/3/fsa/f/derp" {
 		t.Errorf("Scoped = %+v", got)
@@ -22,7 +22,7 @@ func adminWith(t *testing.T, key, mrid string, devices ...string) *memory.AdminF
 	t.Helper()
 	ctx := context.Background()
 	admin := memory.NewAdminFSAStore()
-	if err := admin.Create(ctx, key, sep2.FunctionSetAssignments{MRID: mrid, Description: "d"}); err != nil {
+	if err := admin.Create(ctx, key, sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid, Description: "d"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range devices {
@@ -55,7 +55,7 @@ func TestReconcile_ReplacesExistingRecord(t *testing.T) {
 	ctx := context.Background()
 	admin := adminWith(t, "f", "f", "1")
 	dev := memory.NewScopedStore[sep2.FunctionSetAssignments]()
-	if err := dev.Create(ctx, "1", "f", sep2.FunctionSetAssignments{MRID: "other", Description: "stale"}); err != nil {
+	if err := dev.Create(ctx, "1", "f", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "other", Description: "stale"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Reconcile(ctx, admin, dev); err != nil {

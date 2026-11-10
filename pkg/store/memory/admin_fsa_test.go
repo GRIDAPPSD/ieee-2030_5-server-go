@@ -20,9 +20,8 @@ import (
 
 func adminFSA(id, desc string, primacy uint8) sep2.FunctionSetAssignments {
 	return sep2.FunctionSetAssignments{
-		Resource:    sep2.Resource{Href: "/api/fsas/" + id},
-		MRID:        id,
-		Description: desc,
+		Resource:         sep2.Resource{Href: "/api/fsas/" + id},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: id, Description: desc},
 	}
 }
 

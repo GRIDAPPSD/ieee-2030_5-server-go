@@ -151,7 +151,7 @@ func (s *fsaWireServer) mustAdmin(t *testing.T, method, path, body string, want 
 // setupFSA creates fsa-1 with one template and returns the template id.
 func (s *fsaWireServer) setupFSA(t *testing.T) string {
 	t.Helper()
-	if err := s.admin.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1", Description: "feeder 7"}); err != nil {
+	if err := s.admin.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1", Description: "feeder 7"}}); err != nil {
 		t.Fatal(err)
 	}
 	var tmpl struct{ ID string }

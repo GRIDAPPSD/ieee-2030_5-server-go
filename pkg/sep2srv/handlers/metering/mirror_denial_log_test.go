@@ -44,9 +44,9 @@ func TestHandleMirrorUsagePoint_DenialLogIsRateLimitedAndNamesTheCaller(t *testi
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	if err := s.Create(context.Background(), "target", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/target"},
-		MRID:       "TARGET",
-		DeviceLFDI: owner,
+		Resource:         sep2.Resource{Href: "/mup/target"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "TARGET"},
+		DeviceLFDI:       owner,
 	}); err != nil {
 		t.Fatalf("seed MirrorUsagePoint: %v", err)
 	}

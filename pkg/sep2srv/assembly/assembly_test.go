@@ -862,7 +862,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	mup := sep2.MirrorUsagePoint{MRID: "INV001"}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV001"}}
 	body, err := xml.Marshal(&mup)
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint: %v", err)
@@ -883,9 +883,9 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 	val := int64(4200)
 	uom := sep2.UomWatts
 	mmr := sep2.MirrorMeterReading{
-		MRID:        "MMR01",
-		ReadingType: &sep2.ReadingType{Uom: &uom},
-		Reading:     &sep2.Reading{Value: &val},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01"},
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &val},
 	}
 	mmrBody, err := xml.Marshal(&mmr)
 	if err != nil {
@@ -988,7 +988,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	otherSrv := httptest.NewServer(otherHandler)
 	defer otherSrv.Close()
 
-	body, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: "OWNED"})
+	body, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "OWNED"}})
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint: %v", err)
 	}
@@ -1010,9 +1010,9 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	val := int64(99)
 	uom := sep2.UomWatts
 	mmrBody, err := xml.Marshal(&sep2.MirrorMeterReading{
-		MRID:        "FORGED",
-		ReadingType: &sep2.ReadingType{Uom: &uom},
-		Reading:     &sep2.Reading{Value: &val},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "FORGED"},
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &val},
 	})
 	if err != nil {
 		t.Fatalf("marshal MirrorMeterReading: %v", err)
@@ -1183,7 +1183,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 	deviceBSrv := httptest.NewServer(deviceBHandler)
 	defer deviceBSrv.Close()
 
-	body, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: sharedMRID})
+	body, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: sharedMRID}})
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint: %v", err)
 	}
@@ -1241,9 +1241,9 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 	uom := sep2.UomWatts
 	val := int64(7)
 	mmrBody, err := xml.Marshal(&sep2.MirrorMeterReading{
-		MRID:        "FORGED",
-		ReadingType: &sep2.ReadingType{Uom: &uom},
-		Reading:     &sep2.Reading{Value: &val},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "FORGED"},
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &val},
 	})
 	if err != nil {
 		t.Fatalf("marshal MirrorMeterReading: %v", err)

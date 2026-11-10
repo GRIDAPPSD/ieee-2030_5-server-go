@@ -79,8 +79,7 @@ func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, nil, authLFDIProvider))
 
 	mup := sep2.MirrorUsagePoint{
-		MRID:                "INV001",
-		Description:         "Inverter 1",
+		IdentifiedObject:    sep2.IdentifiedObject{MRID: "INV001", Description: "Inverter 1"},
 		ServiceCategoryKind: 0,
 		Status:              1,
 		// No DeviceLFDI: absent means the caller (#720), which is what this
@@ -149,7 +148,7 @@ func TestHandleCreateMirrorUsagePoint_UnclaimableDeviceDenied(t *testing.T) {
 	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(s, nil, authLFDIProvider, noPostRatePreference))
 
 	const foreignDevice = "9999999999999999999999999999999999999999"
-	mup := sep2.MirrorUsagePoint{MRID: "INV002", DeviceLFDI: foreignDevice}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "INV002"}, DeviceLFDI: foreignDevice}
 	body, _ := xml.Marshal(&mup)
 
 	req := httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body))
@@ -171,9 +170,9 @@ func TestHandleMirrorUsagePointGet(t *testing.T) {
 	// IEEE 2030.5-2018 section 10.11.3 rule (e); a record with none is
 	// unreachable by design, so the fixture has to carry it.
 	_ = s.Create(context.Background(), "test1", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/test1"},
-		MRID:       "TEST1",
-		DeviceLFDI: testLFDI,
+		Resource:         sep2.Resource{Href: "/mup/test1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "TEST1"},
+		DeviceLFDI:       testLFDI,
 	})
 
 	mux := http.NewServeMux()
@@ -196,9 +195,9 @@ func TestHandleMirrorUsagePointGet(t *testing.T) {
 func TestHandleMirrorUsagePointGetForeignCallerDenied(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	_ = s.Create(context.Background(), "test1", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/test1"},
-		MRID:       "TEST1",
-		DeviceLFDI: testLFDI,
+		Resource:         sep2.Resource{Href: "/mup/test1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "TEST1"},
+		DeviceLFDI:       testLFDI,
 	})
 
 	mux := http.NewServeMux()
@@ -222,18 +221,17 @@ func TestHandlePostMirrorMeterReading(t *testing.T) {
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	_ = mupStore.Create(context.Background(), "inv1", sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/inv1"},
-		MRID:       "INV1",
-		DeviceLFDI: testLFDI,
+		Resource:         sep2.Resource{Href: "/mup/inv1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "INV1"},
+		DeviceLFDI:       testLFDI,
 	})
 
 	val := int64(5000)
 	uom := sep2.UomWatts
 	mmr := sep2.MirrorMeterReading{
-		MRID:        "MMR01",
-		Description: "Active Power",
-		ReadingType: &sep2.ReadingType{Uom: &uom},
-		Reading:     &sep2.Reading{Value: &val},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "MMR01", Description: "Active Power"},
+		ReadingType:      &sep2.ReadingType{Uom: &uom},
+		Reading:          &sep2.Reading{Value: &val},
 	}
 	body, _ := xml.Marshal(&mmr)
 

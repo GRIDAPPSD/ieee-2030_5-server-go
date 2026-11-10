@@ -29,8 +29,7 @@ func TestPersistentStore_MirrorSurvivesARestartFieldForField(t *testing.T) {
 	rate := uint32(60)
 	mup := sep2.MirrorUsagePoint{
 		Resource:            sep2.Resource{Href: "/mup/ABCDEF"},
-		MRID:                "client-mrid-1",
-		Description:         "grid power",
+		IdentifiedObject:    sep2.IdentifiedObject{MRID: "client-mrid-1", Description: "grid power"},
 		RoleFlags:           sep2.RoleFlagsValue(0x0B),
 		ServiceCategoryKind: 0,
 		Status:              1,
@@ -45,7 +44,7 @@ func TestPersistentStore_MirrorSurvivesARestartFieldForField(t *testing.T) {
 	if err := s1.Create(ctx, "ABCDEF", mup); err != nil {
 		t.Fatal(err)
 	}
-	if err := s1.Create(ctx, "123456", sep2.MirrorUsagePoint{MRID: "second"}); err != nil {
+	if err := s1.Create(ctx, "123456", sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "second"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s1.Delete(ctx, "123456"); err != nil {

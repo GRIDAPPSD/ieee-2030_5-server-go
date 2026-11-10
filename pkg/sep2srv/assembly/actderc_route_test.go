@@ -26,7 +26,7 @@ func seedActiveFixture(t *testing.T, stores *assembly.Stores) []string {
 	ctx := context.Background()
 	now := time.Now().Unix()
 
-	prog := sep2.DERProgram{MRID: "PROG", Primacy: 1}
+	prog := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: "PROG"}, Primacy: 1}
 	prog.Href = actProgramPath
 	prog.DERControlListLink = &sep2.ListLink{Href: actProgramPath + "/derc"}
 	if err := stores.DERPrograms.Create(ctx, "e1", "p1", prog); err != nil {

@@ -531,7 +531,7 @@ func TestJournaledScopedStore_BatchPostUnderAPersistingFault(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "j.jsonl")
 			js := openJournalOf[sep2.MirrorMeterReading](t, path)
 			mups := memory.NewStore[sep2.MirrorUsagePoint]()
-			if err := mups.Create(ctx, "m1", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/m1"}, MRID: "MUP", DeviceLFDI: faultDevice}); err != nil {
+			if err := mups.Create(ctx, "m1", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/m1"}, IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP"}, DeviceLFDI: faultDevice}); err != nil {
 				t.Fatal(err)
 			}
 			writes := 0

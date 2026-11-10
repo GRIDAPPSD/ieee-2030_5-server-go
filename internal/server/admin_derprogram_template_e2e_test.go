@@ -145,12 +145,14 @@ func TestProgramTemplateWithNoFixtureCarriesAControlToTheDevice(t *testing.T) {
 	if code := adminMgmtProtoGET(t, proto, "https://"+c.sep2Probe+programHref); code != http.StatusNotFound {
 		t.Errorf("device GET %s after unassign: status %d, want 404", programHref, code)
 	}
-	// The dderc route answers every path with an empty default when none is
-	// stored, so the stored one being gone shows as no mRID and no base.
-	var dflt sep2.DefaultDERControl
+	// The dderc route answers every path with a shell default when none is
+	// stored, so the stored one being gone shows as no base and a shell mRID
+	// that is the same on every request (#1299).
+	var dflt, again sep2.DefaultDERControl
 	protoGetXML(t, proto, c.sep2Probe, programHref+"/dderc", &dflt)
-	if dflt.MRID != "" || dflt.DERControlBase != nil {
-		t.Errorf("default after unassign = %+v, want the route's empty default", dflt)
+	protoGetXML(t, proto, c.sep2Probe, programHref+"/dderc", &again)
+	if len(dflt.MRID) != 32 || dflt.MRID != again.MRID || dflt.DERControlBase != nil {
+		t.Errorf("default after unassign = %+v then mRID %q, want the route's shell default with a stable 32-digit mRID", dflt, again.MRID)
 	}
 	if status, body := adminDo(http.MethodPost, "/api/der/controls", strings.Replace(create, "6000", "5000", 1)); status != http.StatusNotFound {
 		t.Errorf("control on the removed copy: %d %s, want 404", status, body)

@@ -106,8 +106,7 @@ type DERControlList struct {
 type DefaultDERControl struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DefaultDERControl"`
 	SubscribableResource
-	MRID           string          `xml:"mRID,omitempty"`
-	Version        *uint16         `xml:"version,omitempty"`
+	IdentifiedObject
 	DERControlBase *DERControlBase `xml:"DERControlBase,omitempty"`
 	SetGradW       *uint16         `xml:"setGradW,omitempty"`
 	SetSoftGradW   *uint16         `xml:"setSoftGradW,omitempty"`
@@ -117,7 +116,7 @@ type DefaultDERControl struct {
 func (d DefaultDERControl) Copy() DefaultDERControl {
 	c := d
 	c.SubscribableResource = d.SubscribableResource.Copy()
-	c.Version = clonePtr(d.Version)
+	c.IdentifiedObject = d.IdentifiedObject.Copy()
 	c.DERControlBase = cloneCopyPtr(d.DERControlBase)
 	c.SetGradW = clonePtr(d.SetGradW)
 	c.SetSoftGradW = clonePtr(d.SetSoftGradW)
@@ -133,9 +132,7 @@ func (d DefaultDERControl) Copy() DefaultDERControl {
 type DERProgram struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERProgram"`
 	SubscribableResource
-	MRID        string  `xml:"mRID,omitempty"`
-	Description string  `xml:"description,omitempty"`
-	Version     *uint16 `xml:"version,omitempty"`
+	IdentifiedObject
 
 	ActiveDERControlListLink *ListLink `xml:"ActiveDERControlListLink,omitempty"`
 	DefaultDERControlLink    *Link     `xml:"DefaultDERControlLink,omitempty"`
@@ -148,7 +145,7 @@ type DERProgram struct {
 func (p DERProgram) Copy() DERProgram {
 	c := p
 	c.SubscribableResource = p.SubscribableResource.Copy()
-	c.Version = clonePtr(p.Version)
+	c.IdentifiedObject = p.IdentifiedObject.Copy()
 	c.ActiveDERControlListLink = clonePtr(p.ActiveDERControlListLink)
 	c.DefaultDERControlLink = clonePtr(p.DefaultDERControlLink)
 	c.DERControlListLink = clonePtr(p.DERControlListLink)
@@ -453,8 +450,7 @@ type CurveData struct {
 type DERCurve struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCurve"`
 	Resource
-	MRID         string      `xml:"mRID"`
-	Description  string      `xml:"description,omitempty"`
+	IdentifiedObject
 	CreationTime int64       `xml:"creationTime"`
 	CurveData    []CurveData `xml:"CurveData"`
 	CurveType    uint8       `xml:"curveType"`
@@ -469,6 +465,7 @@ type DERCurve struct {
 // Copy returns an independent copy.
 func (d DERCurve) Copy() DERCurve {
 	c := d
+	c.IdentifiedObject = d.IdentifiedObject.Copy()
 	c.CurveData = cloneSlice(d.CurveData)
 	c.RampDecTms = clonePtr(d.RampDecTms)
 	c.RampIncTms = clonePtr(d.RampIncTms)

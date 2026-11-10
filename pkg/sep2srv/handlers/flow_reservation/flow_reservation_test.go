@@ -63,8 +63,8 @@ func TestHandlePostFlowReservationRequest_SubmitsStoredRequestToQueue(t *testing
 
 	energy := sep2.SignedRealEnergy{Value: 10000}
 	frq := sep2.FlowReservationRequest{
-		MRID:            "FRQ001",
-		EnergyRequested: &energy,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"},
+		EnergyRequested:  &energy,
 	}
 	body, err := xml.Marshal(&frq)
 	if err != nil {
@@ -509,7 +509,7 @@ func TestHandlePostFlowReservationRequest_ParallelPostsGetDistinctIDs(t *testing
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(memory.NewScopedStore[sep2.FlowReservationRequest](), &stubSubmitter{}))
 	energy := sep2.SignedRealEnergy{Value: 10000}
-	body, _ := xml.Marshal(&sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &energy})
+	body, _ := xml.Marshal(&sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &energy})
 	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
 		return httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
 	})

@@ -43,17 +43,17 @@ func (p *powerHarness) postAverage(deviceLFDI string, postRate uint32, at, watts
 	p.t.Helper()
 	p.n++
 	id := fmt.Sprint(p.n)
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: deviceLFDI, PostRate: &postRate, RoleFlags: roleFlagIsDER}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + id}, DeviceLFDI: deviceLFDI, PostRate: &postRate, RoleFlags: roleFlagIsDER}
 	mup.Href = "/mup/" + id
 	if err := p.mups.Create(context.Background(), id, mup); err != nil {
 		p.t.Fatal(err)
 	}
 	uom, dq, dir := sep2.UomWatts, dataQualifierAverage, sep2.FlowDirectionReverse
 	r := sep2.MirrorMeterReading{
-		MRID:           "W" + id,
-		LastUpdateTime: at,
-		Reading:        &sep2.Reading{Value: &watts},
-		ReadingType:    &sep2.ReadingType{Uom: &uom, DataQualifier: &dq, FlowDirection: &dir},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "W" + id},
+		LastUpdateTime:   at,
+		Reading:          &sep2.Reading{Value: &watts},
+		ReadingType:      &sep2.ReadingType{Uom: &uom, DataQualifier: &dq, FlowDirection: &dir},
 	}
 	if err := p.mmrs.Create(context.Background(), id, "0", r); err != nil {
 		p.t.Fatal(err)

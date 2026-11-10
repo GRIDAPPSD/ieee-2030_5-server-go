@@ -178,7 +178,7 @@ func TestQueue_Build_MintFailureLeavesRequestUnanswered(t *testing.T) {
 	orig := frpRandRead
 	defer func() { frpRandRead = orig }()
 
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
@@ -238,7 +238,7 @@ func TestQueue_Fallback_RetriesEachInfrastructureFailureKind(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+			frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 			frqStore := &stubFRQReader{}
 			frqStore.put("dev1", "frq1", frq)
 			frpStore := &stubFRPStore{}
@@ -263,7 +263,7 @@ func TestQueue_Fallback_RetriesEachInfrastructureFailureKind(t *testing.T) {
 // Config.RetryAttempts, rather than retrying forever, and no response is
 // ever built for it.
 func TestQueue_Fallback_GivesUpAfterBoundedRetries(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{failCreateTimes: 1000} // never succeeds within the bound
@@ -298,7 +298,7 @@ func TestQueue_Fallback_GivesUpAfterBoundedRetries(t *testing.T) {
 // the shape an EndDevice delete cascade leaves), the fallback gives up at
 // once rather than retrying a request that will never come back.
 func TestQueue_Fallback_RequestGoneStopsRetrying(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
@@ -341,7 +341,7 @@ func TestQueue_Fallback_RequestGoneStopsRetrying(t *testing.T) {
 // as store.ErrNotFound, so attemptFallback recognizes it as "gone" rather
 // than retrying.
 func TestQueue_Build_NotFoundBetweenTheTwoGets(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{deleteAfterGetCall: 1}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
@@ -434,7 +434,7 @@ func TestQueue_Build_PrunesKeyLocksAfterEachAttempt(t *testing.T) {
 	const n = 50
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("frq%d", i)
-		frq := sep2.FlowReservationRequest{MRID: id, EnergyRequested: &sep2.SignedRealEnergy{Value: 1}}
+		frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: id}, EnergyRequested: &sep2.SignedRealEnergy{Value: 1}}
 		frqStore.put("dev1", id, frq)
 		if _, err := q.Answer(context.Background(), "dev1", id, Decision{}); err != nil {
 			t.Fatalf("Answer %s: %v", id, err)
@@ -456,7 +456,7 @@ func TestQueue_Build_PrunesKeyLocksAfterEachAttempt(t *testing.T) {
 // LOW: Close stops a later Submit from scheduling anything, not just the
 // timers that already existed when Close ran.
 func TestQueue_Submit_AfterCloseIsRefused(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001"}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
@@ -483,7 +483,7 @@ func TestQueue_Submit_AfterCloseIsRefused(t *testing.T) {
 // at all, the same refusal Submit gives, not just stop timers that already
 // existed when Close ran.
 func TestQueue_RetryOrGiveUp_ClosedSkipsScheduling(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{failCreateTimes: 1000}
@@ -506,7 +506,7 @@ func TestQueue_RetryOrGiveUp_ClosedSkipsScheduling(t *testing.T) {
 // forget its timers entry there rather than leaving a stale one, since
 // nothing else will ever clean it up.
 func TestQueue_Fallback_LateAnswerClearsTheRetryTimer(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{failCreateTimes: 1}
@@ -539,11 +539,11 @@ func TestQueue_Fallback_LateAnswerClearsTheRetryTimer(t *testing.T) {
 // merely end in the same ErrAlreadyAnswered that Create's own
 // ErrAlreadyExists mapping would also produce.
 func TestQueue_Build_GetGuardAloneShortCircuitsBeforeCreate(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
-	if err := frpStore.Create(context.Background(), "dev1", "frq1", sep2.FlowReservationResponse{Event: sep2.Event{MRID: "EXISTING"}}); err != nil {
+	if err := frpStore.Create(context.Background(), "dev1", "frq1", sep2.FlowReservationResponse{Event: sep2.Event{IdentifiedObject: sep2.IdentifiedObject{MRID: "EXISTING"}}}); err != nil {
 		t.Fatalf("seed existing response: %v", err)
 	}
 
@@ -565,7 +565,7 @@ func TestQueue_Build_GetGuardAloneShortCircuitsBeforeCreate(t *testing.T) {
 // answers Create's refusal without the key ever being in the stub's map,
 // so Get still reports store.ErrNotFound).
 func TestQueue_Build_MapsCreateAlreadyExistsToErrAlreadyAnswered(t *testing.T) {
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frq := sep2.FlowReservationRequest{IdentifiedObject: sep2.IdentifiedObject{MRID: "FRQ001"}, EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{forceAlreadyExists: true}
@@ -632,7 +632,7 @@ func TestDefaultRetryBackoff_Value(t *testing.T) {
 // never ErrCommitmentCheck, so the fallback retries instead of denying.
 func TestQueue_Build_GatedCreateErrorsKeepTheirMeaning(t *testing.T) {
 	frq := sep2.FlowReservationRequest{
-		MRID:              "FRQ001",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: "FRQ001"},
 		EnergyRequested:   &sep2.SignedRealEnergy{Value: 10000},
 		IntervalRequested: &sep2.DateTimeInterval{Start: 5000, Duration: 600},
 	}
@@ -669,7 +669,7 @@ func TestQueue_Build_GatedCreateErrorsKeepTheirMeaning(t *testing.T) {
 func TestFallback_CancelBetweenItsReadsDeniesAndIsNotGivenUp(t *testing.T) {
 	frqStore := &stubFRQReader{cancelAfterGetCall: 1}
 	frqStore.put("e1", "frq-1", sep2.FlowReservationRequest{
-		MRID:              "REQ1",
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: "REQ1"},
 		IntervalRequested: &sep2.DateTimeInterval{Start: time.Now().Add(time.Hour).Unix(), Duration: 3600},
 	})
 	frpStore := &stubFRPStore{}

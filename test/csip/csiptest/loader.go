@@ -552,8 +552,7 @@ func buildEndDevice(s EndDeviceSpec) sep2.EndDevice {
 
 func buildFSA(s FSASpec) sep2.FunctionSetAssignments {
 	fsa := sep2.FunctionSetAssignments{
-		MRID:        s.MRID,
-		Description: s.Description,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: s.MRID, Description: s.Description},
 	}
 	fsa.Href = fmt.Sprintf("/edev/%s/fsa/%s", s.EndDeviceID, s.ID)
 	if s.DERProgramListLink != nil {
@@ -567,9 +566,8 @@ func buildFSA(s FSASpec) sep2.FunctionSetAssignments {
 
 func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 	prog := sep2.DERProgram{
-		MRID:        s.MRID,
-		Description: s.Description,
-		Primacy:     s.Primacy,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: s.MRID, Description: s.Description},
+		Primacy:          s.Primacy,
 	}
 	prog.Href = der.DERProgramHref(s.EndDeviceID, s.FSAID, s.ID)
 	if s.DefaultDERControlLink != "" {
@@ -591,7 +589,7 @@ func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 }
 
 func buildDefaultDERControl(s DefaultDERControlSpec) (sep2.DefaultDERControl, error) {
-	dc := sep2.DefaultDERControl{MRID: s.MRID}
+	dc := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: s.MRID}}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/dderc", s.EndDeviceID, s.FSAID, s.DERProgramID)
 	if s.DERControlBase != nil {
 		base, err := buildControlBase(*s.DERControlBase)

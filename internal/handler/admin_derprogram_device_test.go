@@ -57,7 +57,7 @@ func (f *templateFixture) createDeviceProgram(t *testing.T, dev, fsa, body strin
 
 func (f *templateFixture) addAdminFSA(t *testing.T, id string) {
 	t.Helper()
-	if err := f.h.AdminFSAs.Create(context.Background(), id, sep2.FunctionSetAssignments{MRID: id, Description: id}); err != nil {
+	if err := f.h.AdminFSAs.Create(context.Background(), id, sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: id, Description: id}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -138,7 +138,7 @@ func TestCreateDeviceProgram_StoresAServedDeviceProgram(t *testing.T) {
 func TestCreateDeviceProgram_UnderAStoreOnlyFSA_201(t *testing.T) {
 	t.Parallel()
 	f := newTemplateFixture(t)
-	fx := sep2.FunctionSetAssignments{MRID: "fx"}
+	fx := sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fx"}}
 	if err := f.h.DeviceFSAs.Create(context.Background(), "1", "fx", fx); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestCreateDeviceProgram_MRIDAlreadyOnTheDevice_409_WritesNothing(t *testing
 	const mrid = "0123456789ABCDEF0123456789ABCDEF"
 	body := `{"description":"d","primacy":1,"mRID":"` + mrid + `","defaultControl":{"type":"connect"}}`
 
-	taken := sep2.DERProgram{MRID: mrid}
+	taken := sep2.DERProgram{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}}
 	taken.Href = "/edev/1/fsa/fx/derp/0"
 	if err := f.copies.Programs.Create(context.Background(), "1", "0", taken); err != nil {
 		t.Fatal(err)
@@ -311,7 +311,7 @@ func TestCreateDeviceProgram_AControlCanBeIssuedOnIt(t *testing.T) {
 	t.Parallel()
 	d := newDCHarness(t, ptrU32(dcPEN))
 	f := newTemplateFixtureWith(t, d.programs, d.devices)
-	if err := f.h.DeviceFSAs.Create(context.Background(), dcDeviceB, "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := f.h.DeviceFSAs.Create(context.Background(), dcDeviceB, "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	v := f.createDeviceProgram(t, dcDeviceB, "fsa-A", voltSupportBody)
@@ -492,7 +492,7 @@ func TestCreateDeviceProgram_FailedUndoIsRemovedByTheRebuild(t *testing.T) {
 func TestCreateDeviceProgram_UnknownDevice_404EvenWithAnFSA(t *testing.T) {
 	t.Parallel()
 	f := newTemplateFixture(t)
-	if err := f.h.DeviceFSAs.Create(context.Background(), "9", "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := f.h.DeviceFSAs.Create(context.Background(), "9", "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	w := f.do(http.MethodPost, deviceProgramPath("9", "fsa-A"), voltSupportBody)
@@ -506,7 +506,7 @@ func TestCreateDeviceProgram_UnknownDevice_404EvenWithAnFSA(t *testing.T) {
 func TestCreateDeviceProgram_FSAIDThatCannotFormAnHref_409(t *testing.T) {
 	t.Parallel()
 	f := newTemplateFixture(t)
-	if err := f.h.DeviceFSAs.Create(context.Background(), "1", "roof fleet", sep2.FunctionSetAssignments{MRID: "roof fleet"}); err != nil {
+	if err := f.h.DeviceFSAs.Create(context.Background(), "1", "roof fleet", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "roof fleet"}}); err != nil {
 		t.Fatal(err)
 	}
 	if w := f.do(http.MethodPost, deviceProgramPath("1", "roof%20fleet"), voltSupportBody); w.Code != http.StatusConflict {

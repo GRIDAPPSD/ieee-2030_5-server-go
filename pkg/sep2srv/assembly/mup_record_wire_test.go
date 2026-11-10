@@ -23,7 +23,7 @@ func TestMup_ManagerNeedsTheManagedDevicesRecord(t *testing.T) {
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
 
 	body := func(mrid, device string) string {
-		raw, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: mrid, DeviceLFDI: device})
+		raw, err := xml.Marshal(&sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}, DeviceLFDI: device})
 		if err != nil {
 			t.Fatalf("marshal MirrorUsagePoint: %v", err)
 		}

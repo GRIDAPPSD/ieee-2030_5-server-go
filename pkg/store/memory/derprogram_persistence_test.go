@@ -35,9 +35,8 @@ func newPersistedDERProgramStore(t *testing.T) (*memory.DERProgramStore, string)
 
 func mkProgram(mRID, description string, primacy uint8) sep2.DERProgram {
 	return sep2.DERProgram{
-		MRID:        mRID,
-		Description: description,
-		Primacy:     primacy,
+		IdentifiedObject: sep2.IdentifiedObject{MRID: mRID, Description: description},
+		Primacy:          primacy,
 	}
 }
 

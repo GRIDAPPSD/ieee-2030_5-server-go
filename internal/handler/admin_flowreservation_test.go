@@ -118,7 +118,7 @@ func (f *frFixture) request(s frqSpec) {
 	f.t.Helper()
 	frq := sep2.FlowReservationRequest{
 		Resource:          sep2.Resource{Href: "/edev/" + s.edev + "/frq/" + s.id},
-		MRID:              s.mrid,
+		IdentifiedObject:  sep2.IdentifiedObject{MRID: s.mrid},
 		CreationTime:      s.created,
 		IntervalRequested: s.interval,
 		EnergyRequested:   s.energy,
@@ -148,7 +148,7 @@ func (f *frFixture) response(s frpSpec) {
 	frp := sep2.FlowReservationResponse{
 		Event: sep2.Event{
 			SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/" + s.edev + "/frp/" + s.id}},
-			MRID:                 s.mrid,
+			IdentifiedObject:     sep2.IdentifiedObject{MRID: s.mrid},
 			CreationTime:         s.created,
 			Interval:             s.interval,
 		},
@@ -183,7 +183,7 @@ func (f *frFixture) control(s ctrlSpec) {
 	ctrl := sep2.DERControl{
 		RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{
 			SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: href}},
-			MRID:                 s.mrid,
+			IdentifiedObject:     sep2.IdentifiedObject{MRID: s.mrid},
 			CreationTime:         s.created,
 			Interval:             &s.window,
 		}},

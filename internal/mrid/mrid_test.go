@@ -188,3 +188,23 @@ func TestIsAllFF(t *testing.T) {
 		})
 	}
 }
+
+func TestDerived_SameKeySameMRIDAndWellFormed(t *testing.T) {
+	a, err := Derived("/edev/1/fsa/2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Derived("/edev/1/fsa/2", nil)
+	c, _ := Derived("/edev/1/fsa/3", nil)
+	if len(a) != 32 || a != strings.ToUpper(a) {
+		t.Errorf("Derived = %q, want 32 uppercase hex digits", a)
+	}
+	if a != b || a == c {
+		t.Errorf("same key %q vs %q, other key %q", a, b, c)
+	}
+	pen := uint32(0xABCD1234)
+	p, _ := Derived("k", &pen)
+	if !strings.HasSuffix(p, "ABCD1234") {
+		t.Errorf("Derived with PEN = %q, want low 32 bits ABCD1234", p)
+	}
+}

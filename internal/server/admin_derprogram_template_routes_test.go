@@ -27,7 +27,7 @@ const (
 func templateRouteConfig(t *testing.T) adminplane.Config {
 	t.Helper()
 	stores := newTestStores()
-	if err := stores.AdminFSAs.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+	if err := stores.AdminFSAs.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-A"}}); err != nil {
 		t.Fatal(err)
 	}
 	return adminplane.Config{

@@ -183,7 +183,7 @@ func TestCreateAdminFSA_InvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
 func TestCreateAdminFSA_DuplicateMRID_409(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fsas", strings.NewReader(
 		`{"description":"dup","mRID":"fsa-1"}`))
@@ -200,8 +200,8 @@ func TestListAdminFSAs(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-a", sep2.FunctionSetAssignments{MRID: "fsa-a", Description: "a"})
-	_ = h.AdminFSAs.Create(ctx, "fsa-b", sep2.FunctionSetAssignments{MRID: "fsa-b", Description: "b"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-a", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-a", Description: "a"}})
+	_ = h.AdminFSAs.Create(ctx, "fsa-b", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-b", Description: "b"}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/fsas", nil)
 	w := httptest.NewRecorder()
@@ -238,8 +238,8 @@ func TestGetAdminFSA_Happy(t *testing.T) {
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
 	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{
-		Resource: sep2.Resource{Href: "/api/fsas/fsa-1"},
-		MRID:     "fsa-1", Description: "hello",
+		Resource:         sep2.Resource{Href: "/api/fsas/fsa-1"},
+		IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1", Description: "hello"},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/fsas/fsa-1", nil)
@@ -261,7 +261,7 @@ func TestGetAdminFSA_Happy(t *testing.T) {
 func TestDeleteAdminFSA_204(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/fsas/fsa-1", nil)
 	req.SetPathValue("id", "fsa-1")
@@ -288,7 +288,7 @@ func TestDeleteAdminFSA_InUse_409(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	_ = h.AdminFSAs.AttachProgram(ctx, "fsa-1", "/p/1")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/fsas/fsa-1", nil)
@@ -306,7 +306,7 @@ func TestAttachProgram_Happy(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	h.DERPrograms.(*stubPrograms).known["/edev/dev-A/fsa/fsa-1/derp/p1"] = true
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fsas/fsa-1/programs", strings.NewReader(
@@ -326,7 +326,7 @@ func TestAttachProgram_Happy(t *testing.T) {
 func TestAttachProgram_ProgramNotFound_404(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fsas/fsa-1/programs", strings.NewReader(
 		`{"programHref":"/ghost"}`))
@@ -358,7 +358,7 @@ func TestAttachProgram_Duplicate_409(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	h.DERPrograms.(*stubPrograms).known["/p/1"] = true
 	_ = h.AdminFSAs.AttachProgram(ctx, "fsa-1", "/p/1")
 
@@ -375,7 +375,7 @@ func TestAttachProgram_Duplicate_409(t *testing.T) {
 func TestAttachProgram_EmptyHref_400(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fsas/fsa-1/programs", strings.NewReader(`{}`))
 	req.SetPathValue("id", "fsa-1")
@@ -403,7 +403,7 @@ func TestAttachProgram_InvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
 	})
 
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/fsas/fsa-1/programs", strings.NewReader(
 		`{"programHref":"/p/1","`+marker+`":1}`))
@@ -428,7 +428,7 @@ func TestDetachProgram_Happy(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	_ = h.AdminFSAs.AttachProgram(ctx, "fsa-1", "/p/1")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/fsas/fsa-1/programs?href=%2Fp%2F1", nil)
@@ -443,7 +443,7 @@ func TestDetachProgram_Happy(t *testing.T) {
 func TestDetachProgram_MissingHref_400(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/fsas/fsa-1/programs", nil)
 	req.SetPathValue("id", "fsa-1")
@@ -457,7 +457,7 @@ func TestDetachProgram_MissingHref_400(t *testing.T) {
 func TestDetachProgram_NotAttached_404(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/fsas/fsa-1/programs?href=%2Fnever", nil)
 	req.SetPathValue("id", "fsa-1")
@@ -474,7 +474,7 @@ func TestAssignDeviceFSA_Happy(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1", Description: "solar"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1", Description: "solar"}})
 	h.EndDevices.(*stubEndDevices).devs["dev-A"] = sep2.EndDevice{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev-A"}},
 	}
@@ -508,7 +508,7 @@ func TestAssignDeviceFSA_Happy(t *testing.T) {
 func TestAssignDeviceFSA_DeviceMissing_404(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/devices/ghost/fsa-assignment", strings.NewReader(
 		`{"fsaHref":"/api/fsas/fsa-1"}`))
@@ -541,7 +541,7 @@ func TestAssignDeviceFSA_Duplicate_409(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	h.EndDevices.(*stubEndDevices).devs["dev-A"] = sep2.EndDevice{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev-A"}},
 	}
@@ -617,7 +617,7 @@ func TestUnassignDeviceFSA_Happy(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	_ = h.AdminFSAs.AssignDevice(ctx, "fsa-1", "dev-A")
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -637,7 +637,7 @@ func TestUnassignDeviceFSA_Happy(t *testing.T) {
 func TestUnassignDeviceFSA_NotAssigned_404(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/devices/dev-A/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-1", nil)
@@ -681,8 +681,8 @@ func TestTopology_FullTree(t *testing.T) {
 		},
 	}}
 	ctx := context.Background()
-	_ = adminFSAs.Create(ctx, "fsa-solar", sep2.FunctionSetAssignments{MRID: "fsa-solar", Description: "Solar"})
-	_ = adminFSAs.Create(ctx, "fsa-wind", sep2.FunctionSetAssignments{MRID: "fsa-wind", Description: "Wind template"})
+	_ = adminFSAs.Create(ctx, "fsa-solar", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-solar", Description: "Solar"}})
+	_ = adminFSAs.Create(ctx, "fsa-wind", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-wind", Description: "Wind template"}})
 	_ = adminFSAs.AttachProgram(ctx, "fsa-solar", "/p/solar-1")
 	_ = adminFSAs.AssignDevice(ctx, "fsa-solar", "dev-A")
 
@@ -781,7 +781,7 @@ func TestAssignDeviceFSA_NilDeviceFSAs_StillRecords(t *testing.T) {
 	h := newAdminFSAHandler(t)
 	h.DeviceFSAs = nil
 	ctx := context.Background()
-	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 	h.EndDevices.(*stubEndDevices).devs["dev-A"] = sep2.EndDevice{}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/devices/dev-A/fsa-assignment", strings.NewReader(
@@ -863,7 +863,7 @@ func TestAdminFSAHandlers_EmptyIDPath(t *testing.T) {
 func TestAdminFSAHandlers_InvalidJSONBody(t *testing.T) {
 	t.Parallel()
 	h := newAdminFSAHandler(t)
-	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{IdentifiedObject: sep2.IdentifiedObject{MRID: "fsa-1"}})
 
 	tests := []struct {
 		name string

@@ -25,7 +25,7 @@ func put(t *testing.T, s *memory.ScopedStore[sep2.MirrorMeterReading], mupID str
 	t.Helper()
 	id := fmt.Sprintf("%020d", nanos)
 	v := int64(1000)
-	m := sep2.MirrorMeterReading{MRID: mrid, LastUpdateTime: time.Unix(0, nanos).Unix(), ReadingType: rt, Reading: &sep2.Reading{Value: &v}}
+	m := sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: mrid}, LastUpdateTime: time.Unix(0, nanos).Unix(), ReadingType: rt, Reading: &sep2.Reading{Value: &v}}
 	m.Href = "/mup/" + mupID + "/mr/" + id
 	if err := s.Create(context.Background(), mupID, id, m); err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestSweep_KeepsOnlyTypedRecordOfSurvivingSeries(t *testing.T) {
 // it is left and the sweep goes on.
 func TestSweep_LeavesUnaddressableRecord(t *testing.T) {
 	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
-	m := sep2.MirrorMeterReading{MRID: "W", LastUpdateTime: sweepNow.Unix() - 40*3600}
+	m := sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: "W"}, LastUpdateTime: sweepNow.Unix() - 40*3600}
 	m.Href = "/mup/2/mr/x"
 	if err := s.Create(context.Background(), "1", "x", m); err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestSweep_CapIsPerSeries(t *testing.T) {
 func inlineMirror(t *testing.T, id string, inline ...sep2.MirrorMeterReading) *memory.Store[sep2.MirrorUsagePoint] {
 	t.Helper()
 	mups := memory.NewStore[sep2.MirrorUsagePoint]()
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, MirrorMeterReading: inline}
+	mup := sep2.MirrorUsagePoint{IdentifiedObject: sep2.IdentifiedObject{MRID: "MUP" + id}, MirrorMeterReading: inline}
 	mup.Href = "/mup/" + id
 	if err := mups.Create(context.Background(), id, mup); err != nil {
 		t.Fatal(err)
@@ -265,7 +265,7 @@ func TestSweep_InlineReadingsInTypeRule(t *testing.T) {
 			typed := put(t, s, "1", secondsAgo(30*3600, 0), "W", watts())
 			r := defaults()
 			r.Readings = s
-			r.Mirrors = inlineMirror(t, "1", sep2.MirrorMeterReading{MRID: "W", ReadingType: tc.inlineRT})
+			r.Mirrors = inlineMirror(t, "1", sep2.MirrorMeterReading{IdentifiedObject: sep2.IdentifiedObject{MRID: "W"}, ReadingType: tc.inlineRT})
 			if _, err := r.Sweep(context.Background(), sweepNow); err != nil {
 				t.Fatal(err)
 			}
@@ -306,10 +306,10 @@ func TestSweep_FreshMRIDPerReadingIsCapped(t *testing.T) {
 		nanos := secondsAgo(3600, int64(i))
 		ids[i] = fmt.Sprintf("%020d", nanos)
 		m := sep2.MirrorMeterReading{
-			MRID:           fmt.Sprintf("FRESH%08d", i),
-			LastUpdateTime: time.Unix(0, nanos).Unix(),
-			Reading:        &sep2.Reading{Value: &v},
-			ReadingType:    &sep2.ReadingType{Uom: &u, FlowDirection: &dir},
+			IdentifiedObject: sep2.IdentifiedObject{MRID: fmt.Sprintf("FRESH%08d", i)},
+			LastUpdateTime:   time.Unix(0, nanos).Unix(),
+			Reading:          &sep2.Reading{Value: &v},
+			ReadingType:      &sep2.ReadingType{Uom: &u, FlowDirection: &dir},
 		}
 		m.Href = "/mup/1/mr/" + ids[i]
 		if err := s.Create(context.Background(), "1", ids[i], m); err != nil {

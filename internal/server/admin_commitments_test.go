@@ -68,7 +68,7 @@ func commitmentsFixture(t *testing.T) (http.Handler, *server.Stores, int64) {
 		frp := sep2.FlowReservationResponse{
 			Event: sep2.Event{
 				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev/frp/" + id}},
-				MRID:                 "R-" + id, CreationTime: now - 50, Interval: &sep2.DateTimeInterval{Start: start, Duration: 3600},
+				IdentifiedObject:     sep2.IdentifiedObject{MRID: "R-" + id}, CreationTime: now - 50, Interval: &sep2.DateTimeInterval{Start: start, Duration: 3600},
 			},
 			EnergyAvailable: &sep2.SignedRealEnergy{Value: 1000}, PowerAvailable: power, Subject: "M-" + id,
 		}
@@ -84,7 +84,7 @@ func commitmentsFixture(t *testing.T) (http.Handler, *server.Stores, int64) {
 		ctrl := sep2.DERControl{
 			RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{
 				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev/fsa/1/derp/1/derc/" + id}},
-				MRID:                 "C-" + id, CreationTime: now - 60, Interval: &sep2.DateTimeInterval{Start: start, Duration: 600},
+				IdentifiedObject:     sep2.IdentifiedObject{MRID: "C-" + id}, CreationTime: now - 60, Interval: &sep2.DateTimeInterval{Start: start, Duration: 600},
 			}},
 			DERControlBase: &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: target}},
 		}

@@ -3,10 +3,10 @@ package dercontrol_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -37,6 +37,7 @@ func TestEventActive_Boundaries(t *testing.T) {
 		{"stamped cancelled", ev(now-5, 600, now-10, &sep2.EventStatus{CurrentStatus: sep2.EventStatusCancelled}), false},
 		{"stamped superseded", ev(now-5, 600, now-10, &sep2.EventStatus{CurrentStatus: sep2.EventStatusSuperseded}), false},
 		{"stamped active", ev(now-5, 600, now-10, active), true},
+		{"stamped active, future start", ev(now+100, 600, now-10, active), true},
 	}
 	for _, tc := range cases {
 		if got := dercontrol.EventActive(tc.ev, now); got != tc.want {
@@ -50,7 +51,7 @@ func TestEventActive_Boundaries(t *testing.T) {
 func TestActiveStore_FiltersBeforePaging(t *testing.T) {
 	t.Parallel()
 	inner := memory.NewScopedStore[sep2.DERControl]()
-	now := time.Now().Unix()
+	now := sep2time.Now().Unix()
 	seed := func(id string, start int64, dur uint32) {
 		c := sep2.DERControl{DERControlBase: &sep2.DERControlBase{}}
 		c.Href = "/edev/e/fsa/f/derp/p/derc/" + id
@@ -63,6 +64,9 @@ func TestActiveStore_FiltersBeforePaging(t *testing.T) {
 	}
 	seed("a", now-100, 3600)
 	seed("old", now-9000, 10)
+	// Sorts before every active id, so a page cut before the filter would
+	// spend its one slot on it and return nothing.
+	seed("0expired", now-9000, 10)
 	seed("b", now-50, 3600)
 	seed("future", now+500, 60)
 
@@ -78,6 +82,13 @@ func TestActiveStore_FiltersBeforePaging(t *testing.T) {
 	}
 	if page.All != 2 || page.Results != 1 || len(page.Items) != 1 {
 		t.Fatalf("page all=%d results=%d items=%d, want 2, 1, 1", page.All, page.Results, len(page.Items))
+	}
+	first, err := s.List(ctx, "e/f/p", store.ListOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.All != 2 || first.Results != 1 || len(first.Items) != 1 || first.Items[0].MRID != "a" {
+		t.Fatalf("first page all=%d results=%d items=%+v, want 2, 1, the control a", first.All, first.Results, first.Items)
 	}
 	whole, err := s.List(ctx, "e/f/p", store.ListOptions{Unbounded: true})
 	if err != nil || whole.All != 2 || whole.Results != 2 {

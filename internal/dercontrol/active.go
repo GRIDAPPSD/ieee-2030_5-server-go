@@ -17,7 +17,7 @@ import (
 // ev is read as a store serves it, so a store wrapped by
 // [NewDerivedStatusStore] hands this its derived cancel and supersede.
 func EventActive(ev *sep2.Event, now int64) bool {
-	if ev.Interval == nil || IntervalEnded(ev.Interval, now) {
+	if intervalOver(ev.Interval, now) {
 		return false
 	}
 	if ev.EventStatus != nil {

@@ -11,13 +11,15 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // This file walks a live IEEE 2030.5 server against the normative WADL.
@@ -782,14 +784,14 @@ func seedSet() []seed {
 				if err := s.FSAs.Create(ctx, dev, "1", fsa); err != nil {
 					return err
 				}
-				prog := sep2.DERProgram{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD2", Description: "wadl sweep derp", Primacy: 1}
-				prog.Href = progHref
-				prog.DERControlListLink = &sep2.ListLink{Href: progHref + "/derc"}
+				prog := fsaprogram.CopyProgram(dev, "1", memory.ProgramTemplate{
+					ID: "1", MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD2", Description: "wadl sweep derp", Primacy: 1,
+				})
 				prog.DefaultDERControlLink = &sep2.Link{Href: coreder.DefaultHref(progHref)}
 				if err := s.DERPrograms.Create(ctx, dev, "1", prog); err != nil {
 					return err
 				}
-				now := time.Now().Unix()
+				now := sep2time.Now().Unix()
 				ctrl := sep2.DERControl{DERControlBase: &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: 1}}}
 				ctrl.MRID = "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD3"
 				ctrl.Href = progHref + "/derc/1"

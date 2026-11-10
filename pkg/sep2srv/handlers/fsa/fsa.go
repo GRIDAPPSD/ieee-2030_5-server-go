@@ -11,6 +11,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -30,8 +31,34 @@ func BuildFSAList(href string, result store.ListResult[sep2.FunctionSetAssignmen
 	}
 }
 
-// HandleFSA returns a handler for GET /edev/{id}/fsa/{fsaId}.
-func HandleFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) http.HandlerFunc {
+// servedLinks returns fsa with only the links to families wired serves. The
+// DERProgram list is mounted with the DER family, so its link goes when that
+// family is not wired (IEEE 2030.5-2018 section 4.4).
+func servedLinks(fsa sep2.FunctionSetAssignments, wired routefamily.Wired) sep2.FunctionSetAssignments {
+	if fsa.DERProgramListLink == nil || (wired != nil && wired(routefamily.AnchorDERs)) {
+		return fsa
+	}
+	fsa = fsa.Copy()
+	fsa.DERProgramListLink = nil
+	return fsa
+}
+
+// ListBuilder returns a list builder for the FSA list route that links only
+// the families wired serves.
+func ListBuilder(wired routefamily.Wired) func(string, store.ListResult[sep2.FunctionSetAssignments], uint32) sep2.FunctionSetAssignmentsList {
+	return func(href string, result store.ListResult[sep2.FunctionSetAssignments], pollRate uint32) sep2.FunctionSetAssignmentsList {
+		items := make([]sep2.FunctionSetAssignments, len(result.Items))
+		for i, item := range result.Items {
+			items[i] = servedLinks(item, wired)
+		}
+		result.Items = items
+		return BuildFSAList(href, result, pollRate)
+	}
+}
+
+// HandleFSA returns a handler for GET /edev/{id}/fsa/{fsaId} that links only
+// the families wired serves.
+func HandleFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments], wired routefamily.Wired) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
@@ -51,6 +78,7 @@ func HandleFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) http.Han
 						DERProgramListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, fsaID)},
 					},
 				}
+				defaultFSA = servedLinks(defaultFSA, wired)
 				encoding.WriteXML(w, http.StatusOK, &defaultFSA)
 				return
 			}
@@ -58,6 +86,7 @@ func HandleFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) http.Han
 			return
 		}
 
+		fsa = servedLinks(fsa, wired)
 		encoding.WriteXML(w, http.StatusOK, &fsa)
 	}
 }

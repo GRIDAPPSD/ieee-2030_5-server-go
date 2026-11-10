@@ -180,7 +180,7 @@ func MintableHrefs() []MintableHref {
 		{"/edev", http.MethodGet, "handlers/dcap.HandleDeviceCapability EndDeviceListLink", "clients enumerate and register EndDevices here"},
 		{"/mup", http.MethodGet, "handlers/dcap.HandleDeviceCapability MirrorUsagePointListLink", "metering clients POST mirrors here"},
 		{"/upt", http.MethodGet, "handlers/dcap.HandleDeviceCapability UsagePointListLink", "server-side metering"},
-		{"/dc", http.MethodGet, "handlers/dcap.HandleDeviceCapability DERProgramListLink", "global DERCurve list"},
+		{"/dc", http.MethodGet, "routefamily.All", "global DERCurve list, not linked from /dcap"},
 		{"/msg", http.MethodGet, "handlers/dcap.HandleDeviceCapability MessagingProgramListLink", "messaging programs"},
 		{"/rsps", http.MethodGet, "handlers/dcap.HandleDeviceCapability ResponseSetListLink", "response sets"},
 		{"/rt", http.MethodGet, "routefamily.All", "ReadingType list, mounted on the top-level mux"},

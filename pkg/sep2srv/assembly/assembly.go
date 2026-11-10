@@ -460,7 +460,7 @@ func BuildProtocolRouter(
 	top := http.NewServeMux()
 
 	protocolMux := newRecordingMux()
-	protocolMux.HandleFunc("GET /dcap", coredcap.HandleDeviceCapability())
+	protocolMux.HandleFunc("GET /dcap", coredcap.HandleDeviceCapability(wiredAnchors(stores), endDeviceCounter(stores, authPolicy.Identity)))
 	protocolMux.HandleFunc("GET /tm", coresep2time.HandleTime(coresep2time.TimeParams{
 		TZOffset:    cfg.TZOffset,
 		DSTOffset:   cfg.DSTOffset,
@@ -649,6 +649,82 @@ func asNotificationURIValidator(n ResourceNotifier) func(context.Context, string
 	return nil
 }
 
+// servedFamily names a function set whose mount and advertised links must
+// agree.
+type servedFamily int
+
+const (
+	famMirrorUsagePoints servedFamily = iota
+	famUsagePoints
+	famMessagingPrograms
+	famResponseSets
+	famDERs
+	famConfiguration
+	famDeviceStatus
+	famPowerStatus
+)
+
+// serves is the one decision whether a family is mounted. The route
+// registrars, the /dcap anchors and the EndDevice link decorators all ask it,
+// so a link can never name a route the server did not mount.
+func (s *Stores) serves(f servedFamily) bool {
+	if s == nil {
+		return false
+	}
+	switch f {
+	case famMirrorUsagePoints:
+		return !store.IsAbsent(s.MirrorUsagePoints)
+	case famUsagePoints:
+		return !store.IsAbsent(s.UsagePoints)
+	case famMessagingPrograms:
+		return !store.IsAbsent(s.MessagingPrograms)
+	case famResponseSets:
+		return !store.IsAbsent(s.ResponseSets)
+	case famDERs:
+		return !store.IsAbsent(s.DERs)
+	case famConfiguration:
+		return !store.IsAbsent(s.Configurations)
+	case famDeviceStatus:
+		return !store.IsAbsent(s.DeviceStatuses)
+	case famPowerStatus:
+		return !store.IsAbsent(s.PowerStatuses)
+	}
+	return false
+}
+
+// wiredAnchors says which anchored route families stores serves, from the
+// [Stores.serves], the test each family's mount gate makes. It is the one
+// place an anchor name meets a family.
+func wiredAnchors(stores *Stores) routefamily.Wired {
+	if stores == nil {
+		return nil
+	}
+	return func(a routefamily.Anchor) bool {
+		switch a {
+		case routefamily.AnchorMirrorUsagePoints:
+			return stores.serves(famMirrorUsagePoints)
+		case routefamily.AnchorUsagePoints:
+			return stores.serves(famUsagePoints)
+		case routefamily.AnchorMessagingPrograms:
+			return stores.serves(famMessagingPrograms)
+		case routefamily.AnchorResponseSets:
+			return stores.serves(famResponseSets)
+		case routefamily.AnchorDERs:
+			return stores.serves(famDERs)
+		}
+		return false
+	}
+}
+
+// endDeviceCounter counts the EndDevices GET /edev lists for the caller, or
+// is nil when there are no stores to count from.
+func endDeviceCounter(stores *Stores, identity identity.Func) coredcap.CallerEndDevices {
+	if stores == nil {
+		return nil
+	}
+	return coreedev.CallerEndDeviceCount(stores.EndDevices, stores.EndDeviceManagers, identity)
+}
+
 // registrationBoundEndDevices returns the EndDevice store the /edev routes
 // must use: one that writes an EndDevice and its Registration as a single
 // act and serves a RegistrationLink only when the record behind it exists.
@@ -703,7 +779,7 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 // exactly when Stores.DERs is non-nil, the condition registerDERRoutes uses to
 // mount GET /edev/{id}/der and the instance routes beneath it.
 func derLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
-	return linkedEndDevices(devs, !store.IsAbsent(stores.DERs), func(devs store.EndDeviceStore) *memory.DERLinkedEndDeviceStore {
+	return linkedEndDevices(devs, stores.serves(famDERs), func(devs store.EndDeviceStore) *memory.DERLinkedEndDeviceStore {
 		return memory.NewDERLinkedEndDeviceStore(devs, stores.DERs)
 	})
 }
@@ -740,9 +816,9 @@ func deviceKeyedCascadeEndDevices(devs store.EndDeviceStore, stores *Stores) sto
 	if store.IsAbsent(devs) {
 		return devs
 	}
-	if store.IsAbsent(stores.Configurations) && store.IsAbsent(stores.DeviceStatuses) &&
-		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) &&
-		store.IsAbsent(stores.DERs) {
+	if !stores.serves(famConfiguration) && !stores.serves(famDeviceStatus) &&
+		!stores.serves(famPowerStatus) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) &&
+		!stores.serves(famDERs) {
 		return devs
 	}
 	if linked, ok := devs.(*memory.DeviceKeyedCascadeEndDeviceStore); ok {
@@ -841,6 +917,25 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 	return memory.NewFlowReservationLinkedEndDeviceStore(devs, stores.FlowReservationRequests, resps)
 }
 
+// singletonLinkedEndDevices returns the EndDevice store the /edev routes must
+// use so every served EndDevice links its Configuration, DeviceStatus and
+// PowerStatus exactly when those routes are mounted.
+//
+// THE GATE IS THE MOUNT GATE: Stores.Configurations, DeviceStatuses and
+// PowerStatuses are the anchors registerNewFunctionSetRoutes tests. Like
+// [flowReservationLinkedEndDevices] it always wraps, so a link a client
+// supplied is cleared when none of the three is served.
+func singletonLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
+	if store.IsAbsent(devs) {
+		return devs
+	}
+	return memory.NewSingletonLinkedEndDeviceStore(devs, memory.SingletonLinks{
+		Configuration: stores.serves(famConfiguration),
+		DeviceStatus:  stores.serves(famDeviceStatus),
+		PowerStatus:   stores.serves(famPowerStatus),
+	})
+}
+
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev
 // routes and the read handle serve from: registration-bound,
 // LogEventList-linked, DERList-linked, device-keyed-cascade-wrapped,
@@ -861,7 +956,7 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 // RegistrationLink, LogEventListLink and flow reservation link derivations
 // make no difference to it.
 func ownedEndDevices(stores *Stores) store.EndDeviceStore {
-	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(derLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores), stores))
+	return requireEndDevices(singletonLinkedEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(derLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores), stores), stores))
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck, inBandManagementOff bool, refusals func(r *http.Request, caller, reason string)) {
@@ -911,10 +1006,11 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 
 	// FSA endpoints
 	if !store.IsAbsent(stores.FSAs) {
+		wired := wiredAnchors(stores)
 		mux.HandleFunc("GET /edev/{id}/fsa", scopedListHandler[sep2.FunctionSetAssignments, sep2.FunctionSetAssignmentsList](
-			stores.FSAs, "id", store.SortByIDAsc, corefsa.BuildFSAList, 900,
+			stores.FSAs, "id", store.SortByIDAsc, corefsa.ListBuilder(wired), 900,
 		))
-		mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(stores.FSAs))
+		mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(stores.FSAs, wired))
 	}
 
 	// Subscription endpoints
@@ -935,7 +1031,7 @@ func lfdiProviderFor(authPolicy AuthPolicy) coremetering.LFDIProvider {
 }
 
 func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, postRateProvider coremetering.PostRateProvider) {
-	if store.IsAbsent(stores.MirrorUsagePoints) {
+	if !stores.serves(famMirrorUsagePoints) {
 		return
 	}
 	// MirrorMeterReadings has no gate of its own: it is mounted on the
@@ -1003,7 +1099,7 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 }
 
 func registerDERRoutes(mux routeRegistrar, stores *Stores) {
-	if store.IsAbsent(stores.DERs) {
+	if !stores.serves(famDERs) {
 		return
 	}
 
@@ -1438,7 +1534,7 @@ func scopedResourceHandler[T store.Copier[T]](
 }
 
 func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy) {
-	if store.IsAbsent(stores.UsagePoints) {
+	if !stores.serves(famUsagePoints) {
 		return
 	}
 	// None of these three has a gate of its own: all are mounted on the
@@ -1470,11 +1566,11 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 }
 
 func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, deviceLogResolver *devicelog.CachingResolver, notifier ResourceNotifier) {
-	if !store.IsAbsent(stores.Configurations) {
+	if stores.serves(famConfiguration) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 	}
-	if !store.IsAbsent(stores.DeviceStatuses) {
+	if stores.serves(famDeviceStatus) {
 		mux.HandleFunc("GET /edev/{id}/dstat", coresingleton.HandleSingletonGetPut[sep2.DeviceStatus](
 			stores.DeviceStatuses,
 			func(r *http.Request) string { return r.PathValue("id") },
@@ -1534,12 +1630,12 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/lel/{lelId}", logEventInstance)
 		mux.HandleFunc("DELETE /edev/{id}/lel/{lelId}", logEventInstance)
 	}
-	if !store.IsAbsent(stores.PowerStatuses) {
+	if stores.serves(famPowerStatus) {
 		mux.HandleFunc("GET /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
 		mux.HandleFunc("PUT /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
 	}
 
-	if !store.IsAbsent(stores.MessagingPrograms) {
+	if stores.serves(famMessagingPrograms) {
 		// TextMessages has no gate of its own: it is mounted on the strength
 		// of MessagingPrograms (see miswired.go).
 		textMessages := requireScoped(stores.TextMessages, "TextMessages")
@@ -1640,7 +1736,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/frp/{frpId}", frpInstance)
 	}
 
-	if !store.IsAbsent(stores.ResponseSets) {
+	if stores.serves(famResponseSets) {
 		// Responses has no gate of its own: it is mounted on the strength of
 		// ResponseSets, and every DERControl this server emits carries a
 		// replyTo into it (see miswired.go).

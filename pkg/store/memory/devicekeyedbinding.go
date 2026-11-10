@@ -22,8 +22,8 @@ import (
 //
 // Unlike [FlowReservationLinkedEndDeviceStore] and
 // [LogEventLinkedEndDeviceStore], this type advertises no link and
-// overrides no read path: core models no DeviceStatusLink, PowerStatusLink
-// or ConfigurationLink at all, and FunctionSetAssignmentsListLink is
+// overrides no read path: the DeviceStatus, PowerStatus and Configuration
+// links belong to [SingletonLinkedEndDeviceStore], and FunctionSetAssignmentsListLink is
 // stamped unconditionally by the POST /edev handler rather than derived
 // here. There is nothing for a decorator to get right or wrong on the read
 // side, so this type only ever touches Delete.

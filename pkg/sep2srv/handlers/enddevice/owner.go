@@ -230,6 +230,28 @@ func HandleEndDeviceListForCaller(s store.EndDeviceStore, managers store.EndDevi
 	}
 }
 
+// CallerEndDeviceCount returns a function that counts what
+// [HandleEndDeviceListForCaller] lists for the request's caller, through the
+// same resolution, so a link advertising that list carries the same all. ok is
+// false for a request with no identity.
+func CallerEndDeviceCount(s store.EndDeviceStore, managers store.EndDeviceManagementStore, identity IdentityFunc) func(r *http.Request) (uint32, bool, error) {
+	reported := &onceLog{}
+	return func(r *http.Request) (uint32, bool, error) {
+		if identity == nil || store.IsAbsent(s) {
+			return 0, false, nil
+		}
+		callerLFDI, _, ok := identity(r.Context())
+		if !ok || callerLFDI == "" {
+			return 0, false, nil
+		}
+		devices, err := callerDevices(r, s, managers, callerLFDI, reported)
+		if err != nil {
+			return 0, false, err
+		}
+		return uint32(len(devices)), true, nil
+	}
+}
+
 // onceLog writes a line for a key only the first time the key is seen, so a
 // list a manager polls does not repeat the same skip on every request.
 type onceLog struct {

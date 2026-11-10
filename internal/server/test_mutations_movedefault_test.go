@@ -29,7 +29,7 @@ func (f failingDelete) Delete(ctx context.Context, parent, id string) error {
 func TestMoveDefaultControl_FailedDeleteUndoesTheCreate(t *testing.T) {
 	ctx := context.Background()
 	inner := memory.NewScopedStore[sep2.DefaultDERControl]()
-	dd := sep2.DefaultDERControl{MRID: "DD-1"}
+	dd := sep2.DefaultDERControl{IdentifiedObject: sep2.IdentifiedObject{MRID: "DD-1"}}
 	dd.Href = "/edev/e/fsa/old/derp/p/dderc"
 	if err := inner.Create(ctx, "e/old/p", "default", dd); err != nil {
 		t.Fatalf("seed: %v", err)

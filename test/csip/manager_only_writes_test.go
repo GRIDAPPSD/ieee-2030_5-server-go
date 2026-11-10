@@ -153,34 +153,25 @@ func TestManagerOnlyWrites_PlainDeviceIsRefusedAndChangesNothing(t *testing.T) {
 	}
 }
 
-func TestManagerOnlyWrites_ManagerMakesThemAndAnAbsentDeviceIs404(t *testing.T) {
+const managedDPath = "/edev/managed-d"
+
+func TestManagerOnlyWrites_ManagerMakesThemOnItsOwnDevice(t *testing.T) {
 	f := newManagerWritesFixture(t)
 	ctx := context.Background()
-	aID := strings.TrimPrefix(f.aEdevPath, "/edev/")
+	const dID = "managed-d"
 
-	if status, body, hdr := send(t, f.mgr, f.srv, http.MethodPut, f.aEdevPath+"/rg", regPutBody); status != http.StatusCreated || hdr.Get("Location") != f.aEdevPath+"/rg" {
+	if status, body, hdr := send(t, f.mgr, f.srv, http.MethodPut, managedDPath+"/rg", regPutBody); status != http.StatusCreated || hdr.Get("Location") != managedDPath+"/rg" {
 		t.Fatalf("manager PUT rg: status %d location %q body %s, want 201 at the registration", status, hdr.Get("Location"), body)
 	}
-	reg, err := f.srv.Stores.Registrations.Get(ctx, aID)
-	if err != nil || reg.PIN != 654321 || reg.Href != f.aEdevPath+"/rg" {
-		t.Errorf("stored registration = %+v, err %v; want pIN 654321 at %s", reg, err, f.aEdevPath+"/rg")
+	reg, err := f.srv.Stores.Registrations.Get(ctx, dID)
+	if err != nil || reg.PIN != 654321 || reg.Href != managedDPath+"/rg" {
+		t.Errorf("stored registration = %+v, err %v; want pIN 654321 at %s", reg, err, managedDPath+"/rg")
 	}
 
-	// The device the manager changed reads its new pIN as itself.
-	status, body, _ := send(t, f.a, f.srv, http.MethodGet, f.aEdevPath+"/rg", "")
-	var got sep2.Registration
-	if status != http.StatusOK || xml.Unmarshal([]byte(body), &got) != nil || got.PIN != 654321 {
-		t.Errorf("device A GET rg: status %d pIN %d, want 200 and 654321", status, got.PIN)
-	}
-
-	if status, _, _ := send(t, f.mgr, f.srv, http.MethodPut, "/edev/no-such-device/rg", regPutBody); status != http.StatusNotFound {
-		t.Errorf("manager PUT rg on an absent device: status %d, want 404", status)
-	}
-
-	if status, body, _ := send(t, f.mgr, f.srv, http.MethodDelete, f.aEdevPath+"/rg", ""); status != http.StatusOK || !strings.Contains(body, "654321") {
+	if status, body, _ := send(t, f.mgr, f.srv, http.MethodDelete, managedDPath+"/rg", ""); status != http.StatusOK || !strings.Contains(body, "654321") {
 		t.Errorf("manager DELETE rg: status %d body %s, want 200 with the removed record", status, body)
 	}
-	if _, err := f.srv.Stores.Registrations.Get(ctx, aID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.srv.Stores.Registrations.Get(ctx, dID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("registration after the manager's DELETE: err %v, want not found", err)
 	}
 
@@ -190,6 +181,62 @@ func TestManagerOnlyWrites_ManagerMakesThemAndAnAbsentDeviceIs404(t *testing.T) 
 	}
 	if n, _ := f.srv.Stores.UsagePoints.Count(ctx); n != 1 {
 		t.Errorf("%d usage points after the manager's POST, want 1", n)
+	}
+}
+
+// A manager acts only for devices it has a live pair with: the manager of
+// device D cannot change the PIN of device A, nor of one that does not exist,
+// and the refusals leave the stored registration untouched.
+func TestManagerOnlyWrites_ManagerCannotActForAnotherDevice(t *testing.T) {
+	f := newManagerWritesFixture(t)
+	ctx := context.Background()
+	aID := strings.TrimPrefix(f.aEdevPath, "/edev/")
+	if err := f.srv.Stores.Registrations.Create(ctx, aID, sep2.Registration{
+		Resource: sep2.Resource{Href: f.aEdevPath + "/rg"}, DateTimeRegistered: 1785700000, PIN: 123455, PollRate: 900,
+	}); err != nil {
+		t.Fatalf("seed registration: %v", err)
+	}
+
+	for _, w := range []struct{ method, path, body string }{
+		{http.MethodPut, f.aEdevPath + "/rg", regPutBody},
+		{http.MethodDelete, f.aEdevPath + "/rg", ""},
+		{http.MethodPut, "/edev/no-such-device/rg", regPutBody},
+	} {
+		if status, _, _ := send(t, f.mgr, f.srv, w.method, w.path, w.body); status != http.StatusForbidden {
+			t.Errorf("manager of D: %s %s: status %d, want 403", w.method, w.path, status)
+		}
+	}
+	reg, err := f.srv.Stores.Registrations.Get(ctx, aID)
+	if err != nil || reg.PIN != 123455 {
+		t.Errorf("device A registration after the refused writes = %+v, err %v; want the original pIN 123455", reg, err)
+	}
+}
+
+// A pair whose device record is gone grants nothing: not the write on that
+// device, and not POST /upt.
+func TestManagerOnlyWrites_StalePairGrantsNothing(t *testing.T) {
+	f := newManagerWritesFixture(t)
+	ctx := context.Background()
+
+	if err := f.srv.Stores.EndDevices.Delete(ctx, "managed-d"); err != nil {
+		t.Fatalf("remove the managed device's record: %v", err)
+	}
+	if managed, err := f.srv.Stores.EndDeviceManagers.ManagedBy(ctx, f.mgrLFDI); err != nil || len(managed) != 1 {
+		t.Fatalf("control: the pair must still exist after the record is removed, got %v (err %v)", managed, err)
+	}
+	for _, w := range []struct{ method, path, body string }{
+		{http.MethodPut, managedDPath + "/rg", regPutBody},
+		{http.MethodPost, "/upt", uptBody},
+	} {
+		if status, _, _ := send(t, f.mgr, f.srv, w.method, w.path, w.body); status != http.StatusForbidden {
+			t.Errorf("manager with only a stale pair: %s %s: status %d, want 403", w.method, w.path, status)
+		}
+	}
+	if _, err := f.srv.Stores.Registrations.Get(ctx, "managed-d"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a registration exists for the removed device: err %v, want not found", err)
+	}
+	if n, _ := f.srv.Stores.UsagePoints.Count(ctx); n != 0 {
+		t.Errorf("%d usage points after the refused POST, want 0", n)
 	}
 }
 

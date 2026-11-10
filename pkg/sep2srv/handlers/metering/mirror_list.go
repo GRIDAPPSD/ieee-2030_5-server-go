@@ -31,13 +31,8 @@ func HandleMirrorUsagePointList(
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
-		if lfdiProvider == nil {
-			http.Error(w, "identity required", http.StatusForbidden)
-			return
-		}
-		lfdi, ok := lfdiProvider(r.Context())
-		if !ok || lfdi == "" {
-			http.Error(w, "identity required", http.StatusForbidden)
+		lfdi, ok := lfdiProvider.require(w, r)
+		if !ok {
 			return
 		}
 
@@ -76,24 +71,6 @@ func visibleMirrors(ctx context.Context, s store.ResourceStore[sep2.MirrorUsageP
 // ids are the tails of the items' hrefs, so "all" is the size of the list the
 // caller can see.
 func pageOf(visible []sep2.MirrorUsagePoint, opts store.ListOptions) store.ListResult[sep2.MirrorUsagePoint] {
-	items := visible
-	if opts.After != "" {
-		start := len(items)
-		for i, mup := range items {
-			if strings.TrimPrefix(mup.Href, "/mup/") > opts.After {
-				start = i
-				break
-			}
-		}
-		items = items[start:]
-	}
-	if int(opts.Start) >= len(items) {
-		items = nil
-	} else {
-		items = items[opts.Start:]
-	}
-	if int(opts.Limit) < len(items) {
-		items = items[:opts.Limit]
-	}
+	items := paging.Slice(visible, func(m sep2.MirrorUsagePoint) string { return strings.TrimPrefix(m.Href, "/mup/") }, opts)
 	return store.ListResult[sep2.MirrorUsagePoint]{All: uint32(len(visible)), Results: uint32(len(items)), Items: items}
 }

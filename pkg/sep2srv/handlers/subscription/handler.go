@@ -137,42 +137,12 @@ func HandleListSubscriptionsByDevice(subStore *memory.SubscriptionStore, pollRat
 // keys off the storage ID so a's "items strictly after key" semantics
 // stay deterministic when the index order matches ID order.
 func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.ListOptions) store.ListResult[sep2.Subscription] {
-	all := uint32(len(records))
-
-	if opts.After != "" {
-		idx := len(records)
-		for i, rec := range records {
-			if rec.ID > opts.After {
-				idx = i
-				break
-			}
-		}
-		records = records[idx:]
+	result := store.ListResult[sep2.Subscription]{All: uint32(len(records))}
+	for _, rec := range paging.Slice(records, func(r memory.SubscriptionRecord) string { return r.ID }, opts) {
+		result.Items = append(result.Items, rec.Subscription)
 	}
-
-	if opts.Start >= uint32(len(records)) {
-		return store.ListResult[sep2.Subscription]{All: all, Results: 0, Items: nil}
-	}
-	records = records[opts.Start:]
-
-	limit := opts.Limit
-	if limit == 0 {
-		return store.ListResult[sep2.Subscription]{All: all, Results: 0, Items: nil}
-	}
-	if limit > uint32(len(records)) {
-		limit = uint32(len(records))
-	}
-	records = records[:limit]
-
-	items := make([]sep2.Subscription, 0, len(records))
-	for _, rec := range records {
-		items = append(items, rec.Subscription)
-	}
-	return store.ListResult[sep2.Subscription]{
-		All:     all,
-		Results: uint32(len(items)),
-		Items:   items,
-	}
+	result.Results = uint32(len(result.Items))
+	return result
 }
 
 // HandleCreateSubscription returns a handler for POST /edev/{id}/sub.

@@ -318,13 +318,8 @@ func HandleUsagePointList(s store.ResourceStore[sep2.UsagePoint], managers store
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
-		if lfdiProvider == nil {
-			http.Error(w, "identity required", http.StatusForbidden)
-			return
-		}
-		lfdi, ok := lfdiProvider(r.Context())
-		if !ok || lfdi == "" {
-			http.Error(w, "identity required", http.StatusForbidden)
+		lfdi, ok := lfdiProvider.require(w, r)
+		if !ok {
 			return
 		}
 		manager := false

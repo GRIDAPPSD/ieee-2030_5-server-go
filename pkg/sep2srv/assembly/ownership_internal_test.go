@@ -250,7 +250,7 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}":    true,
 	"GET /edev/{id}/rg": false,
 	// Not delegation: a manager certificate makes these through
-	// managerOnlyWrites, on any device.
+	// managerOnlyWrites, on a device it manages.
 	"PUT /edev/{id}/rg":    false,
 	"DELETE /edev/{id}/rg": false,
 	"PUT /edev/{id}":       false,

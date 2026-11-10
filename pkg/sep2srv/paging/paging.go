@@ -2,6 +2,7 @@ package paging
 
 import (
 	"net/url"
+	"slices"
 	"strconv"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -54,4 +55,28 @@ func (p Params) ToListOptions() store.ListOptions {
 		Limit: p.Limit,
 		After: p.After,
 	}
+}
+
+// Slice returns the page of items that o selects, with the stores' own List
+// semantics: a keeps the items whose key sorts strictly after it, s skips that
+// many of the rest, and l caps what remains, so an l of 0 selects nothing. items
+// must already be in ascending key order. The result is nil when the page is
+// empty. Offsets are compared as uint64 and used as slice indices unconverted,
+// so a large s or l cannot wrap.
+func Slice[T any](items []T, key func(T) string, o store.ListOptions) []T {
+	if o.After != "" {
+		i := slices.IndexFunc(items, func(it T) bool { return key(it) > o.After })
+		if i < 0 {
+			return nil
+		}
+		items = items[i:]
+	}
+	if o.Limit == 0 || uint64(o.Start) >= uint64(len(items)) {
+		return nil
+	}
+	items = items[o.Start:]
+	if uint64(o.Limit) < uint64(len(items)) {
+		items = items[:o.Limit]
+	}
+	return items
 }

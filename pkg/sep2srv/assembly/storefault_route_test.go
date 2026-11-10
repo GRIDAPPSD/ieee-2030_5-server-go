@@ -45,6 +45,21 @@ import (
 // several handlers treat as a 400 before any store is touched.
 const faultProbePathValue = "1"
 
+// faultProbeManagedID is the EndDevice the manager-only probes address: the
+// probe identity manages it, and the manager-only check reads it, where the
+// device at faultProbePathValue is the probe identity's own.
+const (
+	faultProbeManagedID   = "managed"
+	faultProbeManagedLFDI = "1122334455667788990011223344556677889900"
+)
+
+// faultProbeManagerOnly names the patterns the manager-only check decides, which
+// are probed at faultProbeManagedID.
+var faultProbeManagerOnly = map[string]bool{
+	"PUT /edev/{id}/rg":    true,
+	"DELETE /edev/{id}/rg": true,
+}
+
 // storeFreeRoutes are the mounted patterns a store failure cannot reach,
 // with the reason each one cannot.
 //
@@ -227,7 +242,7 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 	// The probe identity manages one device, so it is a manager and reaches the
 	// manager-only routes' handlers, where the store fault is injected.
 	managers := memory.NewEndDeviceManagementStore()
-	if err := managers.Assign(context.Background(), testLFDI, "1122334455667788990011223344556677889900"); err != nil {
+	if err := managers.Assign(context.Background(), testLFDI, faultProbeManagedLFDI); err != nil {
 		t.Fatalf("assign the probe manager: %v", err)
 	}
 
@@ -282,6 +297,9 @@ type faultProbeDevice struct {
 func (d faultProbeDevice) ensure(t *testing.T) {
 	t.Helper()
 	seedOwnedDevices(t, d.raw, faultProbePathValue)
+	if _, err := d.raw.Get(context.Background(), faultProbeManagedID); err != nil {
+		seedDevice(t, d.raw, faultProbeManagedID, faultProbeManagedLFDI, "")
+	}
 }
 
 // routePartition is the split of the router's own pattern enumeration into the
@@ -360,11 +378,15 @@ func partitionMountedRoutes(patterns []string, exclusions map[string]string) (ro
 // reached. That refusal is why adding a write route without a probe body fails
 // this test instead of passing it vacuously.
 //
-// It substitutes faultProbePathValue for every wildcard. A caller that needs
+// It substitutes faultProbePathValue for every wildcard, except in the
+// manager-only patterns, which take faultProbeManagedID. A caller that needs
 // a different, stated id (for example a specific EndDevice to compare a
 // manager's answer against its owner's) calls probeRequestForID directly
 // instead of relying on faultProbePathValue's value matching by coincidence.
 func probeRequestFor(base, pattern string) (*http.Request, error) {
+	if faultProbeManagerOnly[pattern] {
+		return probeRequestForID(base, pattern, faultProbeManagedID)
+	}
 	return probeRequestForID(base, pattern, faultProbePathValue)
 }
 

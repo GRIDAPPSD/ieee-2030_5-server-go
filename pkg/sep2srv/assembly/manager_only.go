@@ -1,7 +1,6 @@
 package assembly
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,43 +20,47 @@ var managerOnlyWrites = map[string]bool{
 	"POST /upt":            true,
 }
 
-// callerIsManager reports whether the request's certificate is a manager, by
-// coreedev.IsManager. Without an identity or a management store it is false,
-// so the writes behind it stay refused when the answer cannot be established.
-func (g *ownershipGate) callerIsManager(ctx context.Context) (caller string, manager bool, err error) {
-	caller, ok := g.caller(ctx)
-	if !ok || g.managersAbsent {
-		return caller, false, nil
-	}
-	manager, err = coreedev.IsManager(ctx, g.managers, caller)
-	return caller, manager, err
-}
-
-// decideManagerOnly admits a manager certificate and refuses everything else
-// with 403, before the device is looked at, so a refused caller learns nothing
-// about which devices exist. A manager acts on any device here, not only one it
-// manages: these writes are fleet-wide by design. When the route names a device,
-// an absent one is a 404.
+// decideManagerOnly admits a manager certificate acting for a device it has a
+// live pair with, and refuses everything else with 403. A route that names a
+// device needs that device's current manager; a route that names none (POST
+// /upt) needs at least one pair whose device exists. A device that does not
+// exist is refused like one the caller does not manage, so a manager cannot
+// probe which ids exist. Without an identity or a management store the answer
+// cannot be established and the write stays refused. A store failure is a 500.
 func (g *ownershipGate) decideManagerOnly(r *http.Request, names bool) ownershipVerdict {
 	ctx := r.Context()
-	caller, manager, err := g.callerIsManager(ctx)
+	caller, ok := g.caller(ctx)
 	switch {
-	case err != nil:
-		return ownershipVerdict{decision: ownershipStoreFailed, err: fmt.Errorf("manager-only check: %w", err)}
-	case caller == "":
+	case !ok:
 		return ownershipVerdict{reason: reasonNoIdentity}
-	case !manager:
+	case g.managersAbsent:
 		return ownershipVerdict{caller: caller, reason: reasonNotManagerCert}
-	case !names:
-		return ownershipVerdict{decision: ownershipAllowed, manager: caller}
 	case g.devicesAbsent:
 		return ownershipVerdict{decision: ownershipStoreFailed, err: errors.New("manager-only check has no EndDevice store to read")}
 	}
-	switch _, err := g.devices.Get(ctx, r.PathValue("id")); {
+	if !names {
+		live, err := coreedev.HasLivePair(ctx, g.devices, g.managers, caller)
+		switch {
+		case err != nil:
+			return ownershipVerdict{decision: ownershipStoreFailed, err: fmt.Errorf("manager-only check: %w", err)}
+		case !live:
+			return ownershipVerdict{caller: caller, reason: reasonNotManagerCert}
+		}
+		return ownershipVerdict{decision: ownershipAllowed, manager: caller}
+	}
+	dev, err := g.devices.Get(ctx, r.PathValue("id"))
+	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return ownershipVerdict{decision: ownershipDeviceAbsent, caller: caller, reason: reasonAbsent}
+		return ownershipVerdict{caller: caller, reason: reasonAbsent}
 	case err != nil:
 		return ownershipVerdict{decision: ownershipStoreFailed, err: fmt.Errorf("manager-only check could not read the EndDevice: %w", err)}
+	}
+	manages, err := coreedev.CurrentManagerOwns(ctx, g.managers, dev.LFDI, caller)
+	switch {
+	case err != nil:
+		return ownershipVerdict{decision: ownershipStoreFailed, err: fmt.Errorf("manager-only check could not read the EndDevice's manager: %w", err)}
+	case !manages:
+		return ownershipVerdict{caller: caller, reason: reasonNotManagerCert}
 	}
 	return ownershipVerdict{decision: ownershipAllowed, manager: caller}
 }

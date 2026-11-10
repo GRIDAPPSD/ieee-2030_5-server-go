@@ -216,7 +216,7 @@ var managerWriteAllowlist = map[string]bool{
 }
 
 // managerOnlyWritePatterns names the writes below a record that a manager certificate
-// makes on any device, by the manager-only check (#1263) rather than by
+// makes on a device it manages, by the manager-only check (#1263) rather than by
 // delegation: the owner is refused them, and a manager is not.
 var managerOnlyWritePatterns = map[string]bool{
 	"PUT /edev/{id}/rg":    true,

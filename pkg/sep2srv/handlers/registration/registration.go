@@ -38,7 +38,7 @@ type IdentityFunc = identity.Func
 // EndDevice's LFDI.
 // 404 if the EndDevice or its Registration does not exist.
 // 405 on any non-GET / non-HEAD method.
-func HandleGetRegistration(edevs store.EndDeviceStore, regs store.ResourceStore[sep2.Registration], identity IdentityFunc) http.HandlerFunc {
+func HandleGetRegistration(edevs store.EndDeviceStore, regs store.ResourceStore[sep2.Registration], idFn IdentityFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
@@ -53,9 +53,8 @@ func HandleGetRegistration(edevs store.EndDeviceStore, regs store.ResourceStore[
 
 		// Ownership gate: requesting cert must match the device. Run this
 		// before the store lookups so we don't leak presence-by-timing.
-		lfdi, _, ok := identity(r.Context())
-		if !ok {
-			http.Error(w, "identity required", http.StatusForbidden)
+		lfdi, _, ok := idFn(r.Context())
+		if !identity.Require(w, lfdi, ok) {
 			return
 		}
 

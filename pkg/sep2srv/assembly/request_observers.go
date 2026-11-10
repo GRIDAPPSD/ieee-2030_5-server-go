@@ -172,11 +172,9 @@ func (o deviceLogLookups) registered(ctx context.Context, actor string) (bool, e
 		}
 	}
 	if o.managers != nil {
-		managed, err := o.managers.ManagedBy(ctx, actor)
-		if err != nil {
+		if manages, err := coreedev.IsManager(ctx, o.managers, actor); err != nil {
 			return false, err
-		}
-		if len(managed) > 0 {
+		} else if manages {
 			return true, nil
 		}
 		if _, managed, err := coreedev.ManagerOf(ctx, o.managers, actor); err != nil {

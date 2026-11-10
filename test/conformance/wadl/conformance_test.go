@@ -20,14 +20,15 @@ import (
 // TestMethodModePolicyRatchet logs the new value to use.
 //
 // Measured against the server csiptest boots, with the route set core's
-// assembly registers, on 2026-11-05.
-const outsidePolicyCeiling = 432
+// assembly registers, on 2026-11-05. The manager-only writes go to the device
+// the sweep's manager manages, so they are measured as that manager's own.
+const outsidePolicyCeiling = 430
 
 // outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
 // mode cannot hide behind a fall in another. The values sum to the total.
 var outsidePolicyByMode = map[wadl.Mode]int{
 	wadl.ModeMandatory:  172,
-	wadl.ModeOptional:   64,
+	wadl.ModeOptional:   62,
 	wadl.ModeDeprecated: 47,
 	wadl.ModeError:      149,
 }
@@ -35,13 +36,13 @@ var outsidePolicyByMode = map[wadl.Mode]int{
 // The manager-only writes (restrictedWrites) the sweep reaches are probed as the
 // ordinary device. restrictedProbedFloor is how many it reaches, and
 // restrictedNotForbiddenCeiling is how many of those the device is not refused
-// with a 403 from an authority check. The server has no such check yet, so every
-// probed pair is not refused; the ceiling falls to zero, and is then an equality,
-// as the check lands. The unreached remainder of the declared writes is not
-// probed and sits in neither number.
+// with a 403 from an authority check. Those left are writes no route serves yet,
+// so the mux answers 405 before any check; each gets its refusal with the route
+// that mounts it, and the ceiling falls toward zero as they do. The unreached remainder of the
+// declared writes is not probed and sits in neither number.
 const (
 	restrictedProbedFloor         = 10
-	restrictedNotForbiddenCeiling = 10
+	restrictedNotForbiddenCeiling = 7
 )
 
 // notReachedCeiling is the number of WADL resources with a Mandatory or Optional
@@ -81,6 +82,7 @@ func bootTarget(t *testing.T, links *wadl.LinkSchema) *wadl.Target {
 		Links:           links,
 		Stores:          srv.Stores,
 		ManagerClient:   srv.NewManagerClient(t),
+		ManagedDeviceID: csiptest.ManagedDeviceID,
 	}
 }
 

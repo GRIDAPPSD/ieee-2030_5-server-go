@@ -57,6 +57,54 @@ func CurrentManagerOwns(ctx context.Context, managers store.EndDeviceManagementR
 	return OwnedBy(manager, caller), nil
 }
 
+// managedBy returns the LFDIs caller is the manager of, none for an empty
+// caller. A store failure is returned so a caller can answer 500 rather than
+// read an outage as "manages nothing".
+func managedBy(ctx context.Context, managers store.EndDeviceManagementReader, caller string) ([]string, error) {
+	if caller == "" {
+		return nil, nil
+	}
+	managed, err := managers.ManagedBy(ctx, caller)
+	if err != nil {
+		return nil, fmt.Errorf("look up the devices the caller manages: %w", err)
+	}
+	return managed, nil
+}
+
+// IsManager reports whether caller is the manager in at least one pair of
+// managers. It is the one definition of "is a manager", shared by the usage
+// point list, the effective device kind and the device log's registration
+// check, so they cannot disagree on who a manager is. A pair alone is enough
+// here; a write that acts for devices asks [HasLivePair] or
+// [CurrentManagerOwns] instead, because a pair whose device is gone grants
+// nothing.
+func IsManager(ctx context.Context, managers store.EndDeviceManagementReader, caller string) (bool, error) {
+	managed, err := managedBy(ctx, managers, caller)
+	return len(managed) > 0, err
+}
+
+// HasLivePair reports whether caller manages at least one EndDevice that
+// exists, by [RecordFor]. A pair whose device record is gone, or whose index
+// returns another device's record, does not count. It decides the manager-only
+// writes that are not tied to one device, so a manager with only stale pairs
+// acts for nobody. A store failure is returned and never read as "no pair".
+func HasLivePair(ctx context.Context, devices store.EndDeviceReader, managers store.EndDeviceManagementReader, caller string) (bool, error) {
+	managed, err := managedBy(ctx, managers, caller)
+	if err != nil {
+		return false, err
+	}
+	for _, lfdi := range managed {
+		_, state, err := RecordFor(ctx, devices, lfdi)
+		if err != nil {
+			return false, err
+		}
+		if state == RecordPresent {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // CurrentManagerOwnsLFDI is CurrentManagerOwns for an LFDI a client named: it
 // canonicalises device and caller (surrounding hexBinary whitespace trimmed,
 // upper case) before the exact comparison, so a lower-case spelling decides
@@ -285,26 +333,11 @@ func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDe
 	return devices, nil
 }
 
-// page applies s, l and a to devices, sorted by store key, with the same
-// semantics as the stores' own List: a keeps keys strictly after it, s skips
-// from there, and l of 0 returns no items.
+// page applies s, l and a to devices, sorted by store key. All counts the
+// whole set and Results the page.
 func page(devices []listedDevice, p paging.Params) store.ListResult[sep2.EndDevice] {
 	result := store.ListResult[sep2.EndDevice]{All: uint32(len(devices))}
-	if p.After != "" {
-		i := slices.IndexFunc(devices, func(d listedDevice) bool { return d.key > p.After })
-		if i < 0 {
-			i = len(devices)
-		}
-		devices = devices[i:]
-	}
-	if p.Limit == 0 || p.Start >= uint32(len(devices)) {
-		return result
-	}
-	devices = devices[p.Start:]
-	if uint32(len(devices)) > p.Limit {
-		devices = devices[:p.Limit]
-	}
-	for _, d := range devices {
+	for _, d := range paging.Slice(devices, func(d listedDevice) string { return d.key }, p.ToListOptions()) {
 		result.Items = append(result.Items, d.dev)
 	}
 	result.Results = uint32(len(result.Items))

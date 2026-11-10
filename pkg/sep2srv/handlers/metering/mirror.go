@@ -21,6 +21,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -33,6 +34,19 @@ import (
 // threading this callback through at construction time (same pattern
 // as the subscription manager's NotificationObserver from Phase D1).
 type LFDIProvider func(ctx context.Context) (lfdi string, ok bool)
+
+// require returns the caller's LFDI, or answers 403 and returns false when the
+// provider is unwired or the request has no (or an empty) identity. An unwired
+// provider is a closed door, not a nil-func panic and not an open one.
+func (p LFDIProvider) require(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if p == nil {
+		log.Printf("metering: nil LFDIProvider, denying (route=%s)", srverr.Route(r))
+		http.Error(w, "identity required", http.StatusForbidden)
+		return "", false
+	}
+	lfdi, ok := p(r.Context())
+	return lfdi, identity.Require(w, lfdi, ok)
+}
 
 // PostRateProvider resolves the server's preferred postRate, in seconds, for
 // the client identified by lfdi, and reports whether the server has an
@@ -274,17 +288,8 @@ func authorizeMirrorOwner(
 ) (sep2.MirrorUsagePoint, string, bool) {
 	var zero sep2.MirrorUsagePoint
 
-	if lfdiProvider == nil {
-		// A consumer that wired no identity source gets a closed door, not a
-		// nil-func panic and not an open one.
-		log.Printf("mup: nil LFDIProvider, denying (route=%s)", srverr.Route(r))
-		http.Error(w, "identity required", http.StatusForbidden)
-		return zero, "", false
-	}
-
-	lfdi, ok := lfdiProvider(r.Context())
-	if !ok || lfdi == "" {
-		http.Error(w, "identity required", http.StatusForbidden)
+	lfdi, ok := lfdiProvider.require(w, r)
+	if !ok {
 		return zero, "", false
 	}
 
@@ -752,12 +757,8 @@ func HandleCreateMirrorUsagePoint(
 			return
 		}
 
-		lfdi, ok := lfdiProvider(r.Context())
-		if !ok || lfdi == "" {
-			// An empty-but-present identity would key every such caller onto
-			// one derived id, collapsing them back into the shared-record
-			// defect this handler exists to prevent. Fail closed instead.
-			http.Error(w, "identity required", http.StatusForbidden)
+		lfdi, ok := lfdiProvider.require(w, r)
+		if !ok {
 			return
 		}
 

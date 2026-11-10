@@ -39,11 +39,11 @@ func (g kindGate) effectiveKind(ctx context.Context, lfdi string) (kind string, 
 		}
 	}
 	if !store.IsAbsent(g.managers) {
-		managed, err := g.managers.ManagedBy(ctx, lfdi)
+		manages, err := coreedev.IsManager(ctx, g.managers, lfdi)
 		if err != nil {
 			return "", false, fmt.Errorf("management lookup: %w", err)
 		}
-		if len(managed) > 0 {
+		if manages {
 			return store.DeviceKindAggregator, false, nil
 		}
 	}

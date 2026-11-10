@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/paging"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"pgregory.net/rapid"
 )
 
@@ -238,4 +239,38 @@ func TestPropInvalidInputInvariance(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestSlice(t *testing.T) {
+	keys := []string{"a", "b", "c", "d", "e"}
+	id := func(s string) string { return s }
+	const max = ^uint32(0)
+	cases := []struct {
+		name string
+		o    store.ListOptions
+		want []string
+	}{
+		{"first two", store.ListOptions{Limit: 2}, []string{"a", "b"}},
+		{"start skips", store.ListOptions{Start: 3, Limit: 10}, []string{"d", "e"}},
+		{"after is exclusive", store.ListOptions{After: "b", Limit: 2}, []string{"c", "d"}},
+		{"after then start", store.ListOptions{After: "a", Start: 1, Limit: 2}, []string{"c", "d"}},
+		{"after the last key", store.ListOptions{After: "e", Limit: 5}, nil},
+		{"limit zero selects nothing", store.ListOptions{Limit: 0}, nil},
+		{"start at the end", store.ListOptions{Start: 5, Limit: 5}, nil},
+		{"largest start", store.ListOptions{Start: max, Limit: 5}, nil},
+		{"largest limit", store.ListOptions{Limit: max}, keys},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := paging.Slice(keys, id, tc.o)
+			if len(got) != len(tc.want) {
+				t.Fatalf("Slice = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("Slice = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
 }

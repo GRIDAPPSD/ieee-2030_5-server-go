@@ -403,8 +403,12 @@ func (b *BootedServer) HTTPClientFor(cert tls.Certificate) *http.Client {
 	}
 }
 
+// ManagedDeviceID is the store id of the device NewManagerClient seeds and
+// assigns to its manager.
+const ManagedDeviceID = "csiptest-managed"
+
 // NewManagerClient mints a second device certificate from this server's CA,
-// records it as the manager of a third, absent device, and returns a client
+// records it as the manager of a third device, whose record it seeds, and returns a client
 // presenting it. It is the manager identity a test uses to make writes the
 // server restricts to a manager, next to Client() as the ordinary device.
 //
@@ -420,12 +424,33 @@ func (b *BootedServer) NewManagerClient(t *testing.T) *http.Client {
 	}
 	cert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGER-001")
 	managedCert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, "CSIPTEST-MANAGED-001")
-	_, managed := deriveServerIdentity(t, managedCert.Certificate)
+	managedSFDI, managed := deriveServerIdentity(t, managedCert.Certificate)
 	_, managerLFDI := deriveServerIdentity(t, cert.Certificate)
+	if b.Stores.EndDevices != nil {
+		// The pair counts only while the device exists, so the manager-only
+		// writes need its record.
+		enabled := true
+		dev := sep2.EndDevice{LFDI: managed, SFDI: managedSFDI, Enabled: &enabled}
+		dev.Href = "/edev/" + ManagedDeviceID
+		if err := b.Stores.EndDevices.Create(context.Background(), ManagedDeviceID, dev); err != nil {
+			t.Fatalf("csiptest: seed the managed device %s: %v", managed, err)
+		}
+	}
 	if err := b.Stores.EndDeviceManagers.Assign(context.Background(), managerLFDI, managed); err != nil {
 		t.Fatalf("csiptest: assign manager %s of device %s: %v", managerLFDI, managed, err)
 	}
 	return b.HTTPClientFor(cert)
+}
+
+// NewDeviceClient mints another ordinary device certificate from this server's
+// CA and returns a client presenting it, with the SFDI and LFDI the server derives
+// from it. It is the second device a test needs next to Client() to show one device
+// cannot act as, or see, another. The device holds no management pair.
+func (b *BootedServer) NewDeviceClient(t *testing.T, hwSerial string) (client *http.Client, sfdi, lfdi string) {
+	t.Helper()
+	cert := mustGenerateDeviceCert(t, b.caCertPEM, b.caKeyPEM, hwSerial)
+	sfdi, lfdi = deriveServerIdentity(t, cert.Certificate)
+	return b.HTTPClientFor(cert), sfdi, lfdi
 }
 
 // shutdown closes the http.Server, waits for the serve goroutine to

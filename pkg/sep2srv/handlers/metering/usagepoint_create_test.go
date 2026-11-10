@@ -373,3 +373,18 @@ func TestHandleCreateUsagePoint_ParallelAnonymousPostsGetDistinctIDs(t *testing.
 		return httptest.NewRequest(http.MethodPost, "/upt", bytes.NewReader(body))
 	})
 }
+
+// A cap of zero or below would answer every POST /upt with a 507 that reads as
+// a full store, so wiring one must fail at construction.
+func TestHandleCreateUsagePointRefusesANonPositiveCap(t *testing.T) {
+	for _, n := range []int{0, -1} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("WithMaxUsagePoints(%d) did not panic at construction", n)
+				}
+			}()
+			metering.HandleCreateUsagePoint(memory.NewStore[sep2.UsagePoint](), metering.WithMaxUsagePoints(n))
+		}()
+	}
+}

@@ -60,3 +60,50 @@ func TestRecordFor(t *testing.T) {
 		t.Errorf("outage: err = %v, want it wrapped", err)
 	}
 }
+
+// TestHasLivePair pins what counts as a live pair: a pair whose device record
+// exists. A pair with no record, an index that returned another device's
+// record, an empty caller and a store failure each grant nothing, and a failure
+// is returned rather than read as "no pair".
+func TestHasLivePair(t *testing.T) {
+	const (
+		mgr   = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1"
+		live  = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2"
+		stale = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC3"
+	)
+	ctx := context.Background()
+	managers := memory.NewEndDeviceManagementStore()
+	for _, d := range []string{live, stale} {
+		if err := managers.Assign(ctx, mgr, d); err != nil {
+			t.Fatalf("assign %s: %v", d, err)
+		}
+	}
+	devices := memory.NewEndDeviceStore()
+	rec := sep2.EndDevice{LFDI: live}
+	rec.Href = "/edev/live"
+	if err := devices.Create(ctx, "live", rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	boom := errors.New("backend down")
+
+	cases := []struct {
+		name    string
+		devices store.EndDeviceReader
+		caller  string
+		want    bool
+		wantErr bool
+	}{
+		{"one live and one stale pair", devices, mgr, true, false},
+		{"no pair", devices, live, false, false},
+		{"empty caller", devices, "", false, false},
+		{"only a stale pair", memory.NewEndDeviceStore(), mgr, false, false},
+		{"index returned another device's record", lfdiAnswer{dev: sep2.EndDevice{LFDI: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD4"}}, mgr, false, false},
+		{"record read fails", lfdiAnswer{err: boom}, mgr, false, true},
+	}
+	for _, tc := range cases {
+		got, err := coreedev.HasLivePair(ctx, tc.devices, managers, tc.caller)
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("%s: HasLivePair = %v, err %v; want %v, error %v", tc.name, got, err, tc.want, tc.wantErr)
+		}
+	}
+}

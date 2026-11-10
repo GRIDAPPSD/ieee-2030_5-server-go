@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -57,6 +59,12 @@ type RegistrationStore struct {
 	// so the snapshot's record order matches the order List serves.
 	keysMu sync.Mutex
 	keys   []string
+
+	// writeMu serializes every mutation end to end: the change, the key
+	// index, the snapshot write and any rollback. Without it a second writer's
+	// snapshot could capture a first writer's change that is about to be
+	// rolled back.
+	writeMu sync.Mutex
 
 	persistMu   sync.Mutex
 	persistPath string
@@ -197,28 +205,109 @@ func (s *RegistrationStore) Count(ctx context.Context) (uint32, error) {
 	return s.inner.Count(ctx)
 }
 
-// Create stores a registration and flushes a snapshot.
+// Create stores a registration and flushes a snapshot. A failed flush is
+// undone before the error returns, so the collection never holds a record the
+// snapshot does not.
 func (s *RegistrationStore) Create(ctx context.Context, id string, reg sep2.Registration) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if err := s.inner.Create(ctx, id, reg); err != nil {
 		return err
 	}
 	s.addKey(id)
-	return s.persist(ctx)
+	return s.persistOrRollback(ctx, func() error { return s.undoCreate(ctx, id) })
 }
 
-// Update replaces a registration and flushes a snapshot.
+// Update replaces a registration and flushes a snapshot, restoring the prior
+// record when the flush fails.
 func (s *RegistrationStore) Update(ctx context.Context, id string, reg sep2.Registration) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	prior, err := s.inner.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := s.inner.Update(ctx, id, reg); err != nil {
 		return err
 	}
-	return s.persist(ctx)
+	return s.persistOrRollback(ctx, func() error { return s.undoUpdate(ctx, id, prior) })
 }
 
-// Delete removes a registration and flushes a snapshot.
+// Upsert creates the registration under id, or replaces the one there, as one
+// step: build receives the current record (and whether there is one) and
+// returns what to store. created reports whether the record is new. Because
+// the read and the write share one critical section, a concurrent first PUT
+// never meets ErrAlreadyExists and a PUT racing a Delete never meets
+// ErrNotFound. A failed flush restores the state the call found.
+func (s *RegistrationStore) Upsert(ctx context.Context, id string, build func(current sep2.Registration, found bool) sep2.Registration) (created bool, err error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	prior, err := s.inner.Get(ctx, id)
+	switch {
+	case err == nil:
+		if err := s.inner.Update(ctx, id, build(prior, true)); err != nil {
+			return false, err
+		}
+		return false, s.persistOrRollback(ctx, func() error { return s.undoUpdate(ctx, id, prior) })
+	case errors.Is(err, store.ErrNotFound):
+		if err := s.inner.Create(ctx, id, build(sep2.Registration{}, false)); err != nil {
+			return false, err
+		}
+		s.addKey(id)
+		if err := s.persistOrRollback(ctx, func() error { return s.undoCreate(ctx, id) }); err != nil {
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, err
+	}
+}
+
+// Delete removes a registration and flushes a snapshot, putting the record
+// back when the flush fails.
 func (s *RegistrationStore) Delete(ctx context.Context, id string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	prior, err := s.inner.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := s.inner.Delete(ctx, id); err != nil {
 		return err
 	}
 	s.dropKey(id)
-	return s.persist(ctx)
+	return s.persistOrRollback(ctx, func() error { return s.undoDelete(ctx, id, prior) })
+}
+
+// persistOrRollback flushes a snapshot under writeMu and, when the flush
+// fails, runs undo and returns the flush error. A failed undo is logged: the
+// collection is this wrapper's own, so it means the collection itself broke
+// and the flush error alone would hide that.
+func (s *RegistrationStore) persistOrRollback(ctx context.Context, undo func() error) error {
+	err := s.persist(ctx)
+	if err == nil {
+		return nil
+	}
+	if uerr := undo(); uerr != nil {
+		log.Printf("memory: registration rollback after a failed snapshot flush also failed: %v", logsafe.Err(uerr))
+	}
+	return err
+}
+
+func (s *RegistrationStore) undoCreate(ctx context.Context, id string) error {
+	err := s.inner.Delete(ctx, id)
+	s.dropKey(id)
+	return err
+}
+
+func (s *RegistrationStore) undoUpdate(ctx context.Context, id string, prior sep2.Registration) error {
+	return s.inner.Update(ctx, id, prior)
+}
+
+func (s *RegistrationStore) undoDelete(ctx context.Context, id string, prior sep2.Registration) error {
+	err := s.inner.Create(ctx, id, prior)
+	if err == nil {
+		s.addKey(id)
+	}
+	return err
 }

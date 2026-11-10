@@ -79,6 +79,12 @@ func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, manager
 }
 
 func (g *ownershipGate) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	if managerOnlyWrites[pattern] {
+		g.next.HandleFunc(pattern, g.serve(h, func(r *http.Request) ownershipVerdict {
+			return g.decideManagerOnly(r, requiresOwnership(pattern))
+		}))
+		return
+	}
 	gated := requiresOwnership(pattern)
 	delegated := gated && delegable(pattern)
 	if gated {
@@ -188,6 +194,7 @@ const (
 	reasonNotOwner        = "not-owner"
 	reasonNotManager      = "not-owner-or-manager"
 	reasonManagedDirect   = "managed-direct"
+	reasonNotManagerCert  = "manager-only"
 	// reasonManagedSubscriber is logged when a paired DER's subscription is
 	// withheld at delivery.
 	reasonManagedSubscriber = "managed-subscriber"
@@ -216,8 +223,14 @@ type ownershipVerdict struct {
 }
 
 func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), delegated bool) func(http.ResponseWriter, *http.Request) {
+	return g.serve(next, func(r *http.Request) ownershipVerdict { return g.decide(r, delegated) })
+}
+
+// serve runs next only when decide admits the request, and answers every other
+// verdict the same way for every kind of check.
+func (g *ownershipGate) serve(next func(http.ResponseWriter, *http.Request), decide func(*http.Request) ownershipVerdict) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		v := g.decide(r, delegated)
+		v := decide(r)
 		switch v.decision {
 		case ownershipAllowed:
 			// Written on every admit, empty for a self admit, so a value

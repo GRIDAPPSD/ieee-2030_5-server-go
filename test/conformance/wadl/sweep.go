@@ -197,6 +197,12 @@ type Target struct {
 	// ordinary Client's attempt at each is recorded as a restricted row. Nil
 	// sends every request with Client and records no restricted rows.
 	ManagerClient *http.Client
+	// ManagedDeviceID is the store id of the EndDevice ManagerClient manages.
+	// A manager acts only on its own device, so each restricted write under
+	// /edev/{id} is sent, as the manager and as the ordinary device alike, to
+	// this device in place of the one the crawl found. Empty leaves the path
+	// as crawled.
+	ManagedDeviceID string
 	// MountedPatterns is the router's own enumeration of the patterns it
 	// registered, as returned by assembly.BuildProtocolRouter. Supplying it
 	// enables the second, independent unrouted discriminator. Empty is
@@ -360,6 +366,10 @@ type link struct {
 	advertisedBy string
 	// typeName is the element's xsi:type, which names the resource a list member is.
 	typeName string
+	// manager is set on a link followed with the manager certificate: the
+	// server shows the usage point list only to a manager, so a device's own
+	// crawl cannot reach what hangs below it.
+	manager bool
 }
 
 // linkRootExceptions names the links whose resource has a different root
@@ -690,6 +700,9 @@ type seed struct {
 	// order, against the stores the target serves, and gets the device id the
 	// first seed created. method and path are for the row only.
 	direct func(ctx context.Context, s *server.Stores, dev string) error
+	// manager sends the seed with the manager certificate, for a write the
+	// server restricts to one.
+	manager bool
 }
 
 // seeds create a minimum of real server state before the read phases.
@@ -725,7 +738,7 @@ func seedSet() []seed {
 				`<serviceCategoryKind>0</serviceCategoryKind><status>1</status></MirrorUsagePoint>`,
 		},
 		{
-			method: http.MethodPost, path: "/upt", element: "UsagePoint",
+			method: http.MethodPost, path: "/upt", element: "UsagePoint", manager: true,
 			body: `<UsagePoint xmlns="` + sepNS + `">` +
 				`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FBB</mRID>` +
 				`<description>wadl sweep upt</description><roleFlags>03</roleFlags>` +
@@ -844,7 +857,11 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 				r.status = http.StatusOK
 			}
 		default:
-			r = t.do(s.method, path, []byte(body))
+			client := t.Client
+			if s.manager && t.ManagerClient != nil {
+				client = t.ManagerClient
+			}
+			r = t.doWith(client, s.method, path, []byte(body))
 		}
 
 		v := Verdict(fmt.Sprintf("%s_%d", VerdictSeedFailed, r.status))
@@ -888,21 +905,38 @@ const maxDiscoveryURLs = 600
 // crawlRoot is the advertisedBy of the first link, which no resource advertises.
 const crawlRoot = "(root)"
 
+// managerCrawlRoot is the advertisedBy of the second crawl start, which only the
+// manager certificate can follow.
+const managerCrawlRoot = "(manager root)"
+
+// managerCrawlPrefix bounds the manager crawl: its links are followed as the
+// manager only while they stay under it.
+const managerCrawlPrefix = "/upt"
+
 func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][]byte) ([]string, *crawl) {
 	seen := map[string]bool{}
 	queue := []link{{href: "/dcap", expectedRoot: "DeviceCapability", advertisedBy: crawlRoot}}
+	if t.ManagerClient != nil {
+		queue = append(queue, link{href: managerCrawlPrefix, expectedRoot: "UsagePointList", advertisedBy: managerCrawlRoot, manager: true})
+	}
 	var discovered []string
 	reached := newCrawl()
 
 	for len(queue) > 0 && len(seen) < maxDiscoveryURLs {
 		l := queue[0]
 		queue = queue[1:]
-		if seen[l.href] {
+		seenKey := l.href
+		client := t.Client
+		if l.manager {
+			seenKey += " (manager)"
+			client = t.ManagerClient
+		}
+		if seen[seenKey] {
 			continue
 		}
-		seen[l.href] = true
+		seen[seenKey] = true
 
-		r := t.do(http.MethodGet, l.href, nil)
+		r := t.doWith(client, http.MethodGet, l.href, nil)
 		root := rootElement(r.body)
 
 		v := VerdictConformant
@@ -944,7 +978,12 @@ func (t *Target) phaseDiscovery(rows *[]Row, ri *routeIndex, bodies map[string][
 			reached.add(l.resourceID(), l.href)
 			reached.add(rootTypeName(r.body), l.href)
 			for _, nxt := range parseLinks(r.body, l.href) {
-				if !seen[nxt.href] && strings.HasPrefix(nxt.href, "/") {
+				nxt.manager = l.manager && strings.HasPrefix(nxt.href, managerCrawlPrefix)
+				key := nxt.href
+				if nxt.manager {
+					key += " (manager)"
+				}
+				if !seen[key] && strings.HasPrefix(nxt.href, "/") {
 					queue = append(queue, nxt)
 				}
 			}
@@ -1019,6 +1058,7 @@ func (t *Target) phaseWADL(m *Model, discovered []string, reached *crawl, rows *
 		client := t.Client
 		asManager := false
 		if t.ManagerClient != nil && restrictedWrite(meth) {
+			path = t.pairedPath(path)
 			// The device goes first: a manager DELETE that succeeded would
 			// leave the device a 404 that says nothing about authority.
 			t.probeDeviceOnRestricted(rows, meth, path, body)
@@ -1256,4 +1296,17 @@ func (r *Results) Summary() []string {
 		out = append(out, fmt.Sprintf("%-10s %-34s %d", k.p, k.v, counts[k]))
 	}
 	return out
+}
+
+// edevSegment matches the leading /edev/{id} of a path.
+var edevSegment = regexp.MustCompile(`^/edev/[^/]+`)
+
+// pairedPath points a path under /edev/{id} at the manager's own device, so the
+// manager's write and the ordinary device's probe of it name the same record
+// and the manager is not refused for acting on a device it does not manage.
+func (t *Target) pairedPath(path string) string {
+	if t.ManagedDeviceID == "" {
+		return path
+	}
+	return edevSegment.ReplaceAllLiteralString(path, "/edev/"+t.ManagedDeviceID)
 }

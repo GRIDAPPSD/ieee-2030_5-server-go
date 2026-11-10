@@ -1124,11 +1124,8 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 		t.Errorf("owner GET served a MirrorMeterReading element, violates rule (c); body = %s", ownerGetBody)
 	}
 
-	// The list stays server-wide in this change: rule (e) governs POST only,
-	// and 6.2.3.1 puts sub-resource access control out of scope. Per-client
-	// list scoping is permitted by 4.6.1 but is a separate design decision
-	// (CSIP 5.7.1 per-device MirrorUsagePointListLink URIs), deliberately not
-	// made here. Asserting it keeps the boundary of this change explicit.
+	// The list shows a caller only the mirrors it may act for (#1288): the
+	// other device's list neither names the owned mirror nor counts it.
 	listResp, err := otherSrv.Client().Get(otherSrv.URL + "/mup")
 	if err != nil {
 		t.Fatalf("GET /mup: %v", err)
@@ -1136,10 +1133,19 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	listBody, _ := io.ReadAll(listResp.Body)
 	_ = listResp.Body.Close()
 	if listResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /mup status = %d, want 200 (list is intentionally unscoped)", listResp.StatusCode)
+		t.Fatalf("GET /mup status = %d, want 200", listResp.StatusCode)
 	}
-	if !strings.Contains(string(listBody), "<mRID>OWNED</mRID>") {
-		t.Errorf("GET /mup omitted a mirror the caller did not create; the list was scoped, which this change does not do. body = %s", listBody)
+	if strings.Contains(string(listBody), "OWNED") || !strings.Contains(string(listBody), `all="0"`) {
+		t.Errorf("GET /mup showed a mirror the caller may not act for, or counted it. body = %s", listBody)
+	}
+	ownerList, err := ownerSrv.Client().Get(ownerSrv.URL + "/mup")
+	if err != nil {
+		t.Fatalf("owner GET /mup: %v", err)
+	}
+	ownerListBody, _ := io.ReadAll(ownerList.Body)
+	_ = ownerList.Body.Close()
+	if !strings.Contains(string(ownerListBody), "<mRID>OWNED</mRID>") {
+		t.Errorf("the owner's GET /mup omitted its own mirror. body = %s", ownerListBody)
 	}
 }
 

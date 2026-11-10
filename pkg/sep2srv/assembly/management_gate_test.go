@@ -215,6 +215,14 @@ var managerWriteAllowlist = map[string]bool{
 	"POST /edev/{id}/lel":               true, // LogEvent, CSIP V1.2 UTIL-001
 }
 
+// managerOnlyWritePatterns names the writes below a record that a manager certificate
+// makes on a device it manages, by the manager-only check (#1263) rather than by
+// delegation: the owner is refused them, and a manager is not.
+var managerOnlyWritePatterns = map[string]bool{
+	"PUT /edev/{id}/rg":    true,
+	"DELETE /edev/{id}/rg": true,
+}
+
 // sweepStatus drives pattern, every wildcard set explicitly to victimID (the
 // managed device this fleet's pairs name), on a fresh fleet so one caller's
 // write cannot change the other's answer. It names victimID directly rather
@@ -292,10 +300,20 @@ func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
 		t.Fatal("no write-below-record pattern found; the sweep would pass vacuously")
 	}
 
-	var granted, refused int
+	var granted, refused, managerOnly int
 	for _, p := range writes {
 		owner := sweepStatus(t, p, victimLFDI)
 		manager := sweepStatus(t, p, managerLFDI)
+		if managerOnlyWritePatterns[p] {
+			managerOnly++
+			if owner != http.StatusForbidden {
+				t.Errorf("%s: manager-only; the owner answered %d, want 403", p, owner)
+			}
+			if manager == http.StatusForbidden || manager == http.StatusMethodNotAllowed {
+				t.Errorf("%s: manager-only; the manager answered %d, want the write served", p, manager)
+			}
+			continue
+		}
 		if managerWriteAllowlist[p] {
 			granted++
 			// The degenerate-owner guard applies only here: the refused half
@@ -327,6 +345,9 @@ func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
 	}
 	if refused == 0 {
 		t.Error("no non-allow-listed write pattern was swept; the control that a write can still be refused never ran")
+	}
+	if managerOnly != len(managerOnlyWritePatterns) {
+		t.Errorf("swept %d manager-only write patterns, want all %d reachable through the mounted routes", managerOnly, len(managerOnlyWritePatterns))
 	}
 	t.Logf("swept %d write-below-record patterns of %d mounted: %d allow-listed (granted), %d refused", len(writes), len(patterns), granted, refused)
 }

@@ -1,6 +1,7 @@
 package assembly_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
@@ -43,6 +45,21 @@ import (
 // that a route is not accidentally probed with an empty path segment, which
 // several handlers treat as a 400 before any store is touched.
 const faultProbePathValue = "1"
+
+// faultProbeManagedID is the EndDevice the manager-only probes address: the
+// probe identity manages it, and the manager-only check reads it, where the
+// device at faultProbePathValue is the probe identity's own.
+const (
+	faultProbeManagedID   = "managed"
+	faultProbeManagedLFDI = "1122334455667788990011223344556677889900"
+)
+
+// faultProbeManagerOnly names the patterns the manager-only check decides, which
+// are probed at faultProbeManagedID.
+var faultProbeManagerOnly = map[string]bool{
+	"PUT /edev/{id}/rg":    true,
+	"DELETE /edev/{id}/rg": true,
+}
 
 // storeFreeRoutes are the mounted patterns a store failure cannot reach,
 // with the reason each one cannot.
@@ -110,6 +127,11 @@ var faultProbeBodies = map[string]string{
 	// surfaces there; the document is a cancel of an empty request.
 	"PUT /edev/{id}/frq/{frqId}": sep2Doc("FlowReservationRequest",
 		`<RequestStatus><dateTime>1700000000</dateTime><requestStatus>1</requestStatus></RequestStatus>`),
+
+	// The manager-only Registration write reads the stored record first, so a
+	// store fault surfaces there.
+	"PUT /edev/{id}/rg": sep2Doc("Registration",
+		`<dateTimeRegistered>1700000000</dateTimeRegistered><pIN>1</pIN>`),
 
 	"PUT /edev/{id}/cfg":   sep2Doc("Configuration", `<userDeviceName>probe</userDeviceName>`),
 	"PUT /edev/{id}/dstat": sep2Doc("DeviceStatus", `<changedTime>1700000000</changedTime>`),
@@ -191,6 +213,30 @@ func TestFaultProbeBodiesNameOnlyMountedPatterns(t *testing.T) {
 	}
 }
 
+// faultyRegistrations is the faulty Registration store with the one-call
+// Upsert the PUT route requires, failing it while the switch is armed.
+type faultyRegistrations struct {
+	store.ResourceStore[sep2.Registration]
+	inner *memory.RegistrationStore
+	fault *storetest.Fault
+}
+
+func newFaultyRegistrations(fault *storetest.Fault) *faultyRegistrations {
+	inner := memory.NewRegistrationStore()
+	return &faultyRegistrations{
+		ResourceStore: storetest.NewFaultyResourceStore[sep2.Registration](inner, fault),
+		inner:         inner,
+		fault:         fault,
+	}
+}
+
+func (s *faultyRegistrations) Upsert(ctx context.Context, id string, build func(sep2.Registration, bool) sep2.Registration) (bool, error) {
+	if err := s.fault.Err(); err != nil {
+		return false, err
+	}
+	return s.inner.Upsert(ctx, id, build)
+}
+
 // faultyStores builds a Stores whose every contract-typed field is the
 // PRODUCTION in-memory store wrapped in a fault decorator, all sharing one
 // switch.
@@ -218,9 +264,17 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 	device := faultProbeDevice{fault: &storetest.Fault{}, raw: memory.NewEndDeviceStore()}
 	device.ensure(t)
 
+	// The probe identity manages one device, so it is a manager and reaches the
+	// manager-only routes' handlers, where the store fault is injected.
+	managers := memory.NewEndDeviceManagementStore()
+	if err := managers.Assign(context.Background(), testLFDI, faultProbeManagedLFDI); err != nil {
+		t.Fatalf("assign the probe manager: %v", err)
+	}
+
 	return &assembly.Stores{
+		EndDeviceManagers:   managers,
 		EndDevices:          storetest.NewFaultyEndDeviceStore(device.raw, device.fault),
-		Registrations:       storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault),
+		Registrations:       newFaultyRegistrations(fault),
 		RegistrationPolicy:  testRegistrationPolicy(),
 		MirrorUsagePoints:   storetest.NewFaultyResourceStore[sep2.MirrorUsagePoint](memory.NewStore[sep2.MirrorUsagePoint](), fault),
 		MirrorMeterReadings: storetest.NewFaultyScopedStore[sep2.MirrorMeterReading](memory.NewScopedStore[sep2.MirrorMeterReading](), fault),
@@ -268,6 +322,9 @@ type faultProbeDevice struct {
 func (d faultProbeDevice) ensure(t *testing.T) {
 	t.Helper()
 	seedOwnedDevices(t, d.raw, faultProbePathValue)
+	if _, err := d.raw.Get(context.Background(), faultProbeManagedID); err != nil {
+		seedDevice(t, d.raw, faultProbeManagedID, faultProbeManagedLFDI, "")
+	}
 }
 
 // routePartition is the split of the router's own pattern enumeration into the
@@ -346,11 +403,15 @@ func partitionMountedRoutes(patterns []string, exclusions map[string]string) (ro
 // reached. That refusal is why adding a write route without a probe body fails
 // this test instead of passing it vacuously.
 //
-// It substitutes faultProbePathValue for every wildcard. A caller that needs
+// It substitutes faultProbePathValue for every wildcard, except in the
+// manager-only patterns, which take faultProbeManagedID. A caller that needs
 // a different, stated id (for example a specific EndDevice to compare a
 // manager's answer against its owner's) calls probeRequestForID directly
 // instead of relying on faultProbePathValue's value matching by coincidence.
 func probeRequestFor(base, pattern string) (*http.Request, error) {
+	if faultProbeManagerOnly[pattern] {
+		return probeRequestForID(base, pattern, faultProbeManagedID)
+	}
 	return probeRequestForID(base, pattern, faultProbePathValue)
 }
 

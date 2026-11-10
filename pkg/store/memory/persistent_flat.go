@@ -8,6 +8,9 @@ import (
 // under. It is part of the on-disk shape, so changing it orphans a snapshot.
 const flatParent = "all"
 
+// FlatParent is flatParent for a caller that reads a flat snapshot itself.
+const FlatParent = flatParent
+
 // NewPersistentStore builds a flat [store.ResourceStore] that reloads from a
 // JSON snapshot at path. An empty path returns the plain in-memory [Store], so
 // a caller with no data dir behaves exactly as before.

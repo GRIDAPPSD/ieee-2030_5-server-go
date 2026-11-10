@@ -18,6 +18,7 @@ import (
 // optional service wired. A route added or removed changes this list on
 // purpose, so the coverage below is re-read rather than silently widened.
 var wantAdminWriteRoutes = []string{
+	"DELETE /api/content/{family}/{id}",
 	"DELETE /api/devices/{id}/der-programs/{derpId}",
 	"DELETE /api/devices/{id}/fsa-assignment",
 	"DELETE /api/fsas/{id}",
@@ -27,6 +28,7 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/certs/device",
 	"POST /api/certs/info",
 	"POST /api/certs/server",
+	"POST /api/content/{family}/{id}",
 	"POST /api/der/controls",
 	"POST /api/der/controls/{mrid}/cancel",
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/answer",
@@ -48,6 +50,7 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/management-pairs/rekey",
 	"POST /auth/login",
 	"POST /auth/ticket",
+	"PUT /api/content/{family}/{id}",
 	"PUT /api/device-profiles/{lfdi}",
 	"PUT /api/devices/{id}/der-programs/{derpId}",
 	"PUT /api/fsas/{id}/der-programs/{derpId}",
@@ -65,6 +68,9 @@ var wantAdminBodyTypes = map[string][]string{
 	"POST /api/certs/server":                           {"application/json"},
 	"POST /api/certs/device":                           {"application/json"},
 	"POST /api/certs/info":                             {"application/x-pem-file", "multipart/form-data"},
+	"POST /api/content/{family}/{id}":                  {"application/sep+xml", "application/xml"},
+	"PUT /api/content/{family}/{id}":                   {"application/sep+xml", "application/xml"},
+	"DELETE /api/content/{family}/{id}":                nil,
 	"POST /api/devices":                                {"application/json"},
 	"POST /api/fsas":                                   {"application/json"},
 	"POST /api/fsas/{id}/programs":                     {"application/json"},
@@ -154,7 +160,7 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 
 	for _, p := range writes {
 		method, path, _ := strings.Cut(p, " ")
-		target := strings.NewReplacer("{id}", "x", "{mrid}", "x", "{edevId}", "x", "{frqId}", "x").Replace(path)
+		target := strings.NewReplacer("{id}", "x", "{family}", "x", "{mrid}", "x", "{edevId}", "x", "{frqId}", "x").Replace(path)
 		// goodType and the expected refusals below come from
 		// wantAdminBodyTypes, the independent source, not the production
 		// table: a wrong table entry must make this subtest fail rather

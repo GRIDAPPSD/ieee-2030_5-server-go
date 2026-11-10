@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -156,5 +157,28 @@ func TestHandleDeviceCapabilityStalledCountDoesNotHoldTheResponse(t *testing.T) 
 	}
 	if dc.EndDeviceListLink == nil || dc.EndDeviceListLink.Href != "/edev" || dc.EndDeviceListLink.All != 0 {
 		t.Errorf("EndDeviceListLink = %+v, want the link without all", dc.EndDeviceListLink)
+	}
+}
+
+func TestHandleDeviceCapabilityStalledCountStartsOneGoroutine(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	defer close(release)
+	var started atomic.Int32
+	stalled := func(*http.Request) (uint32, bool, error) {
+		started.Add(1)
+		<-release
+		return 9, true, nil
+	}
+	h := dcap.HandleDeviceCapability(allWired, stalled)
+	for i := 0; i < 3; i++ {
+		dc := getDcap(t, h)
+		if dc.EndDeviceListLink == nil || dc.EndDeviceListLink.All != 0 {
+			t.Fatalf("poll %d: EndDeviceListLink = %+v, want the link without all", i, dc.EndDeviceListLink)
+		}
+	}
+	if n := started.Load(); n != 1 {
+		t.Errorf("a stalled store was asked %d times across 3 polls, want 1", n)
 	}
 }

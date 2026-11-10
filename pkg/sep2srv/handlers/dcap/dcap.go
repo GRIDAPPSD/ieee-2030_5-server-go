@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -65,9 +66,19 @@ type counted struct {
 	err error
 }
 
-func boundedCount(count CallerEndDevices, r *http.Request) (uint32, bool, error) {
+// errCountBusy reports that an earlier count has not returned yet.
+var errCountBusy = errors.New("an earlier EndDevice count is still running")
+
+// boundedCount runs count for at most countBudget. Only one count is in
+// flight per handler: a store that ignores its context keeps that one
+// goroutine, and later polls skip the count instead of adding another.
+func boundedCount(inflight *atomic.Bool, count CallerEndDevices, r *http.Request) (uint32, bool, error) {
+	if !inflight.CompareAndSwap(false, true) {
+		return 0, false, errCountBusy
+	}
 	done := make(chan counted, 1)
 	go func() {
+		defer inflight.Store(false)
 		all, ok, err := count(r)
 		done <- counted{all, ok, err}
 	}()
@@ -91,6 +102,7 @@ func boundedCount(count CallerEndDevices, r *http.Request) (uint32, bool, error)
 // DERProgramListLink is not linked: core has no top-level DERProgramList, and
 // "/dc" is the DERCurve list.
 func HandleDeviceCapability(wired routefamily.Wired, endDevices CallerEndDevices) http.HandlerFunc {
+	var inflight atomic.Bool
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
@@ -104,7 +116,7 @@ func HandleDeviceCapability(wired routefamily.Wired, endDevices CallerEndDevices
 			var all uint32
 			var hasAll bool
 			if l.prefix == "/edev" && endDevices != nil {
-				n, ok, err := boundedCount(endDevices, r)
+				n, ok, err := boundedCount(&inflight, endDevices, r)
 				if err != nil {
 					log.Printf("dcap: EndDeviceListLink served without all: %s", logsafe.Err(err))
 				}

@@ -649,9 +649,52 @@ func asNotificationURIValidator(n ResourceNotifier) func(context.Context, string
 	return nil
 }
 
+// servedFamily names a function set whose mount and advertised links must
+// agree.
+type servedFamily int
+
+const (
+	famMirrorUsagePoints servedFamily = iota
+	famUsagePoints
+	famMessagingPrograms
+	famResponseSets
+	famDERs
+	famConfiguration
+	famDeviceStatus
+	famPowerStatus
+)
+
+// serves is the one decision whether a family is mounted. The route
+// registrars, the /dcap anchors and the EndDevice link decorators all ask it,
+// so a link can never name a route the server did not mount.
+func (s *Stores) serves(f servedFamily) bool {
+	if s == nil {
+		return false
+	}
+	switch f {
+	case famMirrorUsagePoints:
+		return !store.IsAbsent(s.MirrorUsagePoints)
+	case famUsagePoints:
+		return !store.IsAbsent(s.UsagePoints)
+	case famMessagingPrograms:
+		return !store.IsAbsent(s.MessagingPrograms)
+	case famResponseSets:
+		return !store.IsAbsent(s.ResponseSets)
+	case famDERs:
+		return !store.IsAbsent(s.DERs)
+	case famConfiguration:
+		return !store.IsAbsent(s.Configurations)
+	case famDeviceStatus:
+		return !store.IsAbsent(s.DeviceStatuses)
+	case famPowerStatus:
+		return !store.IsAbsent(s.PowerStatuses)
+	}
+	return false
+}
+
 // wiredAnchors says which anchored route families stores serves, from the
-// same IsAbsent test each family's mount gate makes. It is the one place an
-// anchor name meets a store field.
+// [Stores.serves], the test each family's mount gate makes. It is the one
+// place an anchor name meets a family.
 func wiredAnchors(stores *Stores) routefamily.Wired {
 	if stores == nil {
 		return nil
@@ -659,15 +702,15 @@ func wiredAnchors(stores *Stores) routefamily.Wired {
 	return func(a routefamily.Anchor) bool {
 		switch a {
 		case routefamily.AnchorMirrorUsagePoints:
-			return !store.IsAbsent(stores.MirrorUsagePoints)
+			return stores.serves(famMirrorUsagePoints)
 		case routefamily.AnchorUsagePoints:
-			return !store.IsAbsent(stores.UsagePoints)
+			return stores.serves(famUsagePoints)
 		case routefamily.AnchorMessagingPrograms:
-			return !store.IsAbsent(stores.MessagingPrograms)
+			return stores.serves(famMessagingPrograms)
 		case routefamily.AnchorResponseSets:
-			return !store.IsAbsent(stores.ResponseSets)
+			return stores.serves(famResponseSets)
 		case routefamily.AnchorDERs:
-			return !store.IsAbsent(stores.DERs)
+			return stores.serves(famDERs)
 		}
 		return false
 	}
@@ -736,7 +779,7 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 // exactly when Stores.DERs is non-nil, the condition registerDERRoutes uses to
 // mount GET /edev/{id}/der and the instance routes beneath it.
 func derLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
-	return linkedEndDevices(devs, !store.IsAbsent(stores.DERs), func(devs store.EndDeviceStore) *memory.DERLinkedEndDeviceStore {
+	return linkedEndDevices(devs, stores.serves(famDERs), func(devs store.EndDeviceStore) *memory.DERLinkedEndDeviceStore {
 		return memory.NewDERLinkedEndDeviceStore(devs, stores.DERs)
 	})
 }
@@ -773,9 +816,9 @@ func deviceKeyedCascadeEndDevices(devs store.EndDeviceStore, stores *Stores) sto
 	if store.IsAbsent(devs) {
 		return devs
 	}
-	if store.IsAbsent(stores.Configurations) && store.IsAbsent(stores.DeviceStatuses) &&
-		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) &&
-		store.IsAbsent(stores.DERs) {
+	if !stores.serves(famConfiguration) && !stores.serves(famDeviceStatus) &&
+		!stores.serves(famPowerStatus) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) &&
+		!stores.serves(famDERs) {
 		return devs
 	}
 	if linked, ok := devs.(*memory.DeviceKeyedCascadeEndDeviceStore); ok {
@@ -887,9 +930,9 @@ func singletonLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.
 		return devs
 	}
 	return memory.NewSingletonLinkedEndDeviceStore(devs, memory.SingletonLinks{
-		Configuration: !store.IsAbsent(stores.Configurations),
-		DeviceStatus:  !store.IsAbsent(stores.DeviceStatuses),
-		PowerStatus:   !store.IsAbsent(stores.PowerStatuses),
+		Configuration: stores.serves(famConfiguration),
+		DeviceStatus:  stores.serves(famDeviceStatus),
+		PowerStatus:   stores.serves(famPowerStatus),
 	})
 }
 
@@ -977,7 +1020,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 }
 
 func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, postRateProvider coremetering.PostRateProvider) {
-	if store.IsAbsent(stores.MirrorUsagePoints) {
+	if !stores.serves(famMirrorUsagePoints) {
 		return
 	}
 	// MirrorMeterReadings has no gate of its own: it is mounted on the
@@ -1048,7 +1091,7 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 }
 
 func registerDERRoutes(mux routeRegistrar, stores *Stores) {
-	if store.IsAbsent(stores.DERs) {
+	if !stores.serves(famDERs) {
 		return
 	}
 
@@ -1483,7 +1526,7 @@ func scopedResourceHandler[T store.Copier[T]](
 }
 
 func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
-	if store.IsAbsent(stores.UsagePoints) {
+	if !stores.serves(famUsagePoints) {
 		return
 	}
 	// None of these three has a gate of its own: all are mounted on the
@@ -1515,11 +1558,11 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 }
 
 func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, deviceLogResolver *devicelog.CachingResolver, notifier ResourceNotifier) {
-	if !store.IsAbsent(stores.Configurations) {
+	if stores.serves(famConfiguration) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 	}
-	if !store.IsAbsent(stores.DeviceStatuses) {
+	if stores.serves(famDeviceStatus) {
 		mux.HandleFunc("GET /edev/{id}/dstat", coresingleton.HandleSingletonGetPut[sep2.DeviceStatus](
 			stores.DeviceStatuses,
 			func(r *http.Request) string { return r.PathValue("id") },
@@ -1579,12 +1622,12 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/lel/{lelId}", logEventInstance)
 		mux.HandleFunc("DELETE /edev/{id}/lel/{lelId}", logEventInstance)
 	}
-	if !store.IsAbsent(stores.PowerStatuses) {
+	if stores.serves(famPowerStatus) {
 		mux.HandleFunc("GET /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
 		mux.HandleFunc("PUT /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
 	}
 
-	if !store.IsAbsent(stores.MessagingPrograms) {
+	if stores.serves(famMessagingPrograms) {
 		// TextMessages has no gate of its own: it is mounted on the strength
 		// of MessagingPrograms (see miswired.go).
 		textMessages := requireScoped(stores.TextMessages, "TextMessages")
@@ -1685,7 +1728,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/frp/{frpId}", frpInstance)
 	}
 
-	if !store.IsAbsent(stores.ResponseSets) {
+	if stores.serves(famResponseSets) {
 		// Responses has no gate of its own: it is mounted on the strength of
 		// ResponseSets, and every DERControl this server emits carries a
 		// replyTo into it (see miswired.go).

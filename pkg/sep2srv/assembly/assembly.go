@@ -1698,6 +1698,15 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 				return ds
 			},
 		))
+		// DELETE (mode O) removes the device's one stored status. The shared
+		// scoped delete is reused, with the singleton key supplied as the id
+		// path value the helper reads.
+		deleteDeviceStatus := scopedResourceHandler[sep2.DeviceStatus](
+			stores.DeviceStatuses, "id", "dstatKey", itemMethods{Delete: true}, nil)
+		mux.HandleFunc("DELETE /edev/{id}/dstat", func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("dstatKey", coresingleton.SingletonKey)
+			deleteDeviceStatus(w, r)
+		})
 	}
 	if !store.IsAbsent(stores.LogEvents) {
 		// The LogEvent function set at its WADL address.
@@ -1718,14 +1727,14 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// a client a different LogEvent set depending on which it used.
 		//
 		// GET, HEAD and POST are mode M on the list; GET, HEAD and DELETE are
-		// mode M on the instance. Every Mandatory method is mounted. PUT and
-		// DELETE on the list (mode E), and PUT (mode O) and POST (mode E) on
-		// the instance, are not, and each answers 405 from http.ServeMux with
-		// an Allow derived from the registered method set.
+		// mode M on the instance, and PUT (mode O) is mounted there
+		// too. PUT and DELETE on the list (mode E) and POST (mode E) on the
+		// instance are not, and each answers 405 from http.ServeMux with an
+		// Allow derived from the registered method set.
 		//
-		// DELETE on the instance is a WRITE; the caller's ownership of {id} is
-		// enforced by ownershipGate, and scopedResourceHandler adds none of its
-		// own. It is mounted because the WADL declares it Mandatory.
+		// PUT and DELETE on the instance are WRITES; the caller's ownership of
+		// {id} is enforced by ownershipGate, and scopedResourceHandler adds none
+		// of its own.
 		mux.HandleFunc("GET /edev/{id}/lel", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
 			stores.LogEvents, "id", store.SortByIDAsc, corelogevent.BuildLogEventList, 900,
 		))
@@ -1734,9 +1743,15 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(
 			devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity, deviceLogResolver.Resolve)))
 
+		// PUT (mode O) replaces the event at the path's id; the stamp settles
+		// the stored href so a client cannot store a foreign one.
 		logEventInstance := scopedResourceHandler[sep2.LogEvent](
-			stores.LogEvents, "id", "lelId", itemMethods{Delete: true}, nil)
+			stores.LogEvents, "id", "lelId", itemMethods{Put: true, Delete: true},
+			func(r *http.Request, e *sep2.LogEvent) {
+				e.Href = corelogevent.InstanceHref(r.PathValue("id"), r.PathValue("lelId"))
+			})
 		mux.HandleFunc("GET /edev/{id}/lel/{lelId}", logEventInstance)
+		mux.HandleFunc("PUT /edev/{id}/lel/{lelId}", logEventInstance)
 		mux.HandleFunc("DELETE /edev/{id}/lel/{lelId}", logEventInstance)
 	}
 	if stores.serves(famPowerStatus) {

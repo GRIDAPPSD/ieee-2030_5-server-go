@@ -305,7 +305,7 @@ func lookupOwned(w http.ResponseWriter, r *http.Request, subStore *memory.Subscr
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, errForeignSubscription):
 		// Path id and subId only: sub.Href would name the other EndDevice.
-		log.Printf("subscription: refused cross-device %s for EndDevice %s subId %s", action, logsafe.Quote(edevID), logsafe.Quote(subID))
+		log.Printf("subscription: refused cross-device %s for EndDevice %s subId %s", logsafe.Str(action), logsafe.Quote(edevID), logsafe.Quote(subID))
 		http.Error(w, "not found", http.StatusNotFound)
 	default:
 		srverr.Internal(w, r, fmt.Errorf("reading the subscription for %s: %w", action, err))

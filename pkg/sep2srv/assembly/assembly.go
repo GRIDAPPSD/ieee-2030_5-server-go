@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/reqlimit"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 	"io"
 	"log"
@@ -1023,6 +1024,9 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
 		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier), canRead))
 		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
+		subInstance := coresub.HandleSubscription(stores.Subscriptions, asNotificationURIValidator(notifier), canRead)
+		mux.HandleFunc("GET /edev/{id}/sub/{subId}", subInstance)
+		mux.HandleFunc("PUT /edev/{id}/sub/{subId}", subInstance)
 	}
 }
 
@@ -1398,12 +1402,6 @@ func scopedResourceHandlerAt[T store.Copier[T]](
 	return scopedResourceHandlerWith(scope, scopedStore, idParam, itemMethods{}, stamp)
 }
 
-// maxRequestBody caps how much of a request body this package reads into
-// memory. It matches the limit the singleton handler applies to the DER
-// sub-resources (handlers/singleton), so a client cannot find a larger document
-// accepted on one DER path than on its neighbour.
-const maxRequestBody = 1 << 20
-
 // itemMethods declares which WADL-declared methods a [scopedResourceHandler]
 // mount implements beyond GET and HEAD, which every mount serves.
 //
@@ -1536,7 +1534,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 			encoding.WriteXML(w, http.StatusOK, &resource)
 
 		case r.Method == http.MethodPut && methods.Put:
-			body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
+			body, err := io.ReadAll(io.LimitReader(r.Body, reqlimit.MaxBody))
 			if err != nil {
 				http.Error(w, "read body failed", http.StatusBadRequest)
 				return

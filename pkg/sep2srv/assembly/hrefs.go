@@ -233,7 +233,7 @@ func MintableHrefs() []MintableHref {
 		// back in a Location header, which is the strongest form of the
 		// advertisement: the server is telling the client where the thing it
 		// just created now lives.
-		{"/edev/{}/sub/{}", http.MethodGet, "handlers/subscription.HandleCreateSubscription", "the Location header returned by POST /edev/{}/sub; a client re-reads its subscription to confirm what the server stored"},
+		{"/edev/{}/sub/{}", http.MethodGet, "handlers/subscription.HandleSubscription", "the Location header returned by POST /edev/{}/sub; a client re-reads its subscription to confirm what the server stored"},
 		{"/edev/{}/sub/{}", http.MethodDelete, "handlers/subscription.HandleCreateSubscription", "the same Location header, used to cancel the subscription"},
 		{"/edev/{}/lel/{}", http.MethodGet, "handlers/logevent.HandlePostLogEvent", "the Location header returned by POST /edev/{}/lel"},
 		{"/edev/{}/lel/{}", http.MethodDelete, "handlers/logevent.HandlePostLogEvent", "the same Location header, used to remove the event; DELETE on the LogEvent is Mandatory (sep_wadl.xml:1430)"},
@@ -301,8 +301,7 @@ func MintableHrefs() []MintableHref {
 // rejects an empty one, and a real reason names the defect precisely
 // enough that a reader can tell the entry apart from a shrug.
 var knownUnroutedHrefs = map[string]string{
-	"GET /edev/{}/sub/{}": "POST /edev/{id}/sub returns this Location but only DELETE is routed, so a client re-reading its own subscription gets 405. The path IS mounted, so this is a method gap rather than a dead link",
-	"GET /mup/{}/mr/{}":   "POST /mup/{id}/mr and POST /mup/{id} both return this Location and nothing serves it",
+	"GET /mup/{}/mr/{}": "POST /mup/{id}/mr and POST /mup/{id} both return this Location and nothing serves it",
 }
 
 // KnownUnroutedHrefs returns a copy of the ratchet set: the mintable hrefs that

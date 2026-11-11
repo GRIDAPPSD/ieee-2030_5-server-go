@@ -36,10 +36,12 @@ type SubscriptionLister interface {
 
 // SubscriptionWriter is an optional capability the Manager uses to remove
 // a subscription whose POST receiver indicates it has terminated (HTTP
-// 4xx). Stores that do not satisfy this interface get the legacy
-// log-and-leave behavior; *memory.SubscriptionStore satisfies it.
+// 4xx). The delete applies only while the record still names uri, so a PUT
+// that moved it to another receiver is not undone by the old one's answer.
+// Stores that do not satisfy this interface get the legacy log-and-leave
+// behavior; *memory.SubscriptionStore satisfies it.
 type SubscriptionWriter interface {
-	Delete(ctx context.Context, id string) error
+	DeleteIfNotificationURI(ctx context.Context, id, uri string) (bool, error)
 }
 
 // errDeleteAfter4xx is returned by deliver when the receiver rejects with
@@ -47,6 +49,11 @@ type SubscriptionWriter interface {
 // subscription. The worker maps this back to a single info-level log line
 // rather than the generic "deliver failed" line.
 var errDeleteAfter4xx = errors.New("subscription deleted: receiver returned 4xx")
+
+// errKeptAfter4xx is returned by deliver when the receiver rejects with a 4xx
+// but the subscription now names another receiver, so it was not deleted. The
+// worker still counts the 4xx as a client error.
+var errKeptAfter4xx = errors.New("subscription kept: receiver returned 4xx but the record names another receiver")
 
 // ErrQueueFull is returned by NotifyRemoved when the worker pool's
 // bounded queue cannot accept another task. Callers (e.g.
@@ -479,6 +486,10 @@ func (m *Manager) worker(ctx context.Context) {
 			m.observe("client_error")
 			log.Printf("notification: %s receiver returned 4xx, subscription %s deleted",
 				logsafe.Str(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID))
+		case errors.Is(err, errKeptAfter4xx):
+			m.observe("client_error")
+			log.Printf("notification: %s receiver returned 4xx, subscription %s now names another receiver and was kept",
+				logsafe.Str(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID))
 		case errors.Is(err, ErrDestinationUnresolved):
 			log.Printf("notification: cannot resolve destination %s for subscription %s: %s",
 				logsafe.Quote(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID), logsafe.Err(err))
@@ -521,9 +532,14 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 		// a failed delete is logged but does not change the return: the
 		// caller still needs to know this was a 4xx outcome.
 		if writer, ok := m.store.(SubscriptionWriter); ok && task.subscriptionID != "" {
-			if delErr := writer.Delete(ctx, task.subscriptionID); delErr != nil {
+			deleted, delErr := writer.DeleteIfNotificationURI(ctx, task.subscriptionID, task.notificationURI)
+			switch {
+			case delErr != nil:
 				log.Printf("notification: delete subscription %s after 4xx from %s: %s",
 					logsafe.Quote(task.subscriptionID), logsafe.Str(target), logsafe.Err(delErr))
+			case !deleted:
+				return fmt.Errorf("POST notification to %s: status %d, subscription %s: %w",
+					target, resp.StatusCode, logsafe.Quote(task.subscriptionID), errKeptAfter4xx)
 			}
 		}
 		return fmt.Errorf("POST notification to %s: status %d: %w",

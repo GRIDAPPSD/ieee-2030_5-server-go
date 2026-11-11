@@ -50,6 +50,32 @@ func (s *SubscriptionStore) Create(ctx context.Context, id string, sub sep2.Subs
 	return s.persistSnapshot()
 }
 
+// Update replaces the stored subscription at id and keeps the resource index
+// in step, so a subscription whose subscribedResource changed is delivered for
+// the new resource and no longer for the old one. The embedded Store's own
+// Update is shadowed on purpose: it would leave the index and the snapshot
+// describing the previous record. The device index is untouched, because the
+// device is part of the href and an update never moves a subscription between
+// devices; the caller must pass the stored Href.
+func (s *SubscriptionStore) Update(ctx context.Context, id string, sub sep2.Subscription) error {
+	s.idxMu.Lock()
+	old, err := s.Store.Get(ctx, id)
+	if err != nil {
+		s.idxMu.Unlock()
+		return err
+	}
+	if err := s.Store.Update(ctx, id, sub); err != nil {
+		s.idxMu.Unlock()
+		return err
+	}
+	if old.SubscribedResource != sub.SubscribedResource {
+		unindex(s.resourceIndex, old.SubscribedResource, id)
+		index(s.resourceIndex, sub.SubscribedResource, id)
+	}
+	s.idxMu.Unlock()
+	return s.persistSnapshot()
+}
+
 func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 	if err := s.removeOne(ctx, id); err != nil {
 		return err
@@ -57,16 +83,43 @@ func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 	return s.persistSnapshot()
 }
 
+// DeleteIfNotificationURI deletes subscription id only while it still names
+// uri, and reports whether it did. A receiver that answers 4xx ends the
+// subscription it was sent for; a PUT that has since pointed the record at a
+// different receiver must survive that answer. store.ErrNotFound means the
+// record is already gone.
+func (s *SubscriptionStore) DeleteIfNotificationURI(ctx context.Context, id, uri string) (bool, error) {
+	deleted, err := s.removeWhere(ctx, id, func(sub sep2.Subscription) bool { return sub.NotificationURI == uri })
+	if err != nil || !deleted {
+		return false, err
+	}
+	return true, s.persistSnapshot()
+}
+
 // removeOne removes one subscription and its index entries, returning
 // store.ErrNotFound when it is absent. It does not persist; callers do, so a
-// batch can flush once.
+// batch can flush once. It holds idxMu from the read to the delete, as Update
+// does, so a concurrent PUT cannot move the record's resource between the two
+// and leave an index entry behind.
 func (s *SubscriptionStore) removeOne(ctx context.Context, id string) error {
+	_, err := s.removeWhere(ctx, id, nil)
+	return err
+}
+
+// removeWhere is removeOne limited to a record that satisfies match (nil
+// matches any), and reports whether it removed one.
+func (s *SubscriptionStore) removeWhere(ctx context.Context, id string, match func(sep2.Subscription) bool) (bool, error) {
+	s.idxMu.Lock()
+	defer s.idxMu.Unlock()
 	old, err := s.Store.Get(ctx, id)
 	if err != nil {
-		return err
+		return false, err
 	}
-	s.removeIndex(id, old)
-	return s.Store.Delete(ctx, id)
+	if match != nil && !match(old) {
+		return false, nil
+	}
+	s.removeIndexLocked(id, old)
+	return true, s.Store.Delete(ctx, id)
 }
 
 // DeleteDevice removes every subscription that belongs to deviceID or watches
@@ -210,34 +263,33 @@ func (s *SubscriptionStore) ListByDeviceWithIDs(_ context.Context, deviceID stri
 func (s *SubscriptionStore) indexSub(id string, sub sep2.Subscription) {
 	s.idxMu.Lock()
 	defer s.idxMu.Unlock()
-	if sub.SubscribedResource != "" {
-		s.resourceIndex[sub.SubscribedResource] = append(s.resourceIndex[sub.SubscribedResource], id)
-	}
-	if edevID := edevIDFromHref(sub.Href); edevID != "" {
-		s.deviceIndex[edevID] = append(s.deviceIndex[edevID], id)
+	index(s.resourceIndex, sub.SubscribedResource, id)
+	index(s.deviceIndex, edevIDFromHref(sub.Href), id)
+}
+
+// removeIndexLocked is removeIndex for a caller already holding idxMu.
+func (s *SubscriptionStore) removeIndexLocked(id string, sub sep2.Subscription) {
+	unindex(s.resourceIndex, sub.SubscribedResource, id)
+	unindex(s.deviceIndex, edevIDFromHref(sub.Href), id)
+}
+
+// index appends id under key; an empty key is out of scope and is skipped.
+func index(idx map[string][]string, key, id string) {
+	if key != "" {
+		idx[key] = append(idx[key], id)
 	}
 }
 
-func (s *SubscriptionStore) removeIndex(id string, sub sep2.Subscription) {
-	s.idxMu.Lock()
-	defer s.idxMu.Unlock()
-
-	if sub.SubscribedResource != "" {
-		ids := s.resourceIndex[sub.SubscribedResource]
-		for i, sid := range ids {
-			if sid == id {
-				s.resourceIndex[sub.SubscribedResource] = append(ids[:i], ids[i+1:]...)
-				break
-			}
-		}
+// unindex removes id from under key, keeping the order of the rest.
+func unindex(idx map[string][]string, key, id string) {
+	if key == "" {
+		return
 	}
-	if edevID := edevIDFromHref(sub.Href); edevID != "" {
-		ids := s.deviceIndex[edevID]
-		for i, sid := range ids {
-			if sid == id {
-				s.deviceIndex[edevID] = append(ids[:i], ids[i+1:]...)
-				break
-			}
+	ids := idx[key]
+	for i, sid := range ids {
+		if sid == id {
+			idx[key] = append(ids[:i], ids[i+1:]...)
+			return
 		}
 	}
 }

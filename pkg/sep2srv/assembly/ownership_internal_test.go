@@ -283,6 +283,8 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/sub":            true,  // a manager reads what the managed device reads
 	"POST /edev/{id}/sub":           false, // not the aggregator's own SubscriptionListLink
 	"DELETE /edev/{id}/sub/{subId}": false, // not the aggregator's own SubscriptionListLink
+	"GET /edev/{id}/sub/{subId}":    true,  // a manager reads what the managed device reads
+	"PUT /edev/{id}/sub/{subId}":    false, // not the aggregator's own SubscriptionListLink
 
 	"GET /edev/{id}/cfg": true,
 	"PUT /edev/{id}/cfg": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default

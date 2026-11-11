@@ -69,18 +69,8 @@ func (s *SubscriptionStore) Update(ctx context.Context, id string, sub sep2.Subs
 		return err
 	}
 	if old.SubscribedResource != sub.SubscribedResource {
-		if old.SubscribedResource != "" {
-			ids := s.resourceIndex[old.SubscribedResource]
-			for i, sid := range ids {
-				if sid == id {
-					s.resourceIndex[old.SubscribedResource] = append(ids[:i], ids[i+1:]...)
-					break
-				}
-			}
-		}
-		if sub.SubscribedResource != "" {
-			s.resourceIndex[sub.SubscribedResource] = append(s.resourceIndex[sub.SubscribedResource], id)
-		}
+		unindex(s.resourceIndex, old.SubscribedResource, id)
+		index(s.resourceIndex, sub.SubscribedResource, id)
 	}
 	s.idxMu.Unlock()
 	return s.persistSnapshot()
@@ -95,13 +85,17 @@ func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 
 // removeOne removes one subscription and its index entries, returning
 // store.ErrNotFound when it is absent. It does not persist; callers do, so a
-// batch can flush once.
+// batch can flush once. It holds idxMu from the read to the delete, as Update
+// does, so a concurrent PUT cannot move the record's resource between the two
+// and leave an index entry behind.
 func (s *SubscriptionStore) removeOne(ctx context.Context, id string) error {
+	s.idxMu.Lock()
+	defer s.idxMu.Unlock()
 	old, err := s.Store.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	s.removeIndex(id, old)
+	s.removeIndexLocked(id, old)
 	return s.Store.Delete(ctx, id)
 }
 
@@ -246,34 +240,33 @@ func (s *SubscriptionStore) ListByDeviceWithIDs(_ context.Context, deviceID stri
 func (s *SubscriptionStore) indexSub(id string, sub sep2.Subscription) {
 	s.idxMu.Lock()
 	defer s.idxMu.Unlock()
-	if sub.SubscribedResource != "" {
-		s.resourceIndex[sub.SubscribedResource] = append(s.resourceIndex[sub.SubscribedResource], id)
-	}
-	if edevID := edevIDFromHref(sub.Href); edevID != "" {
-		s.deviceIndex[edevID] = append(s.deviceIndex[edevID], id)
+	index(s.resourceIndex, sub.SubscribedResource, id)
+	index(s.deviceIndex, edevIDFromHref(sub.Href), id)
+}
+
+// removeIndexLocked is removeIndex for a caller already holding idxMu.
+func (s *SubscriptionStore) removeIndexLocked(id string, sub sep2.Subscription) {
+	unindex(s.resourceIndex, sub.SubscribedResource, id)
+	unindex(s.deviceIndex, edevIDFromHref(sub.Href), id)
+}
+
+// index appends id under key; an empty key is out of scope and is skipped.
+func index(idx map[string][]string, key, id string) {
+	if key != "" {
+		idx[key] = append(idx[key], id)
 	}
 }
 
-func (s *SubscriptionStore) removeIndex(id string, sub sep2.Subscription) {
-	s.idxMu.Lock()
-	defer s.idxMu.Unlock()
-
-	if sub.SubscribedResource != "" {
-		ids := s.resourceIndex[sub.SubscribedResource]
-		for i, sid := range ids {
-			if sid == id {
-				s.resourceIndex[sub.SubscribedResource] = append(ids[:i], ids[i+1:]...)
-				break
-			}
-		}
+// unindex removes id from under key, keeping the order of the rest.
+func unindex(idx map[string][]string, key, id string) {
+	if key == "" {
+		return
 	}
-	if edevID := edevIDFromHref(sub.Href); edevID != "" {
-		ids := s.deviceIndex[edevID]
-		for i, sid := range ids {
-			if sid == id {
-				s.deviceIndex[edevID] = append(ids[:i], ids[i+1:]...)
-				break
-			}
+	ids := idx[key]
+	for i, sid := range ids {
+		if sid == id {
+			idx[key] = append(ids[:i], ids[i+1:]...)
+			return
 		}
 	}
 }

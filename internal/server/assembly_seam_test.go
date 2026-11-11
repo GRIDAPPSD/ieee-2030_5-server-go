@@ -168,6 +168,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /msg/{msgId}/tm/{tmId}",
 	"GET /mup",
 	"GET /mup/{id}",
+	"GET /mup/{id}/mr/{mrId}",
 	"GET /rsps",
 	"GET /rsps/{rspsId}",
 	"GET /rsps/{rspsId}/rsp",

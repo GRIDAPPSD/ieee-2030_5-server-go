@@ -281,8 +281,8 @@ func MintableHrefs() []MintableHref {
 // Removing an entry is the fix landing. TestKnownUnroutedHrefs_RatchetIsExact
 // fails if an entry here starts routing, so the set cannot quietly stop
 // shrinking, and it fails if a shape stops routing without being added here.
-// Mounting their routes removed three entries: GET /edev/{}/frq/{}, GET
-// /edev/{}/frp/{} and GET /msg/{}/tm/{}.
+// Mounting their routes removed four entries: GET /edev/{}/frq/{}, GET
+// /edev/{}/frp/{}, GET /msg/{}/tm/{} and GET /mup/{}/mr/{}.
 //
 // A fourth removal, GET /edev/{}/log/{}, is worth being precise about,
 // because an entry can leave this set for two very different reasons and
@@ -292,17 +292,13 @@ func MintableHrefs() []MintableHref {
 // (sep_wadl.xml:1404) and which the registry above now carries for both GET
 // and DELETE. The old shape is gone from the registry only because the POST
 // handler stamps the declared address instead of the undeclared one; the
-// reachability the entry recorded as missing is present. The two entries
-// that remain still need real fixes, and core has no public issue
-// tracker to anchor a per-entry owner tag to. What keeps this set a
-// ratchet rather than a bare suppression is not an owner tag but the
-// non-empty, specific reason every entry carries:
+// reachability the entry recorded as missing is present. The set is now
+// empty. What keeps it a ratchet rather than a bare suppression for any
+// future entry is the non-empty, specific reason every entry carries:
 // TestKnownUnroutedHrefs_EntriesAreDeclaredAndReasoned in hrefs_test.go
 // rejects an empty one, and a real reason names the defect precisely
 // enough that a reader can tell the entry apart from a shrug.
-var knownUnroutedHrefs = map[string]string{
-	"GET /mup/{}/mr/{}": "POST /mup/{id}/mr and POST /mup/{id} both return this Location and nothing serves it",
-}
+var knownUnroutedHrefs = map[string]string{}
 
 // KnownUnroutedHrefs returns a copy of the ratchet set: the mintable hrefs that
 // are known not to resolve and that [AssertMintableHrefs] tolerates, keyed

@@ -1061,6 +1061,9 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(
 		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
 	))
+	mux.HandleFunc("GET /mup/{id}/mr/{mrId}", coremetering.HandleMirrorMeterReading(
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider, requireRecords,
+	))
 
 	// IEEE 2030.5-2018 section 10.11.3 rule (d): the client posts readings
 	// "to the resource identified in the Metering server's response... (e.g.,

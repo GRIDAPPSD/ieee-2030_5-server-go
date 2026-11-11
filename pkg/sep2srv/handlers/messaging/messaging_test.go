@@ -145,3 +145,23 @@ func TestHandlePostTextMessage_ParallelPostsGetDistinctIDs(t *testing.T) {
 		return httptest.NewRequest(http.MethodPost, "/msg/m1/tm", bytes.NewReader(body))
 	})
 }
+
+func TestActiveTextMessageListHref(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"/msg/m1", "/msg/m1/acttm", true},
+		{" /msg/m1 ", "/msg/m1/acttm", true},
+		{"/msg/m1/tm", "", false},
+		{"/msg/", "", false},
+		{"/edev/1", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := messaging.ActiveTextMessageListHref(tc.in)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("ActiveTextMessageListHref(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}

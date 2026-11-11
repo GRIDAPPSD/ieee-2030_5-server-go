@@ -47,17 +47,17 @@ func ControlState(c sep2.DERControl, lc LifecycleRecord, haveLC bool, now int64)
 	}
 }
 
-// intervalOver reports an interval that can never run again at now: there is
+// IntervalOver reports an interval that can never run again at now: there is
 // none, or it has ended. It is checked before any lifecycle read, and before
 // DeriveStatus, which reports an ended 2018-edition event as Active forever.
-func intervalOver(iv *sep2.DateTimeInterval, now int64) bool {
+func IntervalOver(iv *sep2.DateTimeInterval, now int64) bool {
 	return iv == nil || IntervalEnded(iv, now)
 }
 
 // over reports a control that can never act again at now from its interval
 // alone.
 func over(c sep2.DERControl, now int64) bool {
-	return intervalOver(c.Interval, now)
+	return IntervalOver(c.Interval, now)
 }
 
 // lifecycleReader is the part of a lifecycle store ControlState's callers read.

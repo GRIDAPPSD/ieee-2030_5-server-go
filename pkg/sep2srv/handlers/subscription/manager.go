@@ -36,10 +36,12 @@ type SubscriptionLister interface {
 
 // SubscriptionWriter is an optional capability the Manager uses to remove
 // a subscription whose POST receiver indicates it has terminated (HTTP
-// 4xx). Stores that do not satisfy this interface get the legacy
-// log-and-leave behavior; *memory.SubscriptionStore satisfies it.
+// 4xx). The delete applies only while the record still names uri, so a PUT
+// that moved it to another receiver is not undone by the old one's answer.
+// Stores that do not satisfy this interface get the legacy log-and-leave
+// behavior; *memory.SubscriptionStore satisfies it.
 type SubscriptionWriter interface {
-	Delete(ctx context.Context, id string) error
+	DeleteIfNotificationURI(ctx context.Context, id, uri string) (bool, error)
 }
 
 // errDeleteAfter4xx is returned by deliver when the receiver rejects with
@@ -521,9 +523,14 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 		// a failed delete is logged but does not change the return: the
 		// caller still needs to know this was a 4xx outcome.
 		if writer, ok := m.store.(SubscriptionWriter); ok && task.subscriptionID != "" {
-			if delErr := writer.Delete(ctx, task.subscriptionID); delErr != nil {
+			deleted, delErr := writer.DeleteIfNotificationURI(ctx, task.subscriptionID, task.notificationURI)
+			switch {
+			case delErr != nil:
 				log.Printf("notification: delete subscription %s after 4xx from %s: %s",
 					logsafe.Quote(task.subscriptionID), logsafe.Str(target), logsafe.Err(delErr))
+			case !deleted:
+				return fmt.Errorf("POST notification to %s: status %d, subscription %s now names another receiver and was kept",
+					target, resp.StatusCode, logsafe.Quote(task.subscriptionID))
 			}
 		}
 		return fmt.Errorf("POST notification to %s: status %d: %w",

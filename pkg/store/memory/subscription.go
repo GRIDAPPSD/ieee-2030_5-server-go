@@ -83,20 +83,43 @@ func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 	return s.persistSnapshot()
 }
 
+// DeleteIfNotificationURI deletes subscription id only while it still names
+// uri, and reports whether it did. A receiver that answers 4xx ends the
+// subscription it was sent for; a PUT that has since pointed the record at a
+// different receiver must survive that answer. store.ErrNotFound means the
+// record is already gone.
+func (s *SubscriptionStore) DeleteIfNotificationURI(ctx context.Context, id, uri string) (bool, error) {
+	deleted, err := s.removeWhere(ctx, id, func(sub sep2.Subscription) bool { return sub.NotificationURI == uri })
+	if err != nil || !deleted {
+		return false, err
+	}
+	return true, s.persistSnapshot()
+}
+
 // removeOne removes one subscription and its index entries, returning
 // store.ErrNotFound when it is absent. It does not persist; callers do, so a
 // batch can flush once. It holds idxMu from the read to the delete, as Update
 // does, so a concurrent PUT cannot move the record's resource between the two
 // and leave an index entry behind.
 func (s *SubscriptionStore) removeOne(ctx context.Context, id string) error {
+	_, err := s.removeWhere(ctx, id, nil)
+	return err
+}
+
+// removeWhere is removeOne limited to a record that satisfies match (nil
+// matches any), and reports whether it removed one.
+func (s *SubscriptionStore) removeWhere(ctx context.Context, id string, match func(sep2.Subscription) bool) (bool, error) {
 	s.idxMu.Lock()
 	defer s.idxMu.Unlock()
 	old, err := s.Store.Get(ctx, id)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if match != nil && !match(old) {
+		return false, nil
 	}
 	s.removeIndexLocked(id, old)
-	return s.Store.Delete(ctx, id)
+	return true, s.Store.Delete(ctx, id)
 }
 
 // DeleteDevice removes every subscription that belongs to deviceID or watches

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -81,4 +82,38 @@ func TestDeliver4xxFromCurrentReceiverStillDeletes(t *testing.T) {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Get error = %v, want ErrNotFound", err)
 	}
+}
+
+// The worker counts a 4xx as a client error even when the subscription was
+// kept because it now names another receiver.
+func TestWorkerCountsClientErrorWhenSubscriptionKept(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	oldRecv := rejectingReceiver(t)
+	s, sub := seedForDelivery(t, oldRecv.URL+"/notify")
+	m := NewManager(s, 1, 1, loopbackReceivers)
+	outcomes := make(chan string, 4)
+	m.SetObserver(func(o string) { outcomes <- o })
+
+	moved := sub
+	moved.NotificationURI = "https://new.example.test/notify"
+	if err := s.Update(ctx, "s1", moved); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	done := make(chan struct{})
+	go func() { m.Start(ctx); close(done) }()
+	task := notificationTask{subscriptionID: "s1", notificationURI: oldRecv.URL + "/notify", payload: []byte("<Notification/>")}
+	if err := m.enqueue(task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	select {
+	case got := <-outcomes:
+		if got != "client_error" {
+			t.Errorf("outcome = %q, want client_error", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no outcome observed for a 4xx from a replaced receiver")
+	}
+	cancel()
+	<-done
 }

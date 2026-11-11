@@ -50,6 +50,11 @@ type SubscriptionWriter interface {
 // rather than the generic "deliver failed" line.
 var errDeleteAfter4xx = errors.New("subscription deleted: receiver returned 4xx")
 
+// errKeptAfter4xx is returned by deliver when the receiver rejects with a 4xx
+// but the subscription now names another receiver, so it was not deleted. The
+// worker still counts the 4xx as a client error.
+var errKeptAfter4xx = errors.New("subscription kept: receiver returned 4xx but the record names another receiver")
+
 // ErrQueueFull is returned by NotifyRemoved when the worker pool's
 // bounded queue cannot accept another task. Callers (e.g.
 // HandleDeleteSubscription) treat this as best-effort: a full queue is
@@ -481,6 +486,10 @@ func (m *Manager) worker(ctx context.Context) {
 			m.observe("client_error")
 			log.Printf("notification: %s receiver returned 4xx, subscription %s deleted",
 				logsafe.Str(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID))
+		case errors.Is(err, errKeptAfter4xx):
+			m.observe("client_error")
+			log.Printf("notification: %s receiver returned 4xx, subscription %s now names another receiver and was kept",
+				logsafe.Str(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID))
 		case errors.Is(err, ErrDestinationUnresolved):
 			log.Printf("notification: cannot resolve destination %s for subscription %s: %s",
 				logsafe.Quote(redactURI(task.notificationURI)), logsafe.Quote(task.subscriptionID), logsafe.Err(err))
@@ -529,8 +538,8 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 				log.Printf("notification: delete subscription %s after 4xx from %s: %s",
 					logsafe.Quote(task.subscriptionID), logsafe.Str(target), logsafe.Err(delErr))
 			case !deleted:
-				return fmt.Errorf("POST notification to %s: status %d, subscription %s now names another receiver and was kept",
-					target, resp.StatusCode, logsafe.Quote(task.subscriptionID))
+				return fmt.Errorf("POST notification to %s: status %d, subscription %s: %w",
+					target, resp.StatusCode, logsafe.Quote(task.subscriptionID), errKeptAfter4xx)
 			}
 		}
 		return fmt.Errorf("POST notification to %s: status %d: %w",

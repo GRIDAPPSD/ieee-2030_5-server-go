@@ -362,3 +362,37 @@ func TestPersistence_DeleteNotFoundDoesNotWriteSnapshot(t *testing.T) {
 // sortRecords helper and newSub helper are defined in
 // subscription_testhooks_test.go (same package _test); no redeclaration
 // needed here.
+
+// A PUT replaces the record and its indexed resource; a restart must serve
+// the replacement, not the record as first created.
+func TestPersistence_UpdateWritesSnapshotToDisk(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, path := newPersistedStore(t)
+
+	if err := store.Create(ctx, "sub1", newSub("/edev/1/sub/1", "/edev/1", "http://old.test/notify")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Update(ctx, "sub1", newSub("/edev/1/sub/1", "/edev/1/der", "http://new.test/notify")); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	revived, err := memory.NewSubscriptionStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got, err := revived.Get(ctx, "sub1")
+	if err != nil {
+		t.Fatalf("Get after reload: %v", err)
+	}
+	if got.NotificationURI != "http://new.test/notify" || got.SubscribedResource != "/edev/1/der" {
+		t.Errorf("reloaded %q for %q, want the updated http://new.test/notify for /edev/1/der",
+			got.NotificationURI, got.SubscribedResource)
+	}
+	if recs, _ := revived.ListByResource(ctx, "/edev/1/der"); len(recs) != 1 {
+		t.Errorf("reloaded index holds %d records for the new resource, want 1", len(recs))
+	}
+	if recs, _ := revived.ListByResource(ctx, "/edev/1"); len(recs) != 0 {
+		t.Errorf("reloaded index holds %d records for the old resource, want 0", len(recs))
+	}
+}

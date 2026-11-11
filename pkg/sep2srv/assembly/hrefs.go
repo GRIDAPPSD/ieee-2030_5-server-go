@@ -284,7 +284,7 @@ func MintableHrefs() []MintableHref {
 // Mounting their routes removed four entries: GET /edev/{}/frq/{}, GET
 // /edev/{}/frp/{}, GET /msg/{}/tm/{} and GET /mup/{}/mr/{}.
 //
-// A fourth removal, GET /edev/{}/log/{}, is worth being precise about,
+// A fifth removal, GET /edev/{}/log/{}, is worth being precise about,
 // because an entry can leave this set for two very different reasons and
 // only one of them is a fix. It did NOT leave because its mint site vanished
 // and took the shape with it: the resource the Location named is now

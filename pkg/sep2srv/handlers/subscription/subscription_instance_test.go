@@ -309,3 +309,38 @@ func TestSubscriptionStore_UpdateOfAbsentIDIsNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want store.ErrNotFound", err)
 	}
 }
+
+// A PUT body past the read cap is cut short and refused; the stored record is
+// untouched. The padding sits before the document's fields so that a larger
+// cap would let the document parse and the PUT succeed.
+func TestHandleSubscription_PutOverTheBodyCapIsRefused(t *testing.T) {
+	t.Parallel()
+	s := memory.NewSubscriptionStore()
+	orig := seedSubscription(t, s, "edev-A", "sub-1", "/edev/edev-A", "https://subscriber.test/notify")
+	mux := instanceMux(s, allowAll, acceptURI)
+
+	body := `<Subscription xmlns="urn:ieee:std:2030.5:ns" href="/edev/edev-A/sub/sub-1">` +
+		strings.Repeat(" ", 1<<20) +
+		`<subscribedResource>/edev/edev-A</subscribedResource>` +
+		`<notificationURI>https://changed.test/notify</notificationURI></Subscription>`
+	rec := do(mux, http.MethodPut, "/edev/edev-A/sub/sub-1", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	kept, err := s.Store.Get(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if kept.NotificationURI != orig.NotificationURI {
+		t.Errorf("an over-cap PUT changed notificationURI to %q", kept.NotificationURI)
+	}
+}
+
+// Not parallel: it swaps the process-wide log output (captureLog).
+func TestHandleCreateSubscription_NilCheckLogNamesPutToo(t *testing.T) {
+	logs := captureLog(t)
+	_ = subscription.HandleCreateSubscription(memory.NewSubscriptionStore(), acceptURI, nil)
+	if !strings.Contains(logs.String(), "PUT /edev/{id}/sub/{subId}") {
+		t.Errorf("startup log does not say PUT is refused too; got:\n%s", logs.String())
+	}
+}

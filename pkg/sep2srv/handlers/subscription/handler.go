@@ -37,6 +37,10 @@ var subscriptionIDOverride func(r *http.Request) string
 // csip_test_hooks build tag is present. Nil in production builds.
 var subscriptionRefuseCreate func(id string) bool
 
+// maxRequestBody caps how much of a Subscription document the create and PUT
+// handlers read; a longer body is cut short and fails to parse.
+const maxRequestBody = 1 << 20
+
 // subscriptionHref builds the href a subscription created under EndDevice
 // edevID with storage id id carries on the wire. The create and delete
 // paths below both call this so the two can't drift apart (#435).
@@ -209,7 +213,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 		validate = DestinationPolicy{}.ValidateNotificationURI
 	}
 	if canRead == nil {
-		log.Print("subscription: no subscribedResource check wired; POST /edev/{id}/sub refuses every Subscription")
+		log.Print("subscription: no subscribedResource check wired; POST /edev/{id}/sub and PUT /edev/{id}/sub/{subId} refuse every Subscription")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -219,7 +223,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 
 		edevID := r.PathValue("id")
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
 		if err != nil {
 			http.Error(w, "read body failed", http.StatusBadRequest)
 			return
@@ -288,6 +292,27 @@ func getOwnedSubscription(ctx context.Context, subStore *memory.SubscriptionStor
 	return sub, nil
 }
 
+// lookupOwned reads subscription subID for the EndDevice edevID and, when it
+// cannot be served, writes the response and returns false. Absent and foreign
+// records both answer 404, so the response cannot probe another device's
+// subscription ids; action names the request in the log line for a foreign one.
+func lookupOwned(w http.ResponseWriter, r *http.Request, subStore *memory.SubscriptionStore, edevID, subID, action string) (sep2.Subscription, bool) {
+	sub, err := getOwnedSubscription(r.Context(), subStore, edevID, subID)
+	switch {
+	case err == nil:
+		return sub, true
+	case errors.Is(err, store.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, errForeignSubscription):
+		// Path id and subId only: sub.Href would name the other EndDevice.
+		log.Printf("subscription: refused cross-device %s for EndDevice %s subId %s", action, logsafe.Quote(edevID), logsafe.Quote(subID))
+		http.Error(w, "not found", http.StatusNotFound)
+	default:
+		srverr.Internal(w, r, fmt.Errorf("reading the subscription for %s: %w", action, err))
+	}
+	return sep2.Subscription{}, false
+}
+
 // HandleSubscription returns a handler for GET, HEAD and PUT on
 // /edev/{id}/sub/{subId}, the Location POST /edev/{id}/sub hands back.
 // DELETE on the same path is [HandleDeleteSubscription].
@@ -318,17 +343,8 @@ func HandleSubscription(subStore *memory.SubscriptionStore, validate func(ctx co
 			return
 		}
 
-		stored, err := getOwnedSubscription(r.Context(), subStore, edevID, subID)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		case errors.Is(err, errForeignSubscription):
-			log.Printf("subscription: refused cross-device access for EndDevice %s subId %s", logsafe.Quote(edevID), logsafe.Quote(subID))
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		case err != nil:
-			srverr.Internal(w, r, fmt.Errorf("reading the subscription: %w", err))
+		stored, ok := lookupOwned(w, r, subStore, edevID, subID, "access")
+		if !ok {
 			return
 		}
 
@@ -337,7 +353,7 @@ func HandleSubscription(subStore *memory.SubscriptionStore, validate func(ctx co
 			return
 		}
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
 		if err != nil {
 			http.Error(w, "read body failed", http.StatusBadRequest)
 			return
@@ -404,19 +420,8 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		// deletable by any caller who could reach this route (#435). 404,
 		// not 403, so the response can't be used to probe another device's
 		// subscription IDs.
-		sub, getErr := getOwnedSubscription(r.Context(), subStore, edevID, subID)
-		switch {
-		case errors.Is(getErr, store.ErrNotFound):
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		case errors.Is(getErr, errForeignSubscription):
-			// Path id and subId only: sub.Href would name the other
-			// EndDevice this subId actually belongs to.
-			log.Printf("subscription: refused cross-device delete for EndDevice %s subId %s", logsafe.Quote(edevID), logsafe.Quote(subID))
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		case getErr != nil:
-			srverr.Internal(w, r, fmt.Errorf("the lookup before delete failed: %w", getErr))
+		sub, ok := lookupOwned(w, r, subStore, edevID, subID, "delete")
+		if !ok {
 			return
 		}
 

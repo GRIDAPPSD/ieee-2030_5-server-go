@@ -140,3 +140,40 @@ func TestLogEvent_NoDeviceLogConfiguredStillServes(t *testing.T) {
 	srv, _ := lelServer(t)
 	postLogEvent(t, srv, "d1", sampleLogEvent(1, 1))
 }
+
+// A PUT replaces the stored event, and the device log is the only copy that
+// survives a restart, so the replacement is a line too.
+func TestLogEvent_PutWritesOneDeviceLogLineWithTheReplacement(t *testing.T) {
+	srv, lines := deviceLogServer(t)
+	loc := postLogEvent(t, srv, "d1", sampleLogEvent(17, 5))
+
+	repl := sampleLogEvent(18, 6)
+	repl.Details = "replaced by put"
+	if code := putLogEventBody(t, srv, loc, repl); code != http.StatusNoContent {
+		t.Fatalf("PUT %s status = %d, want 204", loc, code)
+	}
+	// A refused PUT (unknown id) must add nothing.
+	if code := putLogEventBody(t, srv, "/edev/d1/lel/nosuch", repl); code != http.StatusNotFound {
+		t.Fatalf("PUT unknown id status = %d, want 404", code)
+	}
+
+	got := lines()
+	if len(got) != 2 {
+		t.Fatalf("device log logevent lines = %d, want 2 (the POST and the PUT)", len(got))
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(got[1], &rec); err != nil {
+		t.Fatalf("PUT line is not one JSON object: %v: %s", err, got[1])
+	}
+	want := map[string]any{
+		"kind": "logevent", "actor": testLFDI, "edev": "d1", "href": loc,
+		"logEventCode": 6.0, "logEventID": 18.0, "logEventPEN": 54465.0,
+		"profileID": 2.0, "createdDateTime": float64(repl.CreatedDateTime),
+		"details": "replaced by put",
+	}
+	for k, v := range want {
+		if rec[k] != v {
+			t.Errorf("PUT line field %s = %v, want %v", k, rec[k], v)
+		}
+	}
+}

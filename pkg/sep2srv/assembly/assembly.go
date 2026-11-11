@@ -1417,6 +1417,12 @@ type itemMethods struct {
 	// path names.
 	Put bool
 
+	// PutUpdateOnly mounts PUT as a replace of a record that already exists:
+	// an id with no stored record answers 404 and creates nothing. Use it
+	// where the id is the client's to choose, so an upsert would let the client
+	// pick the key. It takes the place of Put, not in addition to it.
+	PutUpdateOnly bool
+
 	// Delete mounts DELETE on the resource, removing the record the path
 	// names. It is a WRITE, and this helper carries no ownership binding of its
 	// own: it constrains WHERE a record may be reached from, not WHO may reach
@@ -1436,7 +1442,7 @@ func (m itemMethods) allow() string {
 	if m.Delete {
 		allowed = append(allowed, "DELETE")
 	}
-	if m.Put {
+	if m.Put || m.PutUpdateOnly {
 		allowed = append(allowed, "PUT")
 	}
 	sort.Strings(allowed)
@@ -1533,7 +1539,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 			}
 			encoding.WriteXML(w, http.StatusOK, &resource)
 
-		case r.Method == http.MethodPut && methods.Put:
+		case r.Method == http.MethodPut && (methods.Put || methods.PutUpdateOnly):
 			body, err := io.ReadAll(io.LimitReader(r.Body, reqlimit.MaxBody))
 			if err != nil {
 				http.Error(w, "read body failed", http.StatusBadRequest)
@@ -1549,6 +1555,20 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 			// href and any link it invented never reach the store.
 			if stamp != nil {
 				stamp(r, &resource)
+			}
+			if methods.PutUpdateOnly {
+				// One Update, no Create: a DELETE that wins the race is a 404,
+				// and the client's id never becomes a new key.
+				if err := scopedStore.Update(r.Context(), parentKey, id, resource); err != nil {
+					if errors.Is(err, store.ErrNotFound) {
+						http.Error(w, "not found", http.StatusNotFound)
+						return
+					}
+					srverr.Internal(w, r, err)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
 			}
 			if err := scopedStore.Create(r.Context(), parentKey, id, resource); err != nil {
 				if !errors.Is(err, store.ErrAlreadyExists) {
@@ -1704,6 +1724,8 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		deleteDeviceStatus := scopedResourceHandler[sep2.DeviceStatus](
 			stores.DeviceStatuses, "id", "dstatKey", itemMethods{Delete: true}, nil)
 		mux.HandleFunc("DELETE /edev/{id}/dstat", func(w http.ResponseWriter, r *http.Request) {
+			// The helper reads the id from a path value; the singleton's one
+			// key is supplied here because the route carries none.
 			r.SetPathValue("dstatKey", coresingleton.SingletonKey)
 			deleteDeviceStatus(w, r)
 		})
@@ -1738,17 +1760,20 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/lel", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
 			stores.LogEvents, "id", store.SortByIDAsc, corelogevent.BuildLogEventList, 900,
 		))
-		// Only the create path is decorated: the device log records what a
-		// device posted, and the list and instance routes read the plain store.
-		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(
-			devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity, deviceLogResolver.Resolve)))
+		// POST and PUT go through the device-log decorator: the device log
+		// records what a device posted or replaced, and it is the only copy
+		// that survives a restart. GET and DELETE reach the inner store.
+		logEvents := devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity, deviceLogResolver.Resolve)
+		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(logEvents))
 
-		// PUT (mode O) replaces the event at the path's id; the stamp settles
-		// the stored href so a client cannot store a foreign one.
+		// PUT (mode O) replaces an event that exists and never creates one: the
+		// id in the path is the client's, and POST is what mints ids. The stamp
+		// settles the stored href from path values that matched a stored id.
+		const lelParent, lelParam = "id", "lelId"
 		logEventInstance := scopedResourceHandler[sep2.LogEvent](
-			stores.LogEvents, "id", "lelId", itemMethods{Put: true, Delete: true},
+			logEvents, lelParent, lelParam, itemMethods{PutUpdateOnly: true, Delete: true},
 			func(r *http.Request, e *sep2.LogEvent) {
-				e.Href = corelogevent.InstanceHref(r.PathValue("id"), r.PathValue("lelId"))
+				e.Href = corelogevent.InstanceHref(r.PathValue(lelParent), r.PathValue(lelParam))
 			})
 		mux.HandleFunc("GET /edev/{id}/lel/{lelId}", logEventInstance)
 		mux.HandleFunc("PUT /edev/{id}/lel/{lelId}", logEventInstance)

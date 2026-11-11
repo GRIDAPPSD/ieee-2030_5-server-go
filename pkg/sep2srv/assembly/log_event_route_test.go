@@ -1,6 +1,7 @@
 package assembly_test
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -870,5 +871,100 @@ func TestDeviceStatus_DeleteRemovesTheStoredStatusAndIsGated(t *testing.T) {
 
 	if code := statusOf(t, http.MethodDelete, srv.URL+"/edev/d1/dstat"); code != http.StatusNotFound {
 		t.Errorf("second DELETE /edev/d1/dstat status = %d, want 404", code)
+	}
+}
+
+// putLogEventBody sends a PUT with evt as the body to path and returns the
+// status. path is used verbatim, so an encoded segment stays encoded.
+func putLogEventBody(t *testing.T, srv *httptest.Server, path string, evt sep2.LogEvent) int {
+	t.Helper()
+	body, err := xml.Marshal(&evt)
+	if err != nil {
+		t.Fatalf("marshal LogEvent: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("new PUT request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT %s: %v", path, err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+// TestLogEvent_PutIsUpdateOnlyAndNeverCreates: a PUT to an id with no stored
+// event answers 404 and stores nothing. The id in the path is the client's
+// choice, so an upsert would let it pick the key and the stamped href; the
+// encoded traversal below once stored the href /edev/d1/lel/../../d9/dstat.
+func TestLogEvent_PutIsUpdateOnlyAndNeverCreates(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := lelServer(t)
+	// A served sibling first, so a 404 below cannot be an unmounted route.
+	loc := postLogEvent(t, srv, "d1", sampleLogEvent(70, 27))
+	if code := putLogEventBody(t, srv, loc, sampleLogEvent(71, 28)); code != http.StatusNoContent {
+		t.Fatalf("PUT %s status = %d, want 204: the sibling must be updatable", loc, code)
+	}
+
+	for _, path := range []string{
+		"/edev/d1/lel/nosuch",
+		"/edev/d1/lel/..%2F..%2Fd9%2Fdstat",
+	} {
+		if code := putLogEventBody(t, srv, path, sampleLogEvent(72, 29)); code != http.StatusNotFound {
+			t.Errorf("PUT %s status = %d, want 404 and no event created", path, code)
+		}
+	}
+
+	res, err := stores.LogEvents.List(t.Context(), "d1", store.ListOptions{Unbounded: true})
+	if err != nil {
+		t.Fatalf("list d1 events: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("d1 holds %d events after the refused PUTs, want exactly the 1 posted", len(res.Items))
+	}
+	for _, e := range res.Items {
+		if strings.Contains(e.Href, "..") || e.LogEventID != 71 {
+			t.Errorf("stored event = %+v, want only the updated sibling with a clean href", e)
+		}
+	}
+}
+
+// deleteBeforeUpdate simulates a DELETE landing between the handler's decision
+// to write and the write: its Update removes the record first.
+type deleteBeforeUpdate struct {
+	store.ScopedStore[sep2.LogEvent]
+}
+
+func (s deleteBeforeUpdate) Update(ctx context.Context, parentID, id string, ev sep2.LogEvent) error {
+	if err := s.ScopedStore.Delete(ctx, parentID, id); err != nil {
+		return err
+	}
+	return s.ScopedStore.Update(ctx, parentID, id, ev)
+}
+
+// TestLogEvent_PutRacingDeleteIs404Never500: the replace is one Update, so a
+// DELETE that wins answers 404. The create-then-update upsert it replaced
+// answered 500 when the delete landed between its two calls.
+func TestLogEvent_PutRacingDeleteIs404Never500(t *testing.T) {
+	t.Parallel()
+
+	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "d1")
+	inner := stores.LogEvents
+	stores.LogEvents = deleteBeforeUpdate{inner}
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{}, stores, testAuthPolicy(), testSFDI, testLFDI, nil)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	loc := postLogEvent(t, srv, "d1", sampleLogEvent(80, 27))
+	if code := putLogEventBody(t, srv, loc, sampleLogEvent(81, 28)); code != http.StatusNotFound {
+		t.Errorf("PUT %s status = %d, want 404 when a DELETE wins the race", loc, code)
+	}
+	id := strings.TrimPrefix(loc, "/edev/d1/lel/")
+	if _, err := inner.Get(t.Context(), "d1", id); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("event after the raced PUT: err = %v, want ErrNotFound (nothing recreated)", err)
 	}
 }

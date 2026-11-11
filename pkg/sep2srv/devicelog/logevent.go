@@ -20,8 +20,8 @@ const KindRequest = "request"
 // with a 403.
 const KindRefused = "refused"
 
-// LogEventStore decorates a LogEvent store so each successful Create also
-// writes a logevent line to the creating device's log. Every other method is
+// LogEventStore decorates a LogEvent store so each successful Create or Update
+// also writes a logevent line to the writing device's log. Every other method is
 // the inner store's.
 type LogEventStore struct {
 	store.ScopedStore[sep2.LogEvent]
@@ -50,15 +50,33 @@ func (s *LogEventStore) Create(ctx context.Context, parentID, id string, ev sep2
 	if err := s.ScopedStore.Create(ctx, parentID, id, ev); err != nil {
 		return err
 	}
+	s.record(ctx, parentID, ev)
+	return nil
+}
+
+// Update replaces the event, then queues a line with the replacement, under the
+// same rules as Create. A failed or refused Update (ErrNotFound included)
+// writes nothing.
+func (s *LogEventStore) Update(ctx context.Context, parentID, id string, ev sep2.LogEvent) error {
+	if err := s.ScopedStore.Update(ctx, parentID, id, ev); err != nil {
+		return err
+	}
+	s.record(ctx, parentID, ev)
+	return nil
+}
+
+// record queues one logevent line for ev, dropping and counting it when the
+// request carries no usable identity.
+func (s *LogEventStore) record(ctx context.Context, parentID string, ev sep2.LogEvent) {
 	lfdi, _, ok := s.identity(ctx)
 	if !ok {
 		s.w.Lost("unknown device", "no identity on the request, LogEvent line dropped")
-		return nil
+		return
 	}
 	actor, ok := sep2lfdi.Canonical(lfdi)
 	if !ok {
 		s.w.Lost("unknown device", "identity LFDI is not canonical, LogEvent line dropped")
-		return nil
+		return
 	}
 	fields := map[string]any{
 		"edev":            parentID,
@@ -79,7 +97,6 @@ func (s *LogEventStore) Create(ctx context.Context, parentID, id string, ev sep2
 	// AppendResolved counts and logs every drop itself, so the error carries
 	// nothing the request could act on.
 	_ = s.w.AppendResolved(actor, parentID, s.resolve, Entry{Kind: KindLogEvent, Fields: fields})
-	return nil
 }
 
 // Lost counts a line the caller could not hand to Append and logs the first

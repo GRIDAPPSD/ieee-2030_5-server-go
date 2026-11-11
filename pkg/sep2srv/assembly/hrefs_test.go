@@ -125,21 +125,24 @@ func TestKnownUnroutedHrefs_EntriesAreDeclaredAndReasoned(t *testing.T) {
 func TestKnownUnroutedHrefs_ReturnsACopy(t *testing.T) {
 	t.Parallel()
 
-	before := assembly.KnownUnroutedHrefs()
+	// Snapshot the keys first: with a non-copying accessor, got and the
+	// accepted set are one map, so deleting from got must not be able to
+	// erase the injected key before it is checked.
+	var keys []string
+	for k := range assembly.KnownUnroutedHrefs() {
+		keys = append(keys, k)
+	}
 	got := assembly.KnownUnroutedHrefs()
 	got["GET /injected/{}"] = "should not stick"
-	for k := range before {
+	for _, k := range keys {
 		delete(got, k)
 	}
 
 	after := assembly.KnownUnroutedHrefs()
-	if len(after) != len(before) {
-		t.Fatalf("mutating the returned map changed the accepted set: before=%d after=%d", len(before), len(after))
-	}
 	if _, ok := after["GET /injected/{}"]; ok {
 		t.Error("an injected key survived; the accessor must return a copy")
 	}
-	for k := range before {
+	for _, k := range keys {
 		if _, ok := after[k]; !ok {
 			t.Errorf("deleted key %q stayed deleted; the accessor must return a copy", k)
 		}

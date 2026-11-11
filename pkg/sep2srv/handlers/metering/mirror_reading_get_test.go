@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/metering"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -131,5 +133,45 @@ func TestHandleMirrorMeterReading_Misses(t *testing.T) {
 		if g.Code != http.StatusNotFound {
 			t.Errorf("GET %s: status = %d, want 404", target, g.Code)
 		}
+	}
+}
+
+// failingReadingReader is a ScopedReader whose Get fails with an error that
+// is not store.ErrNotFound.
+type failingReadingReader struct{ err error }
+
+func (f failingReadingReader) Get(context.Context, string, string) (sep2.MirrorMeterReading, error) {
+	return sep2.MirrorMeterReading{}, f.err
+}
+
+func (f failingReadingReader) List(context.Context, string, store.ListOptions) (store.ListResult[sep2.MirrorMeterReading], error) {
+	return store.ListResult[sep2.MirrorMeterReading]{}, f.err
+}
+
+func (f failingReadingReader) Count(context.Context, string) (uint32, error) { return 0, f.err }
+
+func (f failingReadingReader) HasParent(context.Context, string) (bool, error) { return false, f.err }
+
+func (f failingReadingReader) Parents(context.Context) ([]string, error) { return nil, f.err }
+
+// TestHandleMirrorMeterReading_StoreErrorIs500 asserts a reading store that
+// fails is a 500, not the 404 that means the reading does not exist.
+func TestHandleMirrorMeterReading_StoreErrorIs500(t *testing.T) {
+	t.Parallel()
+	const ownerLFDI = "DEVICE_A_LFDI"
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	seedOwnedMirror(t, mupStore, "device-a", "DEVICE_A", ownerLFDI)
+	h := metering.HandleMirrorMeterReading(mupStore,
+		failingReadingReader{err: errors.New("reading store down")}, nil, identityProvider(ownerLFDI))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /mup/{id}/mr/{mrId}", h)
+
+	g := httptest.NewRecorder()
+	mux.ServeHTTP(g, httptest.NewRequest(http.MethodGet, "/mup/device-a/mr/R1", nil))
+	if g.Code != http.StatusInternalServerError {
+		t.Fatalf("GET with a failing reading store: status = %d, want 500; body = %s", g.Code, g.Body.String())
+	}
+	if strings.Contains(g.Body.String(), "reading store down") {
+		t.Errorf("500 body leaks the store error: %q", g.Body.String())
 	}
 }

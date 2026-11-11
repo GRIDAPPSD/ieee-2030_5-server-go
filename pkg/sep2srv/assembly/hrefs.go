@@ -239,6 +239,8 @@ func MintableHrefs() []MintableHref {
 		{"/edev/{}/lel/{}", http.MethodDelete, "handlers/logevent.HandlePostLogEvent", "the same Location header, used to remove the event; DELETE on the LogEvent is Mandatory (sep_wadl.xml:1430)"},
 		{"/edev/{}/frq/{}", http.MethodGet, "handlers/flow_reservation.HandlePostFlowReservationRequest", "the Location header returned by POST /edev/{}/frq"},
 		{"/edev/{}/frp/{}", http.MethodGet, "handlers/flow_reservation.HandlePostFlowReservationRequest", "the FlowReservationResponse href stamped alongside the request, which the client polls for the server's decision"},
+		{"/msg/{}", http.MethodGet, "handlers/messaging.ActiveLinkProgramStore", "the MessagingProgram self href the active link is derived from"},
+		{"/msg/{}/acttm", http.MethodGet, "handlers/messaging.ActiveLinkProgramStore ActiveTextMessageListLink", "the program's active text message list, advertised on every MessagingProgram"},
 		{"/msg/{}/tm/{}", http.MethodGet, "handlers/messaging.HandlePostTextMessage", "the Location header returned by POST /msg/{}/tm"},
 		{"/rsps/{}/rsp/{}", http.MethodGet, "handlers/response.MemberHref", "the Location header returned by POST /rsps/{}/rsp, and the Response's own self href"},
 

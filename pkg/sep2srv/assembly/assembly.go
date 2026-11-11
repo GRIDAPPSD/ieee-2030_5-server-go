@@ -1751,12 +1751,20 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// of MessagingPrograms (see miswired.go).
 		textMessages := requireScoped(stores.TextMessages, "TextMessages")
 
+		// Each served program advertises its ActiveTextMessageListLink, which
+		// the acttm route below serves, counting the same messages.
+		activeMessages := coremessaging.NewActiveTextMessageStore(textMessages)
+		messagingPrograms := coremessaging.NewActiveLinkProgramStore(stores.MessagingPrograms, activeMessages)
+
 		mux.HandleFunc("GET /msg", corelisthandler.ListHandler[sep2.MessagingProgram, sep2.MessagingProgramList](
-			stores.MessagingPrograms, coremessaging.BuildMessagingProgramList, 900,
+			messagingPrograms, coremessaging.BuildMessagingProgramList, 900,
 		))
-		mux.HandleFunc("GET /msg/{msgId}", coremessaging.HandleMessagingProgram(stores.MessagingPrograms))
+		mux.HandleFunc("GET /msg/{msgId}", coremessaging.HandleMessagingProgram(messagingPrograms))
 		mux.HandleFunc("GET /msg/{msgId}/tm", scopedListHandler[sep2.TextMessage, sep2.TextMessageList](
 			textMessages, "msgId", store.SortByIDAsc, coremessaging.BuildTextMessageList, 900,
+		))
+		mux.HandleFunc("GET /msg/{msgId}/acttm", scopedListHandler[sep2.TextMessage, sep2.TextMessageList](
+			activeMessages, "msgId", store.SortByIDAsc, coremessaging.BuildTextMessageList, 900,
 		))
 		mux.HandleFunc("POST /msg/{msgId}/tm", coremessaging.HandlePostTextMessage(textMessages))
 

@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/activelist"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -98,20 +99,10 @@ func (s *DERControlCountedProgramStore) stampActive(ctx context.Context, p *sep2
 	if s.active == nil {
 		return
 	}
-	n, err := s.active.Count(ctx, scopeKey)
-	if err != nil {
+	derive := func() (string, bool) { return derhref.ActiveControlList(p.DERControlListLink.Href) }
+	if err := activelist.StampLink(ctx, s.active, scopeKey, &p.ActiveDERControlListLink, derive); err != nil {
 		log.Printf("der: counting active DERControls for %s: %s; serving no ActiveDERControlListLink", logsafe.Quote(p.DERControlListLink.Href), logsafe.Err(err))
-		p.ActiveDERControlListLink = nil
-		return
 	}
-	if p.ActiveDERControlListLink == nil {
-		href, ok := derhref.ActiveControlList(p.DERControlListLink.Href)
-		if !ok {
-			return
-		}
-		p.ActiveDERControlListLink = &sep2.ListLink{Href: href}
-	}
-	p.ActiveDERControlListLink.All = n
 }
 
 func (s *DERControlCountedProgramStore) Count(ctx context.Context, parentID string) (uint32, error) {

@@ -1,11 +1,11 @@
-package dercontrol_test
+package activelist_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/activelist"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -32,6 +32,8 @@ func TestEventActive_Boundaries(t *testing.T) {
 		{"starts next second", ev(now+1, 600, now-10, nil), false},
 		{"ending now", ev(now-600, 600, now-700, active), false},
 		{"last second", ev(now-599, 600, now-700, active), true},
+		{"one second before the end, stamped", ev(now-599, 600, now-700, active), true},
+		{"one second before the end, no status", ev(now-599, 600, now-700, nil), true},
 		{"no interval", &sep2.Event{EventStatus: active}, false},
 		{"stamped scheduled", ev(now-5, 600, now-10, &sep2.EventStatus{CurrentStatus: sep2.EventStatusScheduled}), false},
 		{"stamped cancelled", ev(now-5, 600, now-10, &sep2.EventStatus{CurrentStatus: sep2.EventStatusCancelled}), false},
@@ -40,7 +42,7 @@ func TestEventActive_Boundaries(t *testing.T) {
 		{"stamped active, future start", ev(now+100, 600, now-10, active), true},
 	}
 	for _, tc := range cases {
-		if got := dercontrol.EventActive(tc.ev, now); got != tc.want {
+		if got := activelist.EventActive(tc.ev, now); got != tc.want {
 			t.Errorf("%s: EventActive = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -70,7 +72,7 @@ func TestActiveStore_FiltersBeforePaging(t *testing.T) {
 	seed("b", now-50, 3600)
 	seed("future", now+500, 60)
 
-	s := dercontrol.NewActiveStore[sep2.DERControl](inner, func(c *sep2.DERControl) *sep2.Event { return &c.Event })
+	s := activelist.NewActiveStore[sep2.DERControl](inner, func(c *sep2.DERControl) *sep2.Event { return &c.Event })
 	ctx := context.Background()
 
 	if n, err := s.Count(ctx, "e/f/p"); err != nil || n != 2 {

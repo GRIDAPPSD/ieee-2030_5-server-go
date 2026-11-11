@@ -179,6 +179,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		Subscriptions:            s.Subscriptions,
 		UsagePoints:              s.UsagePoints,
 		MeterReadings:            s.MeterReadings,
+		ReadingSets:              s.ReadingSets,
 		Readings:                 s.Readings,
 		ReadingTypes:             s.ReadingTypes,
 		Configurations:           s.Configurations,

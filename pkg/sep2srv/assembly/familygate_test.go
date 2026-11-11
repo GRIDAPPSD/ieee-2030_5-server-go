@@ -96,13 +96,18 @@ func TestPartialFamilyRefusesRatherThanPanicking(t *testing.T) {
 			s.MeterReadings = h
 		}, http.MethodGet, "/upt/1/mr"},
 
+		{"ReadingSets", func(s *assembly.Stores) {
+			var h *memory.ScopedStore[sep2.ReadingSet]
+			s.ReadingSets = h
+		}, http.MethodGet, "/upt/1/mr/1/rs"},
+
 		{"Readings", func(s *assembly.Stores) {
 			var h *memory.ScopedStore[sep2.Reading]
 			s.Readings = h
 		}, http.MethodGet, "/upt/1/mr/1/r"},
 
 		{"ReadingTypes", func(s *assembly.Stores) {
-			var h *memory.Store[sep2.ReadingType]
+			var h *memory.ScopedStore[sep2.ReadingType]
 			s.ReadingTypes = h
 		}, http.MethodGet, "/rt"},
 
@@ -127,6 +132,12 @@ func TestPartialFamilyRefusesRatherThanPanicking(t *testing.T) {
 			t.Parallel()
 
 			stores := testStores()
+			// The reading lists answer 404 for a MeterReading that is absent,
+			// so the parent is seeded for them to reach the store this case
+			// leaves unwired.
+			if err := stores.MeterReadings.Create(context.Background(), "1", "1", sep2.MeterReading{}); err != nil {
+				t.Fatalf("seed MeterReading: %v", err)
+			}
 			tc.clear(stores)
 			seedOwnedDevices(t, stores.EndDevices, "1")
 

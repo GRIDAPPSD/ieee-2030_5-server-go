@@ -17,6 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
+	coremetering "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/metering"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -744,6 +745,47 @@ func seedSet() []seed {
 				`<description>wadl sweep upt</description><roleFlags>03</roleFlags>` +
 				`<serviceCategoryKind>0</serviceCategoryKind><status>1</status>` +
 				`</UsagePoint>`,
+		},
+		{
+			// A MeterReading with one ReadingSet, one Reading and a ReadingType
+			// under the UsagePoint above, so the crawl can follow the whole
+			// hierarchy. No protocol route creates them.
+			method: http.MethodGet, path: "/upt/{upt}/mr/1", element: "MeterReading",
+			direct: func(ctx context.Context, s *server.Stores, _ string) error {
+				upt := coremetering.UsagePointStoreID("0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FBB")
+				mrHref := coremetering.UsagePointHref(upt) + "/mr/1"
+				setHref := mrHref + "/rs/1"
+				mr := sep2.MeterReading{
+					IdentifiedObject:   sep2.IdentifiedObject{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FE1"},
+					ReadingTypeLink:    &sep2.Link{Href: mrHref + "/rt"},
+					ReadingSetListLink: &sep2.ListLink{Href: mrHref + "/rs", All: 1},
+				}
+				mr.Href = mrHref
+				if err := s.MeterReadings.Create(ctx, upt, "1", mr); err != nil {
+					return err
+				}
+				uom := sep2.UomWattHours
+				rt := sep2.ReadingType{Uom: &uom}
+				rt.Href = mrHref + "/rt"
+				if err := s.ReadingTypes.Create(ctx, upt, "1", rt); err != nil {
+					return err
+				}
+				set := sep2.ReadingSet{
+					IdentifiedObject: sep2.IdentifiedObject{MRID: "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FE2"},
+					TimePeriod:       sep2.DateTimeInterval{Start: 1785700000, Duration: 900},
+					ReadingListLink:  &sep2.ListLink{Href: setHref + "/r", All: 1},
+				}
+				set.Href = setHref
+				setScope, _ := coremetering.ReadingSetScopeKey(upt, "1")
+				if err := s.ReadingSets.Create(ctx, setScope, "1", set); err != nil {
+					return err
+				}
+				value, localID := int64(42), sep2.HexBinary16(1)
+				reading := sep2.Reading{Value: &value, LocalID: &localID, TimePeriod: &sep2.DateTimeInterval{Start: 1785700000, Duration: 900}}
+				reading.Href = setHref + "/r/1"
+				readingScope, _ := coremetering.ReadingScopeKey(upt, "1", "1")
+				return s.Readings.Create(ctx, readingScope, "1", reading)
+			},
 		},
 		{
 			method: http.MethodPost, path: "/edev/" + devToken + "/lel", element: "LogEvent",

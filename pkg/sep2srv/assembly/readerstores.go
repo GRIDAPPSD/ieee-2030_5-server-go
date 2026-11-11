@@ -44,8 +44,9 @@ type ReaderStores struct {
 
 	UsagePoints   store.ResourceReader[sep2.UsagePoint]
 	MeterReadings store.ScopedReader[sep2.MeterReading]
+	ReadingSets   store.ScopedReader[sep2.ReadingSet]
 	Readings      store.ScopedReader[sep2.Reading]
-	ReadingTypes  store.ResourceReader[sep2.ReadingType]
+	ReadingTypes  store.ScopedReader[sep2.ReadingType]
 
 	Configurations           store.ScopedReader[sep2.Configuration]
 	DeviceStatuses           store.ScopedReader[sep2.DeviceStatus]
@@ -119,8 +120,9 @@ func NewReaderStores(s *Stores) *ReaderStores {
 
 		UsagePoints:   store.AsReader(requireResource(s.UsagePoints, "UsagePoints")),
 		MeterReadings: store.AsScopedReader(requireScoped(s.MeterReadings, "MeterReadings")),
+		ReadingSets:   store.AsScopedReader(requireScoped(s.ReadingSets, "ReadingSets")),
 		Readings:      store.AsScopedReader(requireScoped(s.Readings, "Readings")),
-		ReadingTypes:  store.AsReader(requireResource(s.ReadingTypes, "ReadingTypes")),
+		ReadingTypes:  store.AsScopedReader(requireScoped(s.ReadingTypes, "ReadingTypes")),
 
 		Configurations:           store.AsScopedReader(requireScoped(s.Configurations, "Configurations")),
 		DeviceStatuses:           store.AsScopedReader(requireScoped(s.DeviceStatuses, "DeviceStatuses")),

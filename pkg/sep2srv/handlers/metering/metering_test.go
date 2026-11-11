@@ -1791,3 +1791,28 @@ func TestHandleCreateMirrorUsagePoint_SeededForeignRecordDenied(t *testing.T) {
 		t.Errorf("stored DeviceLFDI = %q, want %q: a denied POST must not overwrite a record it does not own", stored.DeviceLFDI, foreignOwner)
 	}
 }
+
+func TestScopeKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		parts   []string
+		wantKey string
+		wantOK  bool
+	}{
+		{"joins values with a slash", []string{"u1", "m1"}, "u1/m1", true},
+		{"an empty value is refused", []string{"u1", ""}, "", false},
+		{"a leading empty value is refused", []string{"", "m1"}, "", false},
+		{"a value holding the separator is refused", []string{"u1", "a/b"}, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			key, ok := metering.ScopeKey(tc.parts...)
+			if key != tc.wantKey || ok != tc.wantOK {
+				t.Errorf("ScopeKey(%q) = (%q, %v), want (%q, %v)", tc.parts, key, ok, tc.wantKey, tc.wantOK)
+			}
+		})
+	}
+}

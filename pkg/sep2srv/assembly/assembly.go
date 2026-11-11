@@ -117,7 +117,7 @@ import (
 // # THE GATE IS PER FAMILY, NOT PER FIELD
 //
 // The paragraph above says "every gate", and there are thirteen of them. Each
-// reads ONE ANCHOR field and mounts a whole family behind it; fifteen handles
+// reads ONE ANCHOR field and mounts a whole family behind it; sixteen handles
 // have no gate of their own and are mounted on the strength of a sibling:
 //
 //	anchor                    family members it also mounts
@@ -128,7 +128,7 @@ import (
 //	DERs                      DERCapabilities, DERSettings, DERStatuses,
 //	                          DERAvailabilities, DERPrograms, DERControls,
 //	                          DefaultDERControls, DERCurves
-//	UsagePoints               MeterReadings, Readings, ReadingTypes
+//	UsagePoints               MeterReadings, ReadingSets, Readings, ReadingTypes
 //	Configurations            (its own routes only)
 //	DeviceStatuses            (its own routes only)
 //	LogEvents                 (its own routes only)
@@ -252,8 +252,9 @@ type Stores struct {
 	// Server-side metering
 	UsagePoints   store.ResourceStore[sep2.UsagePoint]
 	MeterReadings store.ScopedStore[sep2.MeterReading]
+	ReadingSets   store.ScopedStore[sep2.ReadingSet]
 	Readings      store.ScopedStore[sep2.Reading]
-	ReadingTypes  store.ResourceStore[sep2.ReadingType]
+	ReadingTypes  store.ScopedStore[sep2.ReadingType]
 
 	// New function sets
 	Configurations           store.ScopedStore[sep2.Configuration]
@@ -1305,8 +1306,29 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
 	pollRate uint32,
 ) http.HandlerFunc {
+	return scopedListHandlerAt(deepScopeKey, scopedStore, sort, buildList, pollRate)
+}
+
+// scopedListHandlerAt creates a list handler scoped by the key scope derives
+// from the request, for a parent that is more than one path value deep. The
+// list route and the instance route of one resource kind pass the same scope
+// function, so they cannot disagree about where a record lives.
+//
+// A scope that reports ok false names no record's parent, so the route answers
+// 404 rather than listing under a key the request forged.
+func scopedListHandlerAt[T store.Copier[T], L any](
+	scope scopeFunc,
+	scopedStore store.ScopedStore[T],
+	sort store.SortKey,
+	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
+	pollRate uint32,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := deepScopeKey(r)
+		key, ok := scope(r)
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		st := store.Under(scopedStore, key)
 		h := corelisthandler.SortedListHandler[T, L](st, sort, buildList, pollRate)
 		h.ServeHTTP(w, r)
@@ -1326,9 +1348,13 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 // bind a CALLER to that path; store scoping and caller ownership are different
 // properties, and this function implements only the former. Caller ownership
 // of {id} is enforced before any handler runs, by ownershipGate.
-func deepScopeKey(r *http.Request) string {
-	return derhref.ScopeKey(r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId"))
+func deepScopeKey(r *http.Request) (string, bool) {
+	return derhref.ScopeKey(r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId")), true
 }
+
+// scopeFunc derives a store parent key from the request's path values. ok is
+// false when the values cannot name a parent, and the route then answers 404.
+type scopeFunc func(r *http.Request) (key string, ok bool)
 
 // scopedResourceHandlerDeep creates a read-only single-resource handler scoped
 // by the same composite key id/fsaId/derpId as scopedListHandlerDeep, keyed
@@ -1358,28 +1384,18 @@ func scopedResourceHandlerDeep[T store.Copier[T]](
 	idParam string,
 	stamp func(r *http.Request, resource *T),
 ) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			encoding.MethodNotAllowed(w, "GET, HEAD")
-			return
-		}
+	return scopedResourceHandlerAt(deepScopeKey, scopedStore, idParam, stamp)
+}
 
-		resource, err := scopedStore.Get(r.Context(), deepScopeKey(r), r.PathValue(idParam))
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, err)
-			return
-		}
-
-		if stamp != nil {
-			stamp(r, &resource)
-		}
-
-		encoding.WriteXML(w, http.StatusOK, &resource)
-	}
+// scopedResourceHandlerAt is [scopedResourceHandlerDeep] with the scope taken
+// from scope rather than fixed to the DERProgram key, and keeps its contract.
+func scopedResourceHandlerAt[T store.Copier[T]](
+	scope scopeFunc,
+	scopedStore store.ScopedStore[T],
+	idParam string,
+	stamp func(r *http.Request, resource *T),
+) http.HandlerFunc {
+	return scopedResourceHandlerWith(scope, scopedStore, idParam, itemMethods{}, stamp)
 }
 
 // maxRequestBody caps how much of a request body this package reads into
@@ -1479,8 +1495,28 @@ func scopedResourceHandler[T store.Copier[T]](
 	methods itemMethods,
 	stamp func(r *http.Request, resource *T),
 ) http.HandlerFunc {
+	return scopedResourceHandlerWith(func(r *http.Request) (string, bool) {
+		return r.PathValue(parentParam), true
+	}, scopedStore, idParam, methods, stamp)
+}
+
+// scopedResourceHandlerWith is the one definition of the scoped
+// single-resource handler: [scopedResourceHandler] scopes it by one path value
+// and [scopedResourceHandlerAt] by a derived key, and both are read-only unless
+// methods says otherwise.
+func scopedResourceHandlerWith[T store.Copier[T]](
+	scope scopeFunc,
+	scopedStore store.ScopedStore[T],
+	idParam string,
+	methods itemMethods,
+	stamp func(r *http.Request, resource *T),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		parentKey := r.PathValue(parentParam)
+		parentKey, ok := scope(r)
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		id := r.PathValue(idParam)
 
 		switch {
@@ -1552,32 +1588,92 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 	if !stores.serves(famUsagePoints) {
 		return
 	}
-	// None of these three has a gate of its own: all are mounted on the
+	// None of these four has a gate of its own: all are mounted on the
 	// strength of UsagePoints (see miswired.go).
 	meterReadings := requireScoped(stores.MeterReadings, "MeterReadings")
+	readingSets := requireScoped(stores.ReadingSets, "ReadingSets")
 	readings := requireScoped(stores.Readings, "Readings")
-	readingTypes := requireResource(stores.ReadingTypes, "ReadingTypes")
+	readingTypes := requireScoped(stores.ReadingTypes, "ReadingTypes")
 	mux.HandleFunc("GET /upt", coremetering.HandleUsagePointList(
 		stores.UsagePoints, stores.EndDeviceManagers, lfdiProviderFor(authPolicy), 900,
 	))
 	mux.HandleFunc("POST /upt", coremetering.HandleCreateUsagePoint(stores.UsagePoints))
 	mux.HandleFunc("GET /upt/{uptId}", coremetering.HandleUsagePoint(stores.UsagePoints))
 
+	// The reading hierarchy under a UsagePoint, at the WADL addresses
+	// (sep_wadl.xml: /upt/{id1}/mr/{id2} and below). Lists are served in the
+	// Table 39 order (IEEE 2030.5-2018 section 10.4.2). Reads only: the
+	// Optional writes are a separate slice.
+	meterReadingsOrdered := store.OrderedScoped(meterReadings, coremetering.CompareMeterReading)
+	readingSetsOrdered := store.OrderedScoped(readingSets, coremetering.CompareReadingSet)
+	readingsOrdered := store.OrderedScoped(readings, coremetering.CompareReading)
+	setScope := func(r *http.Request) (string, bool) {
+		return coremetering.ReadingSetScopeKey(r.PathValue("uptId"), r.PathValue("mrId"))
+	}
+	readingScope := func(r *http.Request) (string, bool) {
+		return coremetering.ReadingScopeKey(r.PathValue("uptId"), r.PathValue("mrId"), r.PathValue("rsId"))
+	}
+	// A list under a parent that does not exist is a 404, not an empty 200.
+	meterReadingExists := func(r *http.Request) error {
+		_, err := meterReadings.Get(r.Context(), r.PathValue("uptId"), r.PathValue("mrId"))
+		return err
+	}
+	readingSetExists := func(r *http.Request) error {
+		parent, ok := setScope(r)
+		if !ok {
+			return store.ErrNotFound
+		}
+		_, err := readingSets.Get(r.Context(), parent, r.PathValue("rsId"))
+		return err
+	}
+
 	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
-		meterReadings, "uptId", store.SortByIDAsc, coremetering.BuildMeterReadingList, 900,
+		meterReadingsOrdered, "uptId", store.SortByListOrdering, coremetering.BuildMeterReadingList, 900,
 	))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}",
+		scopedResourceHandler[sep2.MeterReading](meterReadings, "uptId", "mrId", itemMethods{}, nil))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rt", coremetering.HandleMeterReadingType(readingTypes))
 
-	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
-		key := r.PathValue("uptId") + "/" + r.PathValue("mrId")
-		st := store.Under(readings, key)
-		h := corelisthandler.ListHandler[sep2.Reading, sep2.ReadingList](st, coremetering.BuildReadingList, 900)
-		h.ServeHTTP(w, r)
-	})
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs", requireParent(meterReadingExists, scopedListHandlerAt[sep2.ReadingSet, sep2.ReadingSetList](
+		setScope, readingSetsOrdered, store.SortByListOrdering, coremetering.BuildReadingSetList, 900,
+	)))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs/{rsId}",
+		scopedResourceHandlerAt[sep2.ReadingSet](setScope, readingSets, "rsId", nil))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs/{rsId}/r", requireParent(readingSetExists, scopedListHandlerAt[sep2.Reading, sep2.ReadingList](
+		readingScope, readingsOrdered, store.SortByListOrdering, coremetering.BuildReadingList, 900,
+	)))
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+		scopedResourceHandlerAt[sep2.Reading](readingScope, readings, "rId", nil))
 
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", requireParent(meterReadingExists, scopedListHandlerAt[sep2.Reading, sep2.ReadingList](
+		setScope, readingsOrdered, store.SortByListOrdering, coremetering.BuildReadingList, 900,
+	)))
+
+	// The flat /rt routes serve only the ReadingTypes held under the empty
+	// parent. A MeterReading's own ReadingType lives under its UsagePoint and is
+	// reachable only at /upt/{uptId}/mr/{mrId}/rt.
+	flatReadingTypes := store.Under(readingTypes, "")
 	mux.HandleFunc("GET /rt", corelisthandler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
-		readingTypes, coremetering.BuildReadingTypeList, 900,
+		flatReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
-	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
+	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(flatReadingTypes))
+}
+
+// requireParent runs exists before next and answers 404 when the parent it
+// checks is absent, so a list under a missing parent is not served as an empty
+// 200. A failed check is a 500: only store.ErrNotFound may say "absent".
+func requireParent(exists func(r *http.Request) error, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := exists(r); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, deviceLogResolver *devicelog.CachingResolver, notifier ResourceNotifier) {

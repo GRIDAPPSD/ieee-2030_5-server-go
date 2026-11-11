@@ -16,6 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/paging"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/reqlimit"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -36,10 +37,6 @@ var subscriptionIDOverride func(r *http.Request) string
 // /test/mutations/subscription-cancel call). Set only when the
 // csip_test_hooks build tag is present. Nil in production builds.
 var subscriptionRefuseCreate func(id string) bool
-
-// maxRequestBody caps how much of a Subscription document the create and PUT
-// handlers read; a longer body is cut short and fails to parse.
-const maxRequestBody = 1 << 20
 
 // subscriptionHref builds the href a subscription created under EndDevice
 // edevID with storage id id carries on the wire. The create and delete
@@ -223,7 +220,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 
 		edevID := r.PathValue("id")
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
+		body, err := io.ReadAll(io.LimitReader(r.Body, reqlimit.MaxBody))
 		if err != nil {
 			http.Error(w, "read body failed", http.StatusBadRequest)
 			return
@@ -353,7 +350,7 @@ func HandleSubscription(subStore *memory.SubscriptionStore, validate func(ctx co
 			return
 		}
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
+		body, err := io.ReadAll(io.LimitReader(r.Body, reqlimit.MaxBody))
 		if err != nil {
 			http.Error(w, "read body failed", http.StatusBadRequest)
 			return

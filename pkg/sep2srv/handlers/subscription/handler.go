@@ -145,6 +145,55 @@ func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.Lis
 	return result
 }
 
+// vetSubscription applies the checks a Subscription document must pass before
+// it is stored: the caller may read the subscribedResource, and the
+// notificationURI passes the destination policy. It writes the refusal and
+// reports false when the document is not accepted. POST creates and PUT
+// replaces through this one definition, so a replacement is refused for exactly
+// what creation refuses.
+func vetSubscription(w http.ResponseWriter, r *http.Request, edevID string, sub sep2.Subscription, validate func(ctx context.Context, uri string) error, canRead ReadCheck) bool {
+	if canRead == nil {
+		srverr.Internal(w, r, errors.New("no subscribedResource check wired"))
+		return false
+	}
+	if err := canRead(r, sub.SubscribedResource); err != nil {
+		if !errors.Is(err, ErrSubscribedResourceRefused) {
+			srverr.Internal(w, r, fmt.Errorf("checking subscribedResource: %w", err))
+			return false
+		}
+		log.Printf("subscription: refused subscribedResource %s for EndDevice %s: %s", logsafe.Quote(loggedResource(sub.SubscribedResource)), logsafe.Quote(edevID), logsafe.Err(err))
+		// IEEE 2030.5-2018 8.7.3.4 rule m: a Subscription the server
+		// cannot accept is answered 400. One body for an unreadable and a
+		// nonexistent resource, so the answer does not reveal which.
+		http.Error(w, "subscribedResource refused", http.StatusBadRequest)
+		return false
+	}
+
+	if err := validate(r.Context(), sub.NotificationURI); err != nil {
+		target := redactURI(sub.NotificationURI)
+		var dnsErr *net.DNSError
+		switch {
+		case errors.Is(err, ErrRefusedDestination):
+			log.Printf("subscription: refused notificationURI %s for EndDevice %s: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
+		case errors.Is(err, ErrDestinationUnresolved) && r.Context().Err() != nil:
+			log.Printf("subscription: request ended while resolving notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
+		case errors.Is(err, ErrDestinationUnresolved) && errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+			log.Printf("subscription: no such host for notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
+		case errors.Is(err, ErrDestinationUnresolved):
+			log.Printf("subscription: could not resolve notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
+		default:
+			log.Printf("subscription: validating notificationURI %s for EndDevice %s: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
+			srverr.Internal(w, r, err)
+			return false
+		}
+		// One response for both: a distinct one for an unresolvable name
+		// would tell the client whether an internal name resolves.
+		http.Error(w, "notificationURI refused", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
 // HandleCreateSubscription returns a handler for POST /edev/{id}/sub.
 //
 // validate vets the notificationURI before anything is stored. Pass
@@ -182,43 +231,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 			return
 		}
 
-		if canRead == nil {
-			srverr.Internal(w, r, errors.New("no subscribedResource check wired"))
-			return
-		}
-		if err := canRead(r, sub.SubscribedResource); err != nil {
-			if !errors.Is(err, ErrSubscribedResourceRefused) {
-				srverr.Internal(w, r, fmt.Errorf("checking subscribedResource: %w", err))
-				return
-			}
-			log.Printf("subscription: refused subscribedResource %s for EndDevice %s: %s", logsafe.Quote(loggedResource(sub.SubscribedResource)), logsafe.Quote(edevID), logsafe.Err(err))
-			// IEEE 2030.5-2018 8.7.3.4 rule m: a Subscription the server
-			// cannot accept is answered 400. One body for an unreadable and a
-			// nonexistent resource, so the answer does not reveal which.
-			http.Error(w, "subscribedResource refused", http.StatusBadRequest)
-			return
-		}
-
-		if err := validate(r.Context(), sub.NotificationURI); err != nil {
-			target := redactURI(sub.NotificationURI)
-			var dnsErr *net.DNSError
-			switch {
-			case errors.Is(err, ErrRefusedDestination):
-				log.Printf("subscription: refused notificationURI %s for EndDevice %s: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
-			case errors.Is(err, ErrDestinationUnresolved) && r.Context().Err() != nil:
-				log.Printf("subscription: request ended while resolving notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
-			case errors.Is(err, ErrDestinationUnresolved) && errors.As(err, &dnsErr) && dnsErr.IsNotFound:
-				log.Printf("subscription: no such host for notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
-			case errors.Is(err, ErrDestinationUnresolved):
-				log.Printf("subscription: could not resolve notificationURI %s for EndDevice %s, refusing: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
-			default:
-				log.Printf("subscription: validating notificationURI %s for EndDevice %s: %s", logsafe.Quote(target), logsafe.Quote(edevID), logsafe.Err(err))
-				srverr.Internal(w, r, err)
-				return
-			}
-			// One response for both: a distinct one for an unresolvable name
-			// would tell the client whether an internal name resolves.
-			http.Error(w, "notificationURI refused", http.StatusBadRequest)
+		if !vetSubscription(w, r, edevID, sub, validate, canRead) {
 			return
 		}
 
@@ -255,6 +268,103 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 	}
 }
 
+// errForeignSubscription is what getOwnedSubscription returns for a record
+// stored under a different EndDevice than the path names.
+var errForeignSubscription = errors.New("subscription belongs to another EndDevice")
+
+// getOwnedSubscription reads subscription subID and confirms it was created
+// under EndDevice edevID, by the href the create path stamped on it. It
+// returns store.ErrNotFound for an absent record and errForeignSubscription
+// for another device's, which callers answer alike so a response cannot be
+// used to probe another device's subscription ids.
+func getOwnedSubscription(ctx context.Context, subStore *memory.SubscriptionStore, edevID, subID string) (sep2.Subscription, error) {
+	sub, err := subStore.Store.Get(ctx, subID)
+	if err != nil {
+		return sep2.Subscription{}, err
+	}
+	if sub.Href != subscriptionHref(edevID, subID) {
+		return sep2.Subscription{}, errForeignSubscription
+	}
+	return sub, nil
+}
+
+// HandleSubscription returns a handler for GET, HEAD and PUT on
+// /edev/{id}/sub/{subId}, the Location POST /edev/{id}/sub hands back.
+// DELETE on the same path is [HandleDeleteSubscription].
+//
+// ownershipGate has confirmed the caller owns {id}; this handler confirms the
+// subscription was created under {id}. Another device's subscription, like an
+// absent one, is a 404 on all three methods, matching DELETE.
+//
+// PUT replaces the subscription's own fields. Its href is the stored one, never
+// the document's, so the owner and the id cannot be changed by a PUT, and the
+// document passes the checks creation applies ([vetSubscription]). validate
+// and canRead are those of [HandleCreateSubscription], and a nil canRead
+// refuses every PUT for the same reason.
+func HandleSubscription(subStore *memory.SubscriptionStore, validate func(ctx context.Context, uri string) error, canRead ReadCheck) http.HandlerFunc {
+	// The unwired cases are logged once, by HandleCreateSubscription, which
+	// the same assembly mounts with the same arguments.
+	if validate == nil {
+		validate = DestinationPolicy{}.ValidateNotificationURI
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		edevID := r.PathValue("id")
+		subID := r.PathValue("subId")
+
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodPut:
+		default:
+			encoding.MethodNotAllowed(w, "GET, HEAD, PUT")
+			return
+		}
+
+		stored, err := getOwnedSubscription(r.Context(), subStore, edevID, subID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		case errors.Is(err, errForeignSubscription):
+			log.Printf("subscription: refused cross-device access for EndDevice %s subId %s", logsafe.Quote(edevID), logsafe.Quote(subID))
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		case err != nil:
+			srverr.Internal(w, r, fmt.Errorf("reading the subscription: %w", err))
+			return
+		}
+
+		if r.Method != http.MethodPut {
+			encoding.WriteXML(w, http.StatusOK, &stored)
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "read body failed", http.StatusBadRequest)
+			return
+		}
+		var sub sep2.Subscription
+		if err := xml.Unmarshal(body, &sub); err != nil {
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
+			return
+		}
+		if !vetSubscription(w, r, edevID, sub, validate, canRead) {
+			return
+		}
+		sub.Href = stored.Href
+
+		if err := subStore.Update(r.Context(), subID, sub); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				// Deleted between the read and the write.
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // HandleDeleteSubscription returns a handler for DELETE /edev/{id}/sub/{subId}.
 //
 // On a successful delete, the handler dispatches a final "Removed"
@@ -287,27 +397,26 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		// the record is gone from the store. ErrNotFound here is the
 		// "DELETE on unknown ID" path; surface 404 immediately and skip
 		// the notify (no subscriber existed).
-		sub, getErr := subStore.Store.Get(r.Context(), subID)
-		if getErr != nil {
-			if errors.Is(getErr, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, fmt.Errorf("the lookup before delete failed: %w", getErr))
-			return
-		}
-
+		//
 		// ownershipGate already confirmed the caller owns or manages
-		// {id}; it never sees {subId}. Without this check, a subId
-		// created under a different EndDevice was still deletable by
-		// any caller who could reach this route (#435). 404, not 403,
-		// so the response can't be used to probe another device's
+		// {id}; it never sees {subId}. Without the ownership half of the
+		// lookup, a subId created under a different EndDevice was still
+		// deletable by any caller who could reach this route (#435). 404,
+		// not 403, so the response can't be used to probe another device's
 		// subscription IDs.
-		if sub.Href != subscriptionHref(edevID, subID) {
+		sub, getErr := getOwnedSubscription(r.Context(), subStore, edevID, subID)
+		switch {
+		case errors.Is(getErr, store.ErrNotFound):
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		case errors.Is(getErr, errForeignSubscription):
 			// Path id and subId only: sub.Href would name the other
 			// EndDevice this subId actually belongs to.
 			log.Printf("subscription: refused cross-device delete for EndDevice %s subId %s", logsafe.Quote(edevID), logsafe.Quote(subID))
 			http.Error(w, "not found", http.StatusNotFound)
+			return
+		case getErr != nil:
+			srverr.Internal(w, r, fmt.Errorf("the lookup before delete failed: %w", getErr))
 			return
 		}
 

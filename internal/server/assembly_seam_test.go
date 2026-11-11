@@ -120,6 +120,11 @@ import (
 //
 // PUT and DELETE on the Registration are ADDED (#1263), behind the
 // manager-only check. 72 -> 74.
+//
+// GET and PUT on the Subscription instance are ADDED (#1267): the Location
+// POST /edev/{id}/sub returns was read and replaced with 405 until now. The
+// list's own header count and the two figures above stop at #1263; the pinned
+// total is the length of this list, asserted by TestProtocolRouteSurface.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/lel/{lelId}",
@@ -155,6 +160,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}/ps",
 	"GET /edev/{id}/rg",
 	"GET /edev/{id}/sub",
+	"GET /edev/{id}/sub/{subId}",
 	"GET /msg",
 	"GET /msg/{msgId}",
 	"GET /msg/{msgId}/acttm",
@@ -202,6 +208,7 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/frq/{frqId}",
 	"PUT /edev/{id}/ps",
 	"PUT /edev/{id}/rg",
+	"PUT /edev/{id}/sub/{subId}",
 	"PUT /mup/{id}",
 }
 

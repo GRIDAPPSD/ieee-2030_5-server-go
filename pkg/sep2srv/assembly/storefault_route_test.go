@@ -80,11 +80,13 @@ var storeFreeRoutes = map[string]string{
 	// alongside the resource, so no interface in pkg/store expresses it and
 	// Stores.Subscriptions is a concrete *memory.SubscriptionStore. There is
 	// nothing here to inject a contract-level fault into. When that store is
-	// brought under the contract, these three lose their exemption and the
+	// brought under the contract, these five lose their exemption and the
 	// partition check below is what forces them back into the table.
 	"GET /edev/{id}/sub":            "backed by *memory.SubscriptionStore, which pkg/store does not model",
 	"POST /edev/{id}/sub":           "backed by *memory.SubscriptionStore, which pkg/store does not model",
 	"DELETE /edev/{id}/sub/{subId}": "backed by *memory.SubscriptionStore, which pkg/store does not model",
+	"GET /edev/{id}/sub/{subId}":    "backed by *memory.SubscriptionStore, which pkg/store does not model",
+	"PUT /edev/{id}/sub/{subId}":    "backed by *memory.SubscriptionStore, which pkg/store does not model",
 }
 
 // faultProbeBodies supplies the request document for every mounted pattern

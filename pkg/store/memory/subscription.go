@@ -50,6 +50,42 @@ func (s *SubscriptionStore) Create(ctx context.Context, id string, sub sep2.Subs
 	return s.persistSnapshot()
 }
 
+// Update replaces the stored subscription at id and keeps the resource index
+// in step, so a subscription whose subscribedResource changed is delivered for
+// the new resource and no longer for the old one. The embedded Store's own
+// Update is shadowed on purpose: it would leave the index and the snapshot
+// describing the previous record. The device index is untouched, because the
+// device is part of the href and an update never moves a subscription between
+// devices; the caller must pass the stored Href.
+func (s *SubscriptionStore) Update(ctx context.Context, id string, sub sep2.Subscription) error {
+	s.idxMu.Lock()
+	old, err := s.Store.Get(ctx, id)
+	if err != nil {
+		s.idxMu.Unlock()
+		return err
+	}
+	if err := s.Store.Update(ctx, id, sub); err != nil {
+		s.idxMu.Unlock()
+		return err
+	}
+	if old.SubscribedResource != sub.SubscribedResource {
+		if old.SubscribedResource != "" {
+			ids := s.resourceIndex[old.SubscribedResource]
+			for i, sid := range ids {
+				if sid == id {
+					s.resourceIndex[old.SubscribedResource] = append(ids[:i], ids[i+1:]...)
+					break
+				}
+			}
+		}
+		if sub.SubscribedResource != "" {
+			s.resourceIndex[sub.SubscribedResource] = append(s.resourceIndex[sub.SubscribedResource], id)
+		}
+	}
+	s.idxMu.Unlock()
+	return s.persistSnapshot()
+}
+
 func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 	if err := s.removeOne(ctx, id); err != nil {
 		return err

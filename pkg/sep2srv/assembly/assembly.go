@@ -1023,6 +1023,9 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
 		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier), canRead))
 		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
+		subInstance := coresub.HandleSubscription(stores.Subscriptions, asNotificationURIValidator(notifier), canRead)
+		mux.HandleFunc("GET /edev/{id}/sub/{subId}", subInstance)
+		mux.HandleFunc("PUT /edev/{id}/sub/{subId}", subInstance)
 	}
 }
 

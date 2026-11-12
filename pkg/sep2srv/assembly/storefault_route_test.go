@@ -163,6 +163,9 @@ var faultProbeBodies = map[string]string{
 		`<mRID>0A1B2C3D4E5F60718293A4B5C6D7E8F9</mRID>`+
 			`<serviceCategoryKind>0</serviceCategoryKind><status>1</status>`),
 
+	"PUT /upt/{uptId}/mr/{mrId}/rt":                sep2Doc("ReadingType", `<uom>72</uom>`),
+	"PUT /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}": sep2Doc("Reading", `<value>1</value>`),
+
 	"POST /mup":         mirrorUsagePointDoc,
 	"PUT /mup/{id}":     mirrorUsagePointDoc,
 	"POST /mup/{id}":    mirrorMeterReadingDoc,

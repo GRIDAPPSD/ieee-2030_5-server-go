@@ -40,6 +40,9 @@ var outsidePolicyByMode = map[wadl.Mode]int{
 // so the mux answers 405 before any check; each gets its refusal with the route
 // that mounts it, and the ceiling falls toward zero as they do. The unreached remainder of the
 // declared writes is not probed and sits in neither number.
+//
+// The DER curve list and association routes reach five more restricted writes
+// (probed 17 to 22, not forbidden 14 to 19). They answer 405 until #1274.
 const (
 	restrictedProbedFloor         = 22
 	restrictedNotForbiddenCeiling = 19

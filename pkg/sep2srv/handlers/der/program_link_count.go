@@ -48,8 +48,10 @@ func (s *DERControlCountedProgramStore) WithCurveList(curves curveCounter) *DERC
 	return s
 }
 
-// stampCurveList fills an absent DERCurveListLink. A failed count serves no
-// link rather than a wrong all.
+// stampCurveList fills an absent DERCurveListLink. All is the whole curve
+// catalog for every program, because no store records which curves belong to
+// which program; the list route serves the same catalog. A failed count serves
+// no link rather than a wrong all.
 func (s *DERControlCountedProgramStore) stampCurveList(ctx context.Context, p *sep2.DERProgram) {
 	if s.curves == nil || p.DERCurveListLink != nil || p.Href == "" {
 		return

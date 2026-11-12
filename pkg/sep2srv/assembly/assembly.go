@@ -1547,11 +1547,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 		case r.Method == http.MethodGet, r.Method == http.MethodHead:
 			resource, err := scopedStore.Get(r.Context(), parentKey, id)
 			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				}
-				srverr.Internal(w, r, err)
+				writeLookupFailure(w, r, err)
 				return
 			}
 			if stamp != nil {
@@ -1580,11 +1576,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 				// One Update, no Create: a DELETE that wins the race is a 404,
 				// and the client's id never becomes a new key.
 				if err := scopedStore.Update(r.Context(), parentKey, id, resource); err != nil {
-					if errors.Is(err, store.ErrNotFound) {
-						http.Error(w, "not found", http.StatusNotFound)
-						return
-					}
-					srverr.Internal(w, r, err)
+					writeLookupFailure(w, r, err)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -1607,11 +1599,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 			// there tells a client its delete took effect, and a client that
 			// believes a stale event is gone stops reconciling it.
 			if err := scopedStore.Delete(r.Context(), parentKey, id); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				}
-				srverr.Internal(w, r, err)
+				writeLookupFailure(w, r, err)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -1697,17 +1685,23 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(flatReadingTypes))
 }
 
+// writeLookupFailure answers a failed store read: store.ErrNotFound is the
+// only error that may say "absent" (404); any other is a 500.
+func writeLookupFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	srverr.Internal(w, r, err)
+}
+
 // requireParent runs exists before next and answers 404 when the parent it
 // checks is absent, so a list under a missing parent is not served as an empty
 // 200. A failed check is a 500: only store.ErrNotFound may say "absent".
 func requireParent(exists func(r *http.Request) error, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := exists(r); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, err)
+			writeLookupFailure(w, r, err)
 			return
 		}
 		next(w, r)

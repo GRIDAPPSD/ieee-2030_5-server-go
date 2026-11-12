@@ -1,10 +1,8 @@
 package assembly
 
 import (
-	"errors"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
@@ -13,18 +11,15 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	corelisthandler "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
+	coremetering "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/metering"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
-
-// uptHrefPrefix is the href prefix of a stored UsagePoint (metering.UsagePointHref).
-const uptHrefPrefix = "/upt/"
 
 // programExists answers store.ErrNotFound for a program that is not served
 // under the request's device and FSA, the boundary the program routes hold.
 func programExists(programs store.ScopedStore[sep2.DERProgram], warn *unscopedProgramWarnings) func(r *http.Request) error {
 	return func(r *http.Request) error {
-		inFSA := programsInFSA{ScopedStore: programs, fsaID: r.PathValue("fsaId"), warn: warn}
+		inFSA := newProgramsInFSA(programs, r.PathValue("fsaId"), warn)
 		_, err := inFSA.Get(r.Context(), r.PathValue("id"), r.PathValue("derpId"))
 		return err
 	}
@@ -69,11 +64,7 @@ func programCurveHandler(curves store.ResourceStore[sep2.DERCurve], programs sto
 	return requireParent(programExists(programs, warn), func(w http.ResponseWriter, r *http.Request) {
 		curve, err := curves.Get(r.Context(), r.PathValue("dcId"))
 		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, err)
+			writeLookupFailure(w, r, err)
 			return
 		}
 		curve.Href = r.URL.Path
@@ -87,8 +78,8 @@ func programCurveHandler(curves store.ResourceStore[sep2.DERCurve], programs sto
 // share one list.
 func associatedProgramListHandler(ders store.ScopedStore[sep2.DER], programs store.ScopedStore[sep2.DERProgram], warn *unscopedProgramWarnings) http.HandlerFunc {
 	return requireParent(derExists(ders), func(w http.ResponseWriter, r *http.Request) {
-		anyFSA := programsInFSA{ScopedStore: programs, warn: warn}
-		st := store.Under(store.OrderedScoped[sep2.DERProgram](anyFSA, coreder.CompareDERProgram), r.PathValue("id"))
+		allFSAs := newProgramsInAnyFSA(programs, warn)
+		st := store.Under(store.OrderedScoped[sep2.DERProgram](allFSAs, coreder.CompareDERProgram), r.PathValue("id"))
 		corelisthandler.SortedListHandler(st, store.SortByListOrdering, coreder.BuildDERProgramList, 900).ServeHTTP(w, r)
 	})
 }
@@ -98,11 +89,7 @@ func associatedProgramListHandler(ders store.ScopedStore[sep2.DER], programs sto
 func storedDER(w http.ResponseWriter, r *http.Request, ders store.ScopedStore[sep2.DER]) (sep2.DER, bool) {
 	d, err := ders.Get(r.Context(), r.PathValue("id"), r.PathValue("derId"))
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-		} else {
-			srverr.Internal(w, r, err)
-		}
+		writeLookupFailure(w, r, err)
 		return d, false
 	}
 	return d, true
@@ -129,13 +116,9 @@ func currentProgramHandler(ders store.ScopedStore[sep2.DER], programs store.Scop
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		prog, err := programsInFSA{ScopedStore: programs, fsaID: fsa, warn: warn}.Get(r.Context(), edev, derp)
+		prog, err := newProgramsInFSA(programs, fsa, warn).Get(r.Context(), edev, derp)
 		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, err)
+			writeLookupFailure(w, r, err)
 			return
 		}
 		encoding.WriteXML(w, http.StatusOK, &prog)
@@ -154,8 +137,8 @@ func associatedUsagePointHandler(ders store.ScopedStore[sep2.DER], usagePoints s
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		id, ok := strings.CutPrefix(d.AssociatedUsagePointLink.Href, uptHrefPrefix)
-		if !ok || id == "" || strings.Contains(id, "/") {
+		id, ok := coremetering.UsagePointIDFromHref(d.AssociatedUsagePointLink.Href)
+		if !ok {
 			log.Printf("assembly: AssociatedUsagePointLink %s of a DER under %s names no UsagePoint; answering 404",
 				logsafe.Quote(d.AssociatedUsagePointLink.Href), logsafe.Str(r.PathValue("id")))
 			http.Error(w, "not found", http.StatusNotFound)
@@ -163,11 +146,7 @@ func associatedUsagePointHandler(ders store.ScopedStore[sep2.DER], usagePoints s
 		}
 		upt, err := usagePoints.Get(r.Context(), id)
 		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, err)
+			writeLookupFailure(w, r, err)
 			return
 		}
 		encoding.WriteXML(w, http.StatusOK, &upt)

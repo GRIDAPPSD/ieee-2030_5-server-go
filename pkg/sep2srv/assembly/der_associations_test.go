@@ -161,7 +161,9 @@ func TestDERAssociations_ForeignDeviceAndForeignRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get DER: %v", err)
 	}
-	d.CurrentDERProgramLink = &sep2.Link{Href: "/edev/" + callerID + "/fsa/1/derp/1"}
+	foreign := "/edev/" + callerID + "/fsa/1/derp/1"
+	seedProgram(ctx, t, stores, callerID, "1", foreign)
+	d.CurrentDERProgramLink = &sep2.Link{Href: foreign}
 	d.AssociatedUsagePointLink = &sep2.Link{Href: "/upt/missing"}
 	if err := stores.DERs.Update(ctx, victimID, victimID, d); err != nil {
 		t.Fatalf("update DER: %v", err)

@@ -172,10 +172,19 @@ wrong under any reading of the standard (a 5xx, a transport failure). It does
 known, tracked body of work, and a test that is red by design gets muted.
 
 The gap is reported in full, and `TestMethodModePolicyRatchet` keeps it from
-widening: it pins a ceiling on the number of methods outside the method-mode
-policy (Mandatory and Optional must be conformant, Deprecated conformant or 405,
-Error 400 or 405). A fix that lowers the number passes and logs the new value to
-pin. `TestRestrictedWritesForbidDevice` does the same for the manager-only
-writes: it pins how many of the pairs the sweep reaches an ordinary device is
-not answered 403 on, and a floor on how many it reaches. The policy ratchet also
-pins each wx:mode separately.
+widening. It pins the gap per WADL resource in the `expectedGaps` map in
+`wadl/conformance_test.go`: the methods outside the method-mode policy by
+wx:mode (Mandatory and Optional must be conformant, Deprecated conformant or
+405, Error 400 or 405), whether the crawl misses the resource (`Unreached`),
+whether the schema names no link for it (`Unlinked`), and how many of its
+manager-only writes the ordinary device is not answered 403 on
+(`RestrictedNotForbidden`). A resource with no entry must have no gap.
+
+With the schema every field is an equality, so a fix and a regression both fail
+until the entry is updated. Each failure prints the entry to write, so re-pinning
+is a paste: lower the entry to zero rather than deleting it while the epic runs.
+Without the schema the measure is only a ceiling, but a resource the crawl misses
+that its entry does not mark `Unreached` or `Unlinked` still fails, which is how a
+link the server stops emitting is caught in a run with no schema.
+`TestRestrictedWritesForbidDevice` checks that each manager-only write is probed
+as both the manager and the device.

@@ -74,6 +74,7 @@ var storeFreeRoutes = map[string]string{
 	"GET /tm":       "serves the clock from RouterConfig; it reads no store",
 	"GET /sdev":     "serves the server's own SelfDevice from the configured SFDI and LFDI; it reads no store",
 	"GET /sdev/sdi": "serves the server's own DeviceInformation from the configured LFDI; it reads no store",
+	"POST /ntfy":    "this harness runs with the device log off, where the handler answers 503 before reading any store",
 
 	// The subscription store is NOT part of the pkg/store contract: it is
 	// queried by resource href and by device, and its records carry a store key

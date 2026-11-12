@@ -114,3 +114,35 @@ func TestClassifyDeprecated405(t *testing.T) {
 		t.Errorf("optional 405 = %q, want %q", got, VerdictMethodRefused)
 	}
 }
+
+// TestDeviceProbedNotForbiddenRows shows the count is the length of the rows, so
+// no caller restates the selection: only restricted-phase rows without an
+// authority 403 count, and a row of another phase never does.
+func TestDeviceProbedNotForbiddenRows(t *testing.T) {
+	res := &Results{Rows: []Row{
+		{Phase: PhaseRestricted, ResourceID: "A", Verdict: VerdictDeviceForbidden},
+		{Phase: PhaseRestricted, ResourceID: "B", Verdict: VerdictDeviceNotForbidden},
+		{Phase: PhaseWADL, ResourceID: "C", Verdict: VerdictConformant},
+	}}
+	rows := res.DeviceProbedNotForbiddenRows()
+	if len(rows) != 1 || rows[0].ResourceID != "B" {
+		t.Fatalf("DeviceProbedNotForbiddenRows() = %v, want only resource B", rows)
+	}
+	if n := res.DeviceProbedNotForbidden(); n != len(rows) {
+		t.Errorf("DeviceProbedNotForbidden() = %d, want %d (the rows)", n, len(rows))
+	}
+}
+
+// TestNotReachedRowsAreResourceRows shows the selection keeps only the WADL-phase
+// not_reached rows.
+func TestNotReachedRowsAreResourceRows(t *testing.T) {
+	res := &Results{Rows: []Row{
+		{Phase: PhaseWADL, ResourceID: "A", Verdict: VerdictNotReached},
+		{Phase: PhaseRestricted, ResourceID: "B", Verdict: VerdictNotReached},
+		{Phase: PhaseWADL, ResourceID: "C", Verdict: VerdictConformant},
+	}}
+	rows := res.NotReachedRows()
+	if len(rows) != 1 || rows[0].ResourceID != "A" {
+		t.Fatalf("NotReachedRows() = %v, want only resource A", rows)
+	}
+}

@@ -37,6 +37,11 @@ type expectedGap struct {
 	// Unreached marks a resource with a Mandatory or Optional method that the
 	// crawl misses though the schema names a link for it.
 	Unreached bool
+	// Unlinked marks a resource with a Mandatory or Optional method that the
+	// schema names no link for, so no crawl reaches it and the sweep probes it at
+	// its sample path. It is a pinned mark: unlinkedMarks checks it against the
+	// schema, and the sweep does not measure it.
+	Unlinked bool
 	// RestrictedNotForbidden counts the manager-only writes probed as the device
 	// that were not refused with a 403 from an authority check.
 	RestrictedNotForbidden int
@@ -377,9 +382,8 @@ var expectedGaps = map[string]expectedGap{
 		Error:      3,
 	},
 	"NotificationList": {
-		Mandatory:  1,
-		Deprecated: 2,
-		Error:      2,
+		Mandatory: 0,
+		Unlinked:  true,
 	},
 	"PrepayOperationStatus": {
 		Mandatory:  2,
@@ -591,7 +595,7 @@ const EnvArtifact = "SEP2_WADL_SWEEP_OUT"
 func bootTarget(t *testing.T, links *wadl.LinkSchema) *wadl.Target {
 	t.Helper()
 
-	srv := csiptest.BootServer(t)
+	srv := csiptest.BootServer(t, csiptest.WithDeviceLog())
 	if len(srv.MountedPatterns) == 0 {
 		t.Fatal("the booted server reported no mounted patterns, so the route cross-check would be vacuous")
 	}
@@ -685,7 +689,8 @@ func TestWADLConformanceSweep(t *testing.T) {
 // the method-mode policy, the resources the crawl misses, and the manager-only
 // writes the device is not refused. With the schema each resource must equal its
 // expectedGaps entry; without it the sweep is strict, so the measure is only a
-// ceiling and the not-reached counts are left out.
+// ceiling and the not-reached counts are left out, but a resource the crawl misses
+// that no entry marks Unreached or Unlinked still fails.
 func TestMethodModePolicyRatchet(t *testing.T) {
 	model := wadl.MustLoadModel(t)
 	links := wadl.SchemaForTest(t)
@@ -698,7 +703,20 @@ func TestMethodModePolicyRatchet(t *testing.T) {
 	t.Logf("methods outside the method-mode policy: %d of %d declared", len(outside), len(model.Methods))
 
 	exact := links != nil
-	measured := measureGaps(res, outside, exact)
+	measured, err := measureGaps(res, links, outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exact {
+		for _, msg := range lostLinks(res, expectedGaps) {
+			t.Error(msg)
+		}
+	}
+	if exact {
+		for _, msg := range unlinkedMarks(expectedGaps, links) {
+			t.Error(msg)
+		}
+	}
 	for _, msg := range diffGaps(measured, expectedGaps, exact) {
 		t.Error(msg)
 	}
@@ -713,7 +731,7 @@ func TestRestrictedWritesForbidDevice(t *testing.T) {
 	res := wadl.Sweep(bootTarget(t, wadl.SchemaForTest(t)), model)
 
 	asManager := len(res.Filter(func(r wadl.Row) bool { return r.AsManager }))
-	probed := len(res.Filter(func(r wadl.Row) bool { return r.Phase == wadl.PhaseRestricted }))
+	probed := res.DeviceProbed()
 	if asManager == 0 || asManager != probed {
 		t.Fatalf("%d restricted writes were made as the manager and %d probed as the device: "+
 			"the two must pair, or the 403 assertion is vacuous", asManager, probed)
@@ -724,10 +742,12 @@ func TestRestrictedWritesForbidDevice(t *testing.T) {
 }
 
 // measureGaps splits a sweep into one expectedGap per resource that has any gap.
-// With exact false, resources the crawl missed are left out of every field: the
-// strict sweep without a schema cannot tell an unlinked resource from a missed
-// one, so those counts are not comparable.
-func measureGaps(res *wadl.Results, outside []wadl.PolicyRow, exact bool) map[string]expectedGap {
+// Without a schema (links nil) resources the crawl missed are left out of every
+// field: the strict sweep cannot tell an unlinked resource from a missed one, so
+// those counts are not comparable. lostLinks covers that case. An outside row
+// with a mode the switch does not know is an error, never dropped.
+func measureGaps(res *wadl.Results, links *wadl.LinkSchema, outside []wadl.PolicyRow) (map[string]expectedGap, error) {
+	exact := links != nil
 	out := map[string]expectedGap{}
 	for _, row := range outside {
 		if row.Verdict == wadl.VerdictNotReached && !exact {
@@ -743,29 +763,60 @@ func measureGaps(res *wadl.Results, outside []wadl.PolicyRow, exact bool) map[st
 			g.Deprecated++
 		case wadl.ModeError:
 			g.Error++
+		default:
+			return nil, fmt.Errorf("resource %s has an outside-policy row in mode %q, which has no field in expectedGap",
+				row.ResourceID, row.Mode)
 		}
 		out[row.ResourceID] = g
 	}
 	if exact {
-		for _, row := range res.Filter(func(r wadl.Row) bool { return r.Verdict == wadl.VerdictNotReached }) {
+		for _, row := range res.NotReachedRows() {
 			g := out[row.ResourceID]
 			g.Unreached = true
 			out[row.ResourceID] = g
 		}
 	}
-	for _, row := range res.Filter(func(r wadl.Row) bool {
-		return r.Phase == wadl.PhaseRestricted && r.Verdict != wadl.VerdictDeviceForbidden
-	}) {
+	for _, row := range res.DeviceProbedNotForbiddenRows() {
 		g := out[row.ResourceID]
 		g.RestrictedNotForbidden++
 		out[row.ResourceID] = g
 	}
-	return out
+	return out, nil
+}
+
+// unlinkedMarks reports each pinned Unlinked entry whose resource the schema does
+// name a link for, so a mark cannot silence lostLinks for a resource that is
+// linked.
+func unlinkedMarks(pinned map[string]expectedGap, links *wadl.LinkSchema) []string {
+	var msgs []string
+	for id, g := range pinned {
+		if g.Unlinked && links.Names(id) {
+			msgs = append(msgs, fmt.Sprintf("resource %s: pinned Unlinked, but the schema names a link for it", id))
+		}
+	}
+	sort.Strings(msgs)
+	return msgs
+}
+
+// lostLinks reports each resource the crawl missed that its pinned entry does not
+// mark Unreached or Unlinked. It reads only the entry marks, so it holds without
+// the schema: a link the server stops emitting turns a reached resource into one
+// of these, whatever other gaps its entry pins.
+func lostLinks(res *wadl.Results, pinned map[string]expectedGap) []string {
+	var msgs []string
+	for _, row := range res.NotReachedRows() {
+		if g := pinned[row.ResourceID]; g.Unreached || g.Unlinked {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("resource %s: the crawl did not reach it and its entry does not mark it Unreached or Unlinked: a link the server used to emit is gone",
+			row.ResourceID))
+	}
+	return msgs
 }
 
 // diffGaps compares a measurement to the pinned entries, one message per resource
 // that differs, each carrying the entry to write. A resource with no entry is
-// pinned at all zero. With exact false a measurement may be below its entry, and
+// pinned at all zero. Unlinked is not measured, so it is taken from the entry. With exact false a measurement may be below its entry, and
 // Unreached is not compared.
 func diffGaps(measured, pinned map[string]expectedGap, exact bool) []string {
 	ids := map[string]bool{}
@@ -784,6 +835,7 @@ func diffGaps(measured, pinned map[string]expectedGap, exact bool) []string {
 	var msgs []string
 	for _, id := range sorted {
 		got, want := measured[id], pinned[id]
+		got.Unlinked = want.Unlinked
 		if exact && got == want {
 			continue
 		}
@@ -819,6 +871,9 @@ func formatGapEntry(id string, g expectedGap) string {
 	add("Error", g.Error)
 	if g.Unreached {
 		fields = append(fields, field{"Unreached", "true"})
+	}
+	if g.Unlinked {
+		fields = append(fields, field{"Unlinked", "true"})
 	}
 	add("RestrictedNotForbidden", g.RestrictedNotForbidden)
 	if len(fields) == 0 {
@@ -893,4 +948,66 @@ func writeArtifact(t *testing.T, path string, res *wadl.Results) {
 		}
 	}
 	t.Logf("sweep artifact written: %s (%d rows)", path, len(res.Rows))
+}
+
+// TestLostLinksWithoutSchema shows the no-schema check fails on a missed resource
+// no entry accounts for, whatever gaps its entry pins.
+func TestLostLinksWithoutSchema(t *testing.T) {
+	pinned := map[string]expectedGap{
+		"Missed":   {Mandatory: 2, Unreached: true},
+		"Unlinked": {Mandatory: 0, Unlinked: true},
+		"Reached":  {Error: 3},
+	}
+	row := func(id string) wadl.Row {
+		return wadl.Row{Phase: wadl.PhaseWADL, ResourceID: id, Verdict: wadl.VerdictNotReached}
+	}
+	tests := []struct {
+		name string
+		rows []wadl.Row
+		want []string
+	}{
+		{"pinned missed and unlinked pass", []wadl.Row{row("Missed"), row("Unlinked")}, nil},
+		{"resource with no entry", []wadl.Row{row("Time")}, []string{"Time"}},
+		{"reached resource with a gap entry", []wadl.Row{row("Reached")}, []string{"Reached"}},
+		{"nothing missed", nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var ids []string
+			for _, msg := range lostLinks(&wadl.Results{Rows: tc.rows}, pinned) {
+				for _, id := range tc.want {
+					if strings.Contains(msg, "resource "+id+":") {
+						ids = append(ids, id)
+					}
+				}
+			}
+			if len(ids) != len(tc.want) {
+				t.Fatalf("lostLinks flagged %v, want %v", ids, tc.want)
+			}
+		})
+	}
+}
+
+// TestMeasureGapsRejectsAnUnknownMode shows an outside row whose mode the switch
+// does not know fails the measurement instead of being dropped.
+func TestMeasureGapsRejectsAnUnknownMode(t *testing.T) {
+	outside := []wadl.PolicyRow{{ResourceID: "A", Mode: wadl.Mode("X"), Verdict: wadl.VerdictMethodRefused}}
+	if _, err := measureGaps(&wadl.Results{}, nil, outside); err == nil {
+		t.Fatal("measureGaps accepted a row with an unknown mode")
+	}
+}
+
+// TestUnlinkedMarksCheckedAgainstSchema shows a pinned Unlinked mark fails for a
+// resource the schema names a link for.
+func TestUnlinkedMarksCheckedAgainstSchema(t *testing.T) {
+	links := wadl.SchemaForTest(t)
+	if links == nil {
+		t.Skip("no sep.xsd: the marks are checked against the schema")
+	}
+	if msgs := unlinkedMarks(map[string]expectedGap{"EndDevice": {Unlinked: true}}, links); len(msgs) != 1 {
+		t.Errorf("unlinkedMarks flagged %q for a linked resource, want one message", msgs)
+	}
+	if msgs := unlinkedMarks(map[string]expectedGap{"NotificationList": {Unlinked: true}}, links); len(msgs) != 0 {
+		t.Errorf("unlinkedMarks flagged %q for the unlinked NotificationList", msgs)
+	}
 }

@@ -181,11 +181,18 @@ func (r *Results) DeviceProbed() int {
 	return len(r.Filter(func(row Row) bool { return row.Phase == PhaseRestricted }))
 }
 
-// DeviceProbedNotForbidden counts the probed manager-only writes the ordinary
-// device was not refused with an authority 403. Unlike DeviceNotForbidden it
-// leaves out writes the crawl never reached, so a newly reached pair that is not
-// refused raises it and a lost refusal raises it, while DeviceProbed alone moves
-// when reach changes.
+// DeviceProbedNotForbiddenRows is the one home of the restricted-write selection:
+// the probed manager-only writes the ordinary device was not refused with an
+// authority 403, in sweep order. Unlike DeviceNotForbidden it leaves out writes
+// the crawl never reached, so a newly reached pair that is not refused raises it
+// and a lost refusal raises it, while DeviceProbed alone moves when reach changes.
+func (r *Results) DeviceProbedNotForbiddenRows() []Row {
+	return r.Filter(func(row Row) bool {
+		return row.Phase == PhaseRestricted && row.Verdict != VerdictDeviceForbidden
+	})
+}
+
+// DeviceProbedNotForbidden counts DeviceProbedNotForbiddenRows.
 func (r *Results) DeviceProbedNotForbidden() int {
-	return r.DeviceProbed() - r.Count(PhaseRestricted, VerdictDeviceForbidden)
+	return len(r.DeviceProbedNotForbiddenRows())
 }

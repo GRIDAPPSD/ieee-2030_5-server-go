@@ -1268,10 +1268,8 @@ func (r *Results) NotReachedMethods(m *Model, mode Mode) int {
 // methods of one mode whose resource the crawl missed, in model order.
 func (r *Results) notReachedMethodList(m *Model, mode Mode) []Method {
 	missed := map[resKey]bool{}
-	for _, row := range r.Rows {
-		if row.Phase == PhaseWADL && row.Verdict == VerdictNotReached {
-			missed[resKey{row.ResourceID, row.WADLPath}] = true
-		}
+	for _, row := range r.NotReachedRows() {
+		missed[resKey{row.ResourceID, row.WADLPath}] = true
 	}
 	var out []Method
 	for _, meth := range m.Methods {
@@ -1280,6 +1278,14 @@ func (r *Results) notReachedMethodList(m *Model, mode Mode) []Method {
 		}
 	}
 	return out
+}
+
+// NotReachedRows is the one home of the not_reached row selection: the WADL-phase
+// rows of resources the crawl missed.
+func (r *Results) NotReachedRows() []Row {
+	return r.Filter(func(row Row) bool {
+		return row.Phase == PhaseWADL && row.Verdict == VerdictNotReached
+	})
 }
 
 // Filter returns every row matching a predicate.

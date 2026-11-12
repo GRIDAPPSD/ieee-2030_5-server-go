@@ -52,7 +52,10 @@ func TestOutsidePolicyCountsNotReachedMethods(t *testing.T) {
 		{Phase: PhaseWADL, ResourceID: "B", WADLPath: "/b", Method: "GET", Mode: ModeMandatory, Verdict: VerdictConformant},
 	}}
 	got := res.OutsidePolicy(m)
-	want := []PolicyRow{{ModeMandatory, VerdictNotReached}, {ModeOptional, VerdictNotReached}}
+	want := []PolicyRow{
+		{ResourceID: "A", Mode: ModeMandatory, Verdict: VerdictNotReached},
+		{ResourceID: "A", Mode: ModeOptional, Verdict: VerdictNotReached},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("OutsidePolicy() = %v, want %v", got, want)
 	}

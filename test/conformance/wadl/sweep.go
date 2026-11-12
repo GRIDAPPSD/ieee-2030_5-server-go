@@ -1261,19 +1261,25 @@ func (r *Results) CountMode(mode Mode, v Verdict) int {
 // resource the crawl did not reach. Those methods are not probed, so no
 // per-method row carries them.
 func (r *Results) NotReachedMethods(m *Model, mode Mode) int {
+	return len(r.notReachedMethodList(m, mode))
+}
+
+// notReachedMethodList is the one home of the not-reached selection: the model's
+// methods of one mode whose resource the crawl missed, in model order.
+func (r *Results) notReachedMethodList(m *Model, mode Mode) []Method {
 	missed := map[resKey]bool{}
 	for _, row := range r.Rows {
 		if row.Phase == PhaseWADL && row.Verdict == VerdictNotReached {
 			missed[resKey{row.ResourceID, row.WADLPath}] = true
 		}
 	}
-	n := 0
+	var out []Method
 	for _, meth := range m.Methods {
 		if meth.Mode == mode && missed[keyOf(meth)] {
-			n++
+			out = append(out, meth)
 		}
 	}
-	return n
+	return out
 }
 
 // Filter returns every row matching a predicate.

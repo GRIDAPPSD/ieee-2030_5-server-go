@@ -21,8 +21,9 @@ import (
 // PolicyRow is one row outside the policy, or one method of a resource the
 // crawl did not reach, which is not probed and so cannot be inside it.
 type PolicyRow struct {
-	Mode    Mode
-	Verdict Verdict
+	ResourceID string
+	Mode       Mode
+	Verdict    Verdict
 }
 
 // insidePolicy reports whether a probed method row satisfies the policy for its
@@ -47,24 +48,29 @@ func (r *Results) OutsidePolicy(m *Model) []PolicyRow {
 	var out []PolicyRow
 	for _, row := range r.Rows {
 		if !insidePolicy(row) {
-			out = append(out, PolicyRow{Mode: row.Mode, Verdict: row.Verdict})
+			out = append(out, PolicyRow{ResourceID: row.ResourceID, Mode: row.Mode, Verdict: row.Verdict})
 		}
 	}
 	for _, mode := range []Mode{ModeMandatory, ModeOptional} {
-		for n := r.NotReachedMethods(m, mode); n > 0; n-- {
-			out = append(out, PolicyRow{Mode: mode, Verdict: VerdictNotReached})
+		for _, meth := range r.notReachedMethodList(m, mode) {
+			out = append(out, PolicyRow{ResourceID: meth.ResourceID, Mode: mode, Verdict: VerdictNotReached})
 		}
 	}
 	return out
 }
 
-// PolicyBreakdown renders OutsidePolicy as sorted "mode verdict count" lines.
+// PolicyBreakdown renders OutsidePolicy as sorted "mode verdict count" lines,
+// summed over resources.
 func PolicyBreakdown(rows []PolicyRow) []string {
-	counts := map[PolicyRow]int{}
-	for _, row := range rows {
-		counts[row]++
+	type key struct {
+		Mode    Mode
+		Verdict Verdict
 	}
-	keys := make([]PolicyRow, 0, len(counts))
+	counts := map[key]int{}
+	for _, row := range rows {
+		counts[key{row.Mode, row.Verdict}]++
+	}
+	keys := make([]key, 0, len(counts))
 	for k := range counts {
 		keys = append(keys, k)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -21,49 +22,54 @@ type UsagePointTree struct {
 	ReadingTypes  store.ScopedStore[sep2.ReadingType]
 }
 
-// prefixCascader removes every parent whose id starts with a prefix in one
-// store operation, as parentCascader does for one parent.
-type prefixCascader interface {
-	DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error)
-}
-
-// cascadeStep is one removal of children, with whether its store can do it.
+// cascadeStep is one removal of children from one store. probe refuses the
+// step before anything is removed; run does the removal and counts it.
 type cascadeStep struct {
-	capable bool
-	run     func(ctx context.Context) error
+	name  string
+	store string
+	probe func(ctx context.Context) error
+	run   func(ctx context.Context) (uint32, error)
 }
 
-func parentStep[T store.Copier[T]](s store.ScopedStore[T], parent string) cascadeStep {
-	c, ok := s.(parentCascader)
-	return cascadeStep{capable: ok, run: func(ctx context.Context) error {
-		_, err := c.DeleteParent(ctx, parent)
-		return err
-	}}
+func parentStep[T store.Copier[T]](name string, s store.ScopedStore[T], parent string) cascadeStep {
+	return cascadeStep{
+		name:  name,
+		store: fmt.Sprintf("%T", s),
+		probe: func(ctx context.Context) error { return store.ProbeParent(ctx, s, parent) },
+		run:   func(ctx context.Context) (uint32, error) { return store.CascadeParent(ctx, s, parent) },
+	}
 }
 
-func prefixStep[T store.Copier[T]](s store.ScopedStore[T], prefix string) cascadeStep {
-	c, ok := s.(prefixCascader)
-	return cascadeStep{capable: ok, run: func(ctx context.Context) error {
-		_, err := c.DeleteParentsWithPrefix(ctx, prefix)
-		return err
-	}}
+func prefixStep[T store.Copier[T]](name string, s store.ScopedStore[T], prefix string) cascadeStep {
+	return cascadeStep{
+		name:  name,
+		store: fmt.Sprintf("%T", s),
+		probe: func(ctx context.Context) error { return store.ProbePrefix(ctx, s, prefix) },
+		run:   func(ctx context.Context) (uint32, error) { return store.CascadePrefix(ctx, s, prefix) },
+	}
 }
 
-// cascade runs every step, but only after all are known capable, so a store
-// that cannot cascade refuses the delete before any child is removed. The
-// caller deletes its own record afterwards, so a failure leaves the record
-// in place and the request can be retried.
-func cascade(ctx context.Context, steps ...cascadeStep) error {
+// cascade probes every step, then runs them, so a store that cannot cascade
+// or cannot be read refuses the delete before any child is removed. The
+// caller deletes its own record afterwards, so a failure leaves the record in
+// place and the request can be retried. A failing step is named with its
+// store, and the removed count is logged against target.
+func cascade(ctx context.Context, target string, steps ...cascadeStep) error {
 	for _, s := range steps {
-		if !s.capable {
-			return errors.New("a metering store cannot cascade a parent delete, so the record is left in place")
+		if err := s.probe(ctx); err != nil {
+			return fmt.Errorf("cascade delete step %q (store %s) refused, so the record is left in place: %w", s.name, s.store, err)
 		}
 	}
+	var removed uint32
 	for _, s := range steps {
-		if err := s.run(ctx); err != nil {
-			return fmt.Errorf("cascade delete of the records beneath it: %w", err)
+		n, err := s.run(ctx)
+		removed += n
+		if err != nil {
+			return fmt.Errorf("cascade delete step %q (store %s) failed after %d record(s) removed, so the record is left in place: %w",
+				s.name, s.store, removed, err)
 		}
 	}
+	log.Printf("upt: DELETE %s removed %d record(s) beneath it", target, removed)
 	return nil
 }
 
@@ -97,11 +103,13 @@ func HandleDeleteUsagePoint(t UsagePointTree) http.HandlerFunc {
 			finishDelete(w, r, err)
 			return
 		}
-		err := cascade(ctx,
-			parentStep(t.MeterReadings, upt),
-			parentStep(t.ReadingTypes, upt),
-			prefixStep(t.ReadingSets, upt+"/"),
-			prefixStep(t.Readings, upt+"/"),
+		// A client disconnect must not stop the removal part-way.
+		ctx = context.WithoutCancel(ctx)
+		err := cascade(ctx, r.URL.Path,
+			parentStep("meter readings", t.MeterReadings, upt),
+			parentStep("reading types", t.ReadingTypes, upt),
+			prefixStep("reading sets", t.ReadingSets, upt+"/"),
+			prefixStep("readings", t.Readings, upt+"/"),
 		)
 		if err == nil {
 			err = t.UsagePoints.Delete(ctx, upt)
@@ -127,10 +135,11 @@ func HandleDeleteMeterReading(t UsagePointTree) http.HandlerFunc {
 			finishDelete(w, r, err)
 			return
 		}
-		err := cascade(ctx,
-			parentStep(t.Readings, key),
-			prefixStep(t.Readings, key+"/"),
-			parentStep(t.ReadingSets, key),
+		ctx = context.WithoutCancel(ctx)
+		err := cascade(ctx, r.URL.Path,
+			parentStep("readings", t.Readings, key),
+			prefixStep("readings", t.Readings, key+"/"),
+			parentStep("reading sets", t.ReadingSets, key),
 		)
 		if err == nil {
 			// The ReadingType is optional beside a MeterReading, so none is fine.
@@ -162,7 +171,9 @@ func HandleDeleteReadingSet(t UsagePointTree) http.HandlerFunc {
 			finishDelete(w, r, err)
 			return
 		}
-		err := cascade(ctx, parentStep(t.Readings, readingKey))
+		ctx = context.WithoutCancel(ctx)
+		err := cascade(ctx, r.URL.Path,
+			parentStep("readings", t.Readings, readingKey))
 		if err == nil {
 			err = t.ReadingSets.Delete(ctx, setKey, rs)
 		}

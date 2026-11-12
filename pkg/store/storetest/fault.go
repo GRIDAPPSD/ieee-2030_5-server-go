@@ -153,21 +153,6 @@ func (s *faultyEndDeviceStore) GetByLFDI(ctx context.Context, lfdi string) (sep2
 	return s.inner.GetByLFDI(ctx, lfdi)
 }
 
-// parentCascader is the optional bulk-parent-removal capability the metering
-// handler asserts for at the point of use. It is redeclared here, at the
-// consumer, because the handler's copy is unexported and this decorator has to
-// answer the same question the handler asks.
-type parentCascader interface {
-	DeleteParent(ctx context.Context, parentID string) (uint32, error)
-}
-
-// prefixCascader is the optional remove-every-parent-under-a-prefix capability
-// the EndDevice delete cascade asserts for, redeclared here for the same reason
-// as parentCascader.
-type prefixCascader interface {
-	DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error)
-}
-
 // NewFaultyScopedStore wraps inner in a decorator that fails every operation
 // while fault is armed and delegates to inner otherwise.
 //
@@ -187,9 +172,9 @@ type prefixCascader interface {
 // unconditionally.
 func NewFaultyScopedStore[T store.Copier[T]](inner store.ScopedStore[T], fault *Fault) store.ScopedStore[T] {
 	base := &faultyScopedStore[T]{inner: inner, fault: fault}
-	if cascader, ok := inner.(parentCascader); ok {
+	if cascader, ok := inner.(store.ParentCascader); ok {
 		cascading := &faultyCascadingScopedStore[T]{faultyScopedStore: base, cascader: cascader}
-		if prefixer, ok := inner.(prefixCascader); ok {
+		if prefixer, ok := inner.(store.PrefixCascader); ok {
 			return &faultyPrefixCascadingScopedStore[T]{faultyCascadingScopedStore: cascading, prefixer: prefixer}
 		}
 		return cascading
@@ -263,7 +248,7 @@ func (s *faultyScopedStore[T]) Delete(ctx context.Context, parentID, id string) 
 // the optional parent-cascade capability. See [NewFaultyScopedStore].
 type faultyCascadingScopedStore[T store.Copier[T]] struct {
 	*faultyScopedStore[T]
-	cascader parentCascader
+	cascader store.ParentCascader
 }
 
 func (s *faultyCascadingScopedStore[T]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
@@ -277,7 +262,7 @@ func (s *faultyCascadingScopedStore[T]) DeleteParent(ctx context.Context, parent
 // also cascades by exact parent. It exists only when inner has both.
 type faultyPrefixCascadingScopedStore[T store.Copier[T]] struct {
 	*faultyCascadingScopedStore[T]
-	prefixer prefixCascader
+	prefixer store.PrefixCascader
 }
 
 func (s *faultyPrefixCascadingScopedStore[T]) DeleteParentsWithPrefix(ctx context.Context, prefix string) (uint32, error) {
@@ -292,7 +277,7 @@ var (
 	_ store.ResourceStore[Resource] = (*faultyResourceStore[Resource])(nil)
 	_ store.ScopedStore[Resource]   = (*faultyScopedStore[Resource])(nil)
 	_ store.ScopedStore[Resource]   = (*faultyCascadingScopedStore[Resource])(nil)
-	_ parentCascader                = (*faultyCascadingScopedStore[Resource])(nil)
-	_ prefixCascader                = (*faultyPrefixCascadingScopedStore[Resource])(nil)
+	_ store.ParentCascader          = (*faultyCascadingScopedStore[Resource])(nil)
+	_ store.PrefixCascader          = (*faultyPrefixCascadingScopedStore[Resource])(nil)
 	_ store.EndDeviceStore          = (*faultyEndDeviceStore)(nil)
 )

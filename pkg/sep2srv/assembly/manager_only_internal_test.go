@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -35,6 +36,36 @@ func TestManagerOnlyWritesNameOnlyMountedPatterns(t *testing.T) {
 		if !mounted[p] {
 			t.Errorf("managerOnlyWrites names %q, which is not a currently mounted pattern; remove the stale row", p)
 		}
+	}
+}
+
+// TestEveryMountedUptWriteHasAManagerOnlyRow fails when a non-GET /upt route is
+// mounted without a managerOnlyWrites row: a write with no row is open to any
+// device that passes the family ACL, and nothing else would notice.
+func TestEveryMountedUptWriteHasAManagerOnlyRow(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+
+	var writes int
+	for _, p := range patterns {
+		method, path, ok := strings.Cut(p, " ")
+		if !ok || method == http.MethodGet || method == http.MethodHead {
+			continue
+		}
+		if path != "/upt" && !strings.HasPrefix(path, "/upt/") {
+			continue
+		}
+		writes++
+		if !managerOnlyWrites[p] {
+			t.Errorf("%q is mounted but has no managerOnlyWrites row, so any device the ACL admits could write it", p)
+		}
+	}
+	// Control: the six DELETE and PUT routes this slice mounts are present, so a
+	// pattern-list change that hid them cannot make the loop pass vacuously.
+	if writes < 6 {
+		t.Fatalf("saw %d non-GET /upt patterns, want at least 6; the pattern list cannot be trusted", writes)
 	}
 }
 

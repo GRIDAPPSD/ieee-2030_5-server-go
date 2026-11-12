@@ -17,6 +17,9 @@ const (
 	rdPath = "/upt/u1/mr/m1/rs/s2/r/r2"
 	rtPath = "/upt/u1/mr/m1/rt"
 
+	// unknownLFDI belongs to no enrolled device.
+	unknownLFDI = "DD00000000000000000000000000000000000099"
+
 	readingBody = `<Reading xmlns="urn:ieee:std:2030.5:ns" href="/forged"><value>555</value></Reading>`
 	typeBody    = `<ReadingType xmlns="urn:ieee:std:2030.5:ns" href="/forged"><uom>38</uom></ReadingType>`
 )
@@ -26,6 +29,13 @@ const (
 // victimLFDI names, which is the plain device in these tests.
 func meteringWriteServer(t *testing.T) (do func(method, path, as, body string) (int, []byte), stores *assembly.Stores) {
 	t.Helper()
+	return meteringWriteServerWith(t, nil)
+}
+
+// meteringWriteServerWith is meteringWriteServer with a hook that edits the
+// stores before the router is built, since the router copies them.
+func meteringWriteServerWith(t *testing.T, edit func(*assembly.Stores)) (do func(method, path, as, body string) (int, []byte), stores *assembly.Stores) {
+	t.Helper()
 	fleet := newManagementFleet(t)
 	seedHierarchy(t, fleet.stores)
 	for _, id := range []string{"u1", "u2"} {
@@ -34,6 +44,9 @@ func meteringWriteServer(t *testing.T) (do func(method, path, as, body string) (
 		if err := fleet.stores.UsagePoints.Create(context.Background(), id, upt); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if edit != nil {
+		edit(fleet.stores)
 	}
 	srv := gateServer(t, fleet.stores, gateTestPolicy())
 	return func(method, path, as, body string) (int, []byte) {
@@ -69,9 +82,12 @@ func TestMeteringWrites_PlainDeviceIsRefusedAndNothingChanges(t *testing.T) {
 		{http.MethodPut, rdPath, readingBody},
 		{http.MethodPut, rtPath, typeBody},
 	} {
-		for _, caller := range []string{victimLFDI, callerLFDI} {
+		// victim and caller are managed, so the managed-device rule would refuse
+		// them even with no manager-only row; the unmanaged device and the
+		// unknown certificate reach the manager-only row itself.
+		for _, caller := range []string{victimLFDI, callerLFDI, unmanagedLFDI, unknownLFDI} {
 			if status, _ := do(tc.method, tc.path, caller, tc.body); status != http.StatusForbidden {
-				t.Errorf("%s %s as a plain device = %d, want 403", tc.method, tc.path, status)
+				t.Errorf("%s %s as %s = %d, want 403", tc.method, tc.path, caller, status)
 			}
 		}
 	}

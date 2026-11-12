@@ -28,6 +28,13 @@ func BuildLogEventList(href string, result store.ListResult[sep2.LogEvent], poll
 	}
 }
 
+// InstanceHref is the WADL address of one LogEvent, /edev/{id1}/lel/{id2}
+// (sep_wadl.xml:1404). The POST Location and the PUT stamp both use it so a
+// stored event always carries the address the instance route serves.
+func InstanceHref(edevID, id string) string {
+	return fmt.Sprintf("/edev/%s/lel/%s", edevID, id)
+}
+
 // HandlePostLogEvent returns a handler for POST /edev/{id}/lel, which the WADL
 // declares mode M at sep_wadl.xml:1358.
 //
@@ -60,7 +67,7 @@ func HandlePostLogEvent(logStore store.ScopedStore[sep2.LogEvent]) http.HandlerF
 		}
 
 		id := idmint.Sortable()
-		logEvent.Href = fmt.Sprintf("/edev/%s/lel/%s", edevID, id)
+		logEvent.Href = InstanceHref(edevID, id)
 
 		if err := logStore.Create(r.Context(), edevID, id, logEvent); err != nil {
 			srverr.Internal(w, r, err)

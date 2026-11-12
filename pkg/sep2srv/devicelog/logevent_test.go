@@ -267,3 +267,38 @@ func TestLogEventStore_FileAndTargetComeFromTheSameResolverAsRequestLines(t *tes
 		t.Errorf("line = %v; want a logevent line for actor %s with target %s", line, lfdiA, lfdiB)
 	}
 }
+
+func TestLogEventStore_UpdateWritesOneLineWithTheReplacement(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{})
+	inner := memory.NewScopedStore[sep2.LogEvent]()
+	s := NewLogEventStore(inner, w, fixedIdentity(lfdiA, true), nil)
+	ctx := context.Background()
+
+	if err := s.Create(ctx, "dev1", "abc", sampleEvent()); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	repl := sampleEvent()
+	repl.LogEventCode = 99
+	repl.Details = "replaced"
+	if err := s.Update(ctx, "dev1", "abc", repl); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	// A refused Update writes nothing.
+	if err := s.Update(ctx, "dev1", "missing", repl); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Update of a missing id: err = %v, want ErrNotFound", err)
+	}
+
+	lines := fileLines(t, w, dir, lfdiA)
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want 2 (Create and the one successful Update)", len(lines))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(lines[1], &got); err != nil {
+		t.Fatalf("line is not one JSON object: %v: %s", err, lines[1])
+	}
+	if got["kind"] != "logevent" || got["logEventCode"] != 99.0 || got["details"] != "replaced" ||
+		got["href"] != "/edev/dev1/lel/abc" || got["edev"] != "dev1" {
+		t.Errorf("Update line = %s, want the replacement's fields", lines[1])
+	}
+}

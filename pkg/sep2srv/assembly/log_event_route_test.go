@@ -1,7 +1,9 @@
 package assembly_test
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -337,21 +340,20 @@ func TestLogEvent_DeleteIsServedAndScoped(t *testing.T) {
 	}
 }
 
-// TestLogEvent_InstanceUnservedMethodsGet405WithAnAccurateAllow: PUT is mode O
-// and POST is mode E at sep_wadl.xml:1404, and neither is implemented, so each
-// needs an explicit 405 rather than the 404 an unmounted path gives (section
+// TestLogEvent_InstanceUnservedMethodsGet405WithAnAccurateAllow: POST is mode E
+// at sep_wadl.xml:1404 and is not implemented, so it needs an explicit 405 rather than the 404 an unmounted path gives (section
 // 4.3 c) 4)).
 //
 // The 405 comes from http.ServeMux, which derives Allow from the registered
 // method set, so Allow cannot lie about what is served. Neutralization check:
-// register a PUT pattern for this shape and this test fails on the Allow value.
+// drop the PUT pattern for this shape and this test fails on the Allow value.
 func TestLogEvent_InstanceUnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 	t.Parallel()
 
 	srv, _ := lelServer(t)
 	loc := postLogEvent(t, srv, "d1", sampleLogEvent(5, 27))
 
-	for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodPatch} {
+	for _, method := range []string{http.MethodPost, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
 			req, err := http.NewRequest(method, srv.URL+loc, strings.NewReader(""))
 			if err != nil {
@@ -366,8 +368,8 @@ func TestLogEvent_InstanceUnservedMethodsGet405WithAnAccurateAllow(t *testing.T)
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want 405", resp.StatusCode)
 			}
-			if got := resp.Header.Get("Allow"); got != "DELETE, GET, HEAD" {
-				t.Errorf("Allow = %q, want %q", got, "DELETE, GET, HEAD")
+			if got := resp.Header.Get("Allow"); got != "DELETE, GET, HEAD, PUT" {
+				t.Errorf("Allow = %q, want %q", got, "DELETE, GET, HEAD, PUT")
 			}
 		})
 	}
@@ -751,4 +753,218 @@ func statusOf(t *testing.T, method, url string) int {
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode
+}
+
+// TestLogEvent_PutReplacesTheStoredEventAndIsGated covers PUT on the instance
+// (mode O, sep_wadl.xml:1404): the owning device's write lands in the store
+// field for field, the href is the server's rather than the client's, and a
+// caller who does not own {id} is refused 403 by the ownership gate before the
+// store is touched.
+func TestLogEvent_PutReplacesTheStoredEventAndIsGated(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := lelServer(t)
+	seedDevice(t, stores.EndDevices, "d9", "someone-elses-lfdi", "")
+	loc := postLogEvent(t, srv, "d1", sampleLogEvent(61, 27))
+	id := strings.TrimPrefix(loc, "/edev/d1/lel/")
+
+	replacement := sampleLogEvent(62, 29)
+	replacement.Details = "replaced by put"
+	replacement.Href = "/edev/other/lel/forged"
+	body, err := xml.Marshal(&replacement)
+	if err != nil {
+		t.Fatalf("marshal LogEvent: %v", err)
+	}
+
+	put := func(path string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(string(body)))
+		if err != nil {
+			t.Fatalf("new PUT request: %v", err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Another device's instance path: the gate refuses before the handler.
+	otherPath := "/edev/d9/lel/" + id
+	if code := put(otherPath); code != http.StatusForbidden {
+		t.Errorf("PUT %s status = %d, want 403 for a device the caller does not own", otherPath, code)
+	}
+
+	if code := put(loc); code != http.StatusNoContent {
+		t.Fatalf("PUT %s status = %d, want 204", loc, code)
+	}
+
+	got, err := stores.LogEvents.Get(t.Context(), "d1", id)
+	if err != nil {
+		t.Fatalf("stored event after PUT: %v", err)
+	}
+	if got.Details != "replaced by put" || got.LogEventID != 62 || got.LogEventCode != 29 ||
+		got.LogEventPEN != 54465 || got.ProfileID != 2 || got.CreatedDateTime != replacement.CreatedDateTime {
+		t.Errorf("stored event = %+v, want the PUT body's fields", got)
+	}
+	if got.Href != loc {
+		t.Errorf("stored href = %q, want %q: the server stamps it, the client's is discarded", got.Href, loc)
+	}
+
+	status, listBody := getBytes(t, srv, "/edev/d1/lel")
+	if status != http.StatusOK {
+		t.Fatalf("GET /edev/d1/lel status = %d, want 200", status)
+	}
+	var list sep2.LogEventList
+	if err := xml.Unmarshal(listBody, &list); err != nil {
+		t.Fatalf("unmarshal LogEventList: %v", err)
+	}
+	if list.All != 1 || len(list.LogEvent) != 1 || list.LogEvent[0].LogEventID != 62 {
+		t.Errorf("list after PUT holds all=%d items=%d, want the one replaced event", list.All, len(list.LogEvent))
+	}
+}
+
+// TestDeviceStatus_DeleteRemovesTheStoredStatusAndIsGated covers DELETE on
+// /edev/{id}/dstat (mode O): the owner's delete removes the stored record, a
+// GET afterwards serves the default and the store no longer holds it, a second
+// delete is a 404, and a foreign device is refused 403 with its record intact.
+func TestDeviceStatus_DeleteRemovesTheStoredStatusAndIsGated(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := lelServer(t)
+	seedDevice(t, stores.EndDevices, "d9", "someone-elses-lfdi", "")
+	ctx := t.Context()
+	own := sep2.DeviceStatus{ChangedTime: 1700000001}
+	foreign := sep2.DeviceStatus{ChangedTime: 1700000002}
+	if err := stores.DeviceStatuses.Create(ctx, "d1", "default", own); err != nil {
+		t.Fatalf("seed d1 status: %v", err)
+	}
+	if err := stores.DeviceStatuses.Create(ctx, "d9", "default", foreign); err != nil {
+		t.Fatalf("seed d9 status: %v", err)
+	}
+
+	if code := statusOf(t, http.MethodDelete, srv.URL+"/edev/d9/dstat"); code != http.StatusForbidden {
+		t.Errorf("DELETE /edev/d9/dstat status = %d, want 403 for a device the caller does not own", code)
+	}
+	if got, err := stores.DeviceStatuses.Get(ctx, "d9", "default"); err != nil || got.ChangedTime != 1700000002 {
+		t.Errorf("foreign status after refused DELETE = %+v, %v; want it intact", got, err)
+	}
+
+	if code := statusOf(t, http.MethodDelete, srv.URL+"/edev/d1/dstat"); code != http.StatusNoContent {
+		t.Fatalf("DELETE /edev/d1/dstat status = %d, want 204", code)
+	}
+	if _, err := stores.DeviceStatuses.Get(ctx, "d1", "default"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("owner status after DELETE: err = %v, want ErrNotFound", err)
+	}
+	status, body := getBytes(t, srv, "/edev/d1/dstat")
+	if status != http.StatusOK {
+		t.Fatalf("GET /edev/d1/dstat status = %d, want 200 (default)", status)
+	}
+	var served sep2.DeviceStatus
+	if err := xml.Unmarshal(body, &served); err != nil {
+		t.Fatalf("unmarshal DeviceStatus: %v", err)
+	}
+	if served.ChangedTime != 0 {
+		t.Errorf("served changedTime = %d after DELETE, want the zero default", served.ChangedTime)
+	}
+
+	if code := statusOf(t, http.MethodDelete, srv.URL+"/edev/d1/dstat"); code != http.StatusNotFound {
+		t.Errorf("second DELETE /edev/d1/dstat status = %d, want 404", code)
+	}
+}
+
+// putLogEventBody sends a PUT with evt as the body to path and returns the
+// status. path is used verbatim, so an encoded segment stays encoded.
+func putLogEventBody(t *testing.T, srv *httptest.Server, path string, evt sep2.LogEvent) int {
+	t.Helper()
+	body, err := xml.Marshal(&evt)
+	if err != nil {
+		t.Fatalf("marshal LogEvent: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("new PUT request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT %s: %v", path, err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+// TestLogEvent_PutIsUpdateOnlyAndNeverCreates: a PUT to an id with no stored
+// event answers 404 and stores nothing. The id in the path is the client's
+// choice, so an upsert would let it pick the key and the stamped href; the
+// encoded traversal below once stored the href /edev/d1/lel/../../d9/dstat.
+func TestLogEvent_PutIsUpdateOnlyAndNeverCreates(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := lelServer(t)
+	// A served sibling first, so a 404 below cannot be an unmounted route.
+	loc := postLogEvent(t, srv, "d1", sampleLogEvent(70, 27))
+	if code := putLogEventBody(t, srv, loc, sampleLogEvent(71, 28)); code != http.StatusNoContent {
+		t.Fatalf("PUT %s status = %d, want 204: the sibling must be updatable", loc, code)
+	}
+
+	for _, path := range []string{
+		"/edev/d1/lel/nosuch",
+		"/edev/d1/lel/..%2F..%2Fd9%2Fdstat",
+	} {
+		if code := putLogEventBody(t, srv, path, sampleLogEvent(72, 29)); code != http.StatusNotFound {
+			t.Errorf("PUT %s status = %d, want 404 and no event created", path, code)
+		}
+	}
+
+	res, err := stores.LogEvents.List(t.Context(), "d1", store.ListOptions{Unbounded: true})
+	if err != nil {
+		t.Fatalf("list d1 events: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("d1 holds %d events after the refused PUTs, want exactly the 1 posted", len(res.Items))
+	}
+	for _, e := range res.Items {
+		if strings.Contains(e.Href, "..") || e.LogEventID != 71 {
+			t.Errorf("stored event = %+v, want only the updated sibling with a clean href", e)
+		}
+	}
+}
+
+// deleteBeforeUpdate simulates a DELETE landing between the handler's decision
+// to write and the write: its Update removes the record first.
+type deleteBeforeUpdate struct {
+	store.ScopedStore[sep2.LogEvent]
+}
+
+func (s deleteBeforeUpdate) Update(ctx context.Context, parentID, id string, ev sep2.LogEvent) error {
+	if err := s.ScopedStore.Delete(ctx, parentID, id); err != nil {
+		return err
+	}
+	return s.ScopedStore.Update(ctx, parentID, id, ev)
+}
+
+// TestLogEvent_PutRacingDeleteIs404Never500: the replace is one Update, so a
+// DELETE that wins answers 404. The create-then-update upsert it replaced
+// answered 500 when the delete landed between its two calls.
+func TestLogEvent_PutRacingDeleteIs404Never500(t *testing.T) {
+	t.Parallel()
+
+	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "d1")
+	inner := stores.LogEvents
+	stores.LogEvents = deleteBeforeUpdate{inner}
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{}, stores, testAuthPolicy(), testSFDI, testLFDI, nil)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	loc := postLogEvent(t, srv, "d1", sampleLogEvent(80, 27))
+	if code := putLogEventBody(t, srv, loc, sampleLogEvent(81, 28)); code != http.StatusNotFound {
+		t.Errorf("PUT %s status = %d, want 404 when a DELETE wins the race", loc, code)
+	}
+	id := strings.TrimPrefix(loc, "/edev/d1/lel/")
+	if _, err := inner.Get(t.Context(), "d1", id); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("event after the raced PUT: err = %v, want ErrNotFound (nothing recreated)", err)
+	}
 }

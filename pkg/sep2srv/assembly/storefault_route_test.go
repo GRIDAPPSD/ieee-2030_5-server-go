@@ -104,6 +104,12 @@ var faultProbeBodies = map[string]string{
 	"PUT /edev/{id}": sep2Doc("EndDevice",
 		`<lFDI>`+testLFDI+`</lFDI>`),
 
+	"PUT /edev/{id}/lel/{lelId}": sep2Doc("LogEvent",
+		`<createdDateTime>1700000000</createdDateTime>`+
+			`<logEventCode>1</logEventCode>`+
+			`<logEventID>42</logEventID>`+
+			`<logEventPEN>37244</logEventPEN>`+
+			`<profileID>2</profileID>`),
 	"POST /edev/{id}/lel": sep2Doc("LogEvent",
 		`<createdDateTime>1700000000</createdDateTime>`+
 			`<logEventCode>1</logEventCode>`+

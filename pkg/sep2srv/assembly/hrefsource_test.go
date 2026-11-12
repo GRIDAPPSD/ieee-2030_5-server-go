@@ -137,6 +137,15 @@ var valueRootedHrefs = map[string]string{
 	"{}/dercap": "/edev/{}/der/{}/dercap",
 	"{}/derg":   "/edev/{}/der/{}/derg",
 	"{}/ders":   "/edev/{}/der/{}/ders",
+
+	// der/links.go: the three association links, derived from the same base.
+	"{}/derp": "/edev/{}/der/{}/derp",
+	"{}/cdp":  "/edev/{}/der/{}/cdp",
+	"{}/upt":  "/edev/{}/der/{}/upt",
+
+	// der/program_link_count.go: a program's DERCurveListLink appends to the
+	// program's own href, DERProgramHref(edev, fsa, derp).
+	"{}/dc": "/edev/{}/fsa/{}/derp/{}/dc",
 }
 
 // hrefFamilies returns the set of first path segments that count as an href

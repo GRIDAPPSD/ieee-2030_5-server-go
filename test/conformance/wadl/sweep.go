@@ -20,6 +20,7 @@ import (
 	coremetering "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/metering"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -381,6 +382,13 @@ var linkRootExceptions = map[string]string{
 	// DERControlList (the WADL resource ActiveDERControlList has no element
 	// of its own).
 	"ActiveDERControlListLink": "DERControlList",
+
+	// The three DER association links name the DER's own route for a resource
+	// whose root element is the target's: the program, the program list and the
+	// usage point themselves.
+	"CurrentDERProgramLink":        "DERProgram",
+	"AssociatedDERProgramListLink": "DERProgramList",
+	"AssociatedUsagePointLink":     "UsagePoint",
 }
 
 // parseLinks extracts every advertised href from a response body.
@@ -852,7 +860,28 @@ func seedSet() []seed {
 				ctrl.Href = progHref + "/derc/1"
 				ctrl.CreationTime = now - 200
 				ctrl.Interval = &sep2.DateTimeInterval{Start: now - 100, Duration: 3600}
-				return s.DERControls.Create(ctx, derhref.ScopeKey(dev, "1", "1"), "1", ctrl)
+				if err := s.DERControls.Create(ctx, derhref.ScopeKey(dev, "1", "1"), "1", ctrl); err != nil {
+					return err
+				}
+				// The device's DER records the program as its current one and the
+				// usage point seeded above as its associated one, and a curve is
+				// stored for the program's curve list.
+				ders, err := s.DERs.List(ctx, dev, store.ListOptions{Unbounded: true})
+				if err != nil {
+					return err
+				}
+				uptHref := coremetering.UsagePointHref(coremetering.UsagePointStoreID("0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FBB"))
+				for _, d := range ders.Items {
+					d.CurrentDERProgramLink = &sep2.Link{Href: progHref}
+					d.AssociatedUsagePointLink = &sep2.Link{Href: uptHref}
+					if err := s.DERs.Update(ctx, dev, d.Href[strings.LastIndex(d.Href, "/")+1:], d); err != nil {
+						return err
+					}
+				}
+				curve := sep2.DERCurve{CreationTime: now - 300, CurveType: 0}
+				curve.MRID = "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FD4"
+				curve.Href = "/dc/1"
+				return s.DERCurves.Create(ctx, "1", curve)
 			},
 		},
 		{

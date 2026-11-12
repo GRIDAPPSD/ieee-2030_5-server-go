@@ -83,16 +83,12 @@ var expectedGaps = map[string]expectedGap{
 		Unreached: true,
 	},
 	"AssociatedDERProgramList": {
-		Mandatory: 2,
-		Optional:  1,
-		Error:     2,
-		Unreached: true,
+		Optional:               1,
+		RestrictedNotForbidden: 1,
 	},
 	"AssociatedUsagePoint": {
-		Mandatory: 2,
-		Optional:  1,
-		Error:     2,
-		Unreached: true,
+		Optional:               1,
+		RestrictedNotForbidden: 1,
 	},
 	"BillingPeriod": {
 		Mandatory:  2,
@@ -155,10 +151,8 @@ var expectedGaps = map[string]expectedGap{
 		Unreached: true,
 	},
 	"CurrentDERProgram": {
-		Mandatory: 2,
-		Optional:  1,
-		Error:     2,
-		Unreached: true,
+		Optional:               1,
+		RestrictedNotForbidden: 1,
 	},
 	"CustomerAccount": {
 		Mandatory:  2,
@@ -202,16 +196,14 @@ var expectedGaps = map[string]expectedGap{
 		Unreached: true,
 	},
 	"DERCurve": {
-		Mandatory: 2,
-		Optional:  1,
-		Error:     2,
-		Unreached: true,
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
 	},
 	"DERCurveList": {
-		Mandatory: 2,
-		Optional:  1,
-		Error:     2,
-		Unreached: true,
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
 	},
 	"DERList": {
 		Optional: 1,

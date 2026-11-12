@@ -48,6 +48,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 )
 
@@ -94,6 +95,7 @@ type bootCfg struct {
 	clientCert    *tls.Certificate         // if nil, helper generates an ephemeral device cert
 	clientCAsPath string                   // if non-empty, overrides the ClientCAs file fed to the server-side TLS config
 	notifier      handler.ResourceNotifier // if nil, BootServer wires a default subscription.Manager bound to Stores.Subscriptions (#157)
+	deviceLog     bool                     // if true, BootServer runs a device log writer in a temp dir
 }
 
 // BootOption configures BootServer. Apply via the functional-options
@@ -107,6 +109,13 @@ type BootOption func(*bootCfg)
 // a working /dcap that returns an empty resource graph.
 func WithStores(s *server.Stores) BootOption {
 	return func(c *bootCfg) { c.stores = s }
+}
+
+// WithDeviceLog boots the server with a device log writer on a temporary
+// directory, for the routes that record into it (POST /ntfy). Without it they
+// answer 503.
+func WithDeviceLog() BootOption {
+	return func(c *bootCfg) { c.deviceLog = true }
 }
 
 // WithServerConfig overrides the default *config.Config. The default
@@ -335,7 +344,22 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		notifier = mgr
 	}
 
-	router, mountedPatterns := server.BuildProtocolRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
+	var deviceLog *devicelog.Writer
+	if cfg.deviceLog {
+		w, err := devicelog.New(devicelog.Config{Dir: t.TempDir(), MaxBytes: 1 << 20})
+		if err != nil {
+			t.Fatalf("csiptest: device log: %v", err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := w.Close(ctx); err != nil {
+				t.Logf("csiptest: device log close: %v", err)
+			}
+		})
+		deviceLog = w
+	}
+	router, mountedPatterns := server.BuildProtocolRouterLogged(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier, deviceLog)
 
 	sepTLS.SetupCCMServer(httpSrv)
 	httpSrv.Handler = sepTLS.CCMIdentityMiddleware(router)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -189,5 +190,34 @@ func TestFlowReservationResponse_DeleteStaysRefused(t *testing.T) {
 	}
 	if !responsePresent(t, stores, "e1", "r1") {
 		t.Error("response removed by a refused DELETE")
+	}
+}
+
+// The client's DELETE removes the answer record of every response in the
+// chain: nothing lists answer records afterwards, so a record left here is
+// never reclaimed.
+func TestFlowReservationRequest_DeleteRemovesTheChainsAnswerRecords(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := frqServer(t)
+	answers := stores.FlowReservationAnswers
+	ctx := context.Background()
+	seedReservation(t, stores, "e1", "gone", &sep2.DateTimeInterval{Start: 1600000000, Duration: 3600})
+	seedReservation(t, stores, "e1", "kept", &sep2.DateTimeInterval{Start: 1600000000, Duration: 3600})
+	rec := flowreservation.AnswerRecord{Action: flowreservation.ActionAnswer, By: flowreservation.Attribution{Kind: flowreservation.KindOperator, At: 1600000000}}
+	for _, id := range []string{"gone", "kept"} {
+		if err := answers.Create(ctx, "e1", id, rec); err != nil {
+			t.Fatalf("seed answer %s: %v", id, err)
+		}
+	}
+
+	if code := statusOf(t, http.MethodDelete, srv.URL+"/edev/e1/frq/gone"); code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204", code)
+	}
+	if _, err := answers.Get(ctx, "e1", "gone"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("answer record of the deleted request: err = %v, want ErrNotFound", err)
+	}
+	if got, err := answers.Get(ctx, "e1", "kept"); err != nil || got != rec {
+		t.Errorf("answer record of the other request = %+v, %v; want it untouched", got, err)
 	}
 }

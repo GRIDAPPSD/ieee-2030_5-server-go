@@ -21,9 +21,9 @@ import (
 // RetentionInterval is the period of the sweep that follows the one at boot.
 const RetentionInterval = 60 * time.Second
 
-// ErrIncompleteRetention is returned by Sweep when a required dependency is
-// missing.
-var ErrIncompleteRetention = errors.New("flowreservation: Retention needs FRQ, FRP, Lifecycles, Ledger, Fleets and a positive Grace")
+// ErrIncompleteRetention is returned by Sweep and Remove when a required
+// dependency is missing. Sweep also needs a positive Grace; Remove takes none.
+var ErrIncompleteRetention = errors.New("flowreservation: Retention needs FRQ, FRP, Lifecycles, Ledger and Fleets (and a positive Grace for Sweep)")
 
 // RetentionFRQ is the part of the request store the sweep reads and deletes.
 type RetentionFRQ interface {
@@ -67,6 +67,18 @@ type Retention struct {
 	// Log takes the per-request failures and the summary; nil takes
 	// slog.Default().
 	Log *slog.Logger
+}
+
+// NewRetention is the one place a Retention is wired over the stores the
+// routes and the sweep share. answers may be absent, which leaves Answers
+// nil. The caller sets Grace (Sweep) and Log when it needs them.
+func NewRetention(frq RetentionFRQ, frp RetentionFRP, lifecycles RecordDeleter,
+	answers store.ScopedStore[AnswerRecord], ledger *commitment.Ledger, fleets FleetResolver, notifier Notifier) *Retention {
+	r := &Retention{FRQ: frq, FRP: frp, Lifecycles: lifecycles, Ledger: ledger, Fleets: fleets, Notifier: notifier}
+	if !store.IsAbsent(answers) {
+		r.Answers = answers
+	}
+	return r
 }
 
 func (r *Retention) logger() *slog.Logger {
@@ -218,7 +230,7 @@ func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
 // retire removes one request and its chain when the chain has ended by
 // Grace. It reports whether the request was removed.
 func (r *Retention) retire(ctx context.Context, edevID, frqID string, now time.Time) (bool, error) {
-	outcome, err := r.removeEnded(ctx, edevID, frqID, now, r.Grace)
+	outcome, err := r.removeEnded(ctx, edevID, frqID, now, r.Grace, nil)
 	return outcome == outcomeRemoved, err
 }
 
@@ -245,8 +257,9 @@ func (r *Retention) Remove(ctx context.Context, edevID, frqID string, now time.T
 	if !exists {
 		return store.ErrNotFound
 	}
-	outcome, err := r.removeEnded(ctx, edevID, frqID, now, 0)
-	if outcome == outcomeRemoved || err != nil {
+	var p progress
+	outcome, err := r.removeEnded(ctx, edevID, frqID, now, 0, &p)
+	if outcome == outcomeRemoved || p.deleted {
 		notifyHook{n: r.Notifier}.fire(ctx, edevID)
 	}
 	if err != nil {
@@ -263,24 +276,47 @@ func (r *Retention) Remove(ctx context.Context, edevID, frqID string, now time.T
 
 type removeOutcome int
 
+// outcomeUnknown is the zero value and what an error return carries: no
+// decision was reached, so a caller that ignores err cannot read "active".
 const (
-	outcomeActive removeOutcome = iota
+	outcomeUnknown removeOutcome = iota
+	outcomeActive
 	outcomeMissing
 	outcomeRemoved
 )
 
+// progress records whether any delete succeeded, so a caller can tell a
+// failure that removed something from one that removed nothing. A nil
+// *progress records nothing.
+type progress struct{ deleted bool }
+
+func (p *progress) mark() {
+	if p != nil {
+		p.deleted = true
+	}
+}
+
+// del passes err through, recording a successful delete (a not-found one
+// removed nothing).
+func (p *progress) del(err error) error {
+	if err == nil {
+		p.mark()
+	}
+	return ignoreNotFound(err)
+}
+
 // removeEnded removes one request and its chain when the chain has ended by
 // grace. The first read is unlocked so a live chain costs no lock; the
 // decision is taken again on a fresh read under the fleet lock.
-func (r *Retention) removeEnded(ctx context.Context, edevID, frqID string, now time.Time, grace time.Duration) (removeOutcome, error) {
+func (r *Retention) removeEnded(ctx context.Context, edevID, frqID string, now time.Time, grace time.Duration, p *progress) (removeOutcome, error) {
 	chain, err := ChainOf(ctx, r.FRP, edevID, frqID)
 	if err != nil {
-		return outcomeActive, err
+		return outcomeUnknown, err
 	}
 	if !ended(chain, grace, now) {
 		return outcomeActive, nil
 	}
-	outcome := outcomeActive
+	outcome := outcomeUnknown
 	err = r.underFleetLock(ctx, edevID, func() error {
 		if _, err := r.FRQ.Get(ctx, edevID, frqID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -294,56 +330,60 @@ func (r *Retention) removeEnded(ctx context.Context, edevID, frqID string, now t
 			return err
 		}
 		if !ended(chain, grace, now) {
+			outcome = outcomeActive
 			return nil
 		}
-		if err := r.deleteChain(ctx, edevID, frqID, len(chain)); err != nil {
+		if err := r.deleteChain(ctx, edevID, frqID, len(chain), p); err != nil {
 			return err
 		}
 		outcome = outcomeRemoved
 		return nil
 	})
+	if err != nil {
+		outcome = outcomeUnknown
+	}
 	return outcome, err
 }
 
 // deleteChain deletes a request whose chain holds n responses, in Sweep's
 // order. It first clears the records keyed one past the tip, which a crash
 // in an earlier sweep or an interrupted answer can leave without a response.
-func (r *Retention) deleteChain(ctx context.Context, edevID, frqID string, n int) error {
+func (r *Retention) deleteChain(ctx context.Context, edevID, frqID string, n int, p *progress) error {
 	ids := make([]string, n)
 	ids[0] = frqID
 	for i := 1; i < n; i++ {
 		ids[i] = RevisionID(ids[i-1])
 	}
-	if err := r.deleteRecords(ctx, edevID, RevisionID(ids[n-1])); err != nil {
+	if err := r.deleteRecords(ctx, edevID, RevisionID(ids[n-1]), p); err != nil {
 		return err
 	}
 	for i := n - 1; i >= 1; i-- {
-		if err := r.deleteMember(ctx, edevID, ids[i]); err != nil {
+		if err := r.deleteMember(ctx, edevID, ids[i], p); err != nil {
 			return err
 		}
 	}
-	if err := ignoreNotFound(r.FRQ.Delete(ctx, edevID, frqID)); err != nil {
+	if err := p.del(r.FRQ.Delete(ctx, edevID, frqID)); err != nil {
 		return fmt.Errorf("delete request: %w", err)
 	}
-	return r.deleteMember(ctx, edevID, frqID)
+	return r.deleteMember(ctx, edevID, frqID, p)
 }
 
 // deleteMember deletes one response and then the records keyed like it.
-func (r *Retention) deleteMember(ctx context.Context, edevID, id string) error {
-	if err := ignoreNotFound(r.FRP.Delete(ctx, edevID, id)); err != nil {
+func (r *Retention) deleteMember(ctx context.Context, edevID, id string, p *progress) error {
+	if err := p.del(r.FRP.Delete(ctx, edevID, id)); err != nil {
 		return fmt.Errorf("delete response %s: %w", id, err)
 	}
-	return r.deleteRecords(ctx, edevID, id)
+	return r.deleteRecords(ctx, edevID, id, p)
 }
 
-func (r *Retention) deleteRecords(ctx context.Context, edevID, id string) error {
-	if err := ignoreNotFound(r.Lifecycles.Delete(ctx, edevID, id)); err != nil {
+func (r *Retention) deleteRecords(ctx context.Context, edevID, id string, p *progress) error {
+	if err := p.del(r.Lifecycles.Delete(ctx, edevID, id)); err != nil {
 		return fmt.Errorf("delete lifecycle record %s: %w", id, err)
 	}
 	if r.Answers == nil {
 		return nil
 	}
-	if err := ignoreNotFound(r.Answers.Delete(ctx, edevID, id)); err != nil {
+	if err := p.del(r.Answers.Delete(ctx, edevID, id)); err != nil {
 		return fmt.Errorf("delete answer record %s: %w", id, err)
 	}
 	return nil
@@ -425,7 +465,7 @@ func (r *Retention) removeOrphanChain(ctx context.Context, edevID, base string, 
 			return err
 		}
 		for _, id := range ids {
-			if err := r.deleteMember(ctx, edevID, id); err != nil {
+			if err := r.deleteMember(ctx, edevID, id, nil); err != nil {
 				return err
 			}
 			removed++

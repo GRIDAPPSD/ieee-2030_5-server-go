@@ -276,6 +276,11 @@ type Stores struct {
 	// is served as stored.
 	FlowReservationResponseLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 
+	// FlowReservationAnswers holds who answered and who cancelled each
+	// response, keyed as the response. Optional: a DELETE of a request
+	// removes an answer record only when this is set.
+	FlowReservationAnswers store.ScopedStore[flowreservation.AnswerRecord]
+
 	// CommitmentLedger is the process's one commitment ledger (#714),
 	// built over the same stores. The flow reservation queue checks every
 	// grant against it. A nil ledger refuses every check
@@ -1884,19 +1889,17 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/frq/{frqId}", frqInstance)
 		// DELETE (mode O) removes a request whose responses have all ended,
 		// with them and their lifecycle and answer records, through the
-		// retention sweep's own delete. The responses store is the cascading
-		// one, so the answer records go with them. Deprecated DELETE on the
+		// retention sweep's own delete. The answer records go with them when
+		// Stores.FlowReservationAnswers is set; the responses store's cascade
+		// covers only a whole-device removal, not one request. Deprecated DELETE on the
 		// response (mode D) stays 405: deleting a response alone would orphan
 		// its request, which recovery would then answer again.
 		mux.HandleFunc("DELETE /edev/{id}/frq/{frqId}", coreflowrsv.HandleDeleteFlowReservationRequest(
-			&flowreservation.Retention{
-				FRQ:        stores.FlowReservationRequests,
-				FRP:        flowReservationResponses,
-				Lifecycles: stores.FlowReservationResponseLifecycles,
-				Ledger:     stores.CommitmentLedger,
-				Fleets:     commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers},
-				Notifier:   notifier,
-			}, time.Now))
+			flowreservation.NewRetention(
+				stores.FlowReservationRequests, flowReservationResponses, stores.FlowReservationResponseLifecycles,
+				stores.FlowReservationAnswers, stores.CommitmentLedger,
+				commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}, notifier),
+			time.Now))
 		mux.HandleFunc("PUT /edev/{id}/frq/{frqId}", coreflowrsv.HandlePutFlowReservationRequest(
 			stores.FlowReservationRequests,
 			flowreservation.NewCanceller(

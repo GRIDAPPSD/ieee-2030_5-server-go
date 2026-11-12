@@ -372,6 +372,7 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	// re-set it here anyway so this test does not silently depend on that
 	// default and stays a self-contained proof that the copy works.
 	src.EndDeviceManagers = memory.NewEndDeviceManagementStore()
+	src.FlowReservationAnswers = memory.NewScopedStore[flowreservation.AnswerRecord]()
 	// Set on this src alone: a queue in the shared fixture would replace the
 	// per-router deadline every other test in the package relies on.
 	src.FlowReservationQueue = flowreservation.NewQueue(

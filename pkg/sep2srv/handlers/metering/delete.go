@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -69,7 +70,7 @@ func cascade(ctx context.Context, target string, steps ...cascadeStep) error {
 				s.name, s.store, removed, err)
 		}
 	}
-	log.Printf("upt: DELETE %s removed %d record(s) beneath it", target, removed)
+	log.Printf("upt: DELETE %s removed %d record(s) beneath it", logsafe.Quote(target), removed)
 	return nil
 }
 

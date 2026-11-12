@@ -41,6 +41,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/notification"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/reqlimit"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/routefamily"
@@ -529,7 +530,21 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	registerDERRoutes(gated, stores)
 	registerMeteringRoutes(gated, stores, authPolicy)
 	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, deviceLogResolver, notifier)
+	registerNotificationRoute(next, cfg, stores, authPolicy.Identity)
 	return gated
+}
+
+// registerNotificationRoute mounts POST /ntfy. It is mounted whether or not
+// the device log is on, so GET and HEAD answer 405 either way; with the log
+// off the handler refuses a POST with 503 instead of dropping it.
+func registerNotificationRoute(mux routeRegistrar, cfg RouterConfig, stores *Stores, identity identity.Func) {
+	var rec notification.Recorder
+	lookups := newDeviceLogLookups(stores)
+	// A typed nil must not reach the interface: it would read as a recorder.
+	if r := devicelog.NewNotificationRecorder(cfg.DeviceLog, identity, lookups.registered); r != nil {
+		rec = r
+	}
+	mux.HandleFunc("POST "+notification.Href, notification.HandlePost(rec))
 }
 
 // discardRegistrar takes route registrations and serves none of them.

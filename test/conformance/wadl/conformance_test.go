@@ -22,15 +22,15 @@ import (
 // Measured against the server csiptest boots, with the route set core's
 // assembly registers, on 2026-11-05. The manager-only writes go to the device
 // the sweep's manager manages, so they are measured as that manager's own.
-const outsidePolicyCeiling = 409
+const outsidePolicyCeiling = 404
 
 // outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
 // mode cannot hide behind a fall in another. The values sum to the total.
 var outsidePolicyByMode = map[wadl.Mode]int{
-	wadl.ModeMandatory:  158,
+	wadl.ModeMandatory:  157,
 	wadl.ModeOptional:   59,
-	wadl.ModeDeprecated: 47,
-	wadl.ModeError:      145,
+	wadl.ModeDeprecated: 45,
+	wadl.ModeError:      143,
 }
 
 // The manager-only writes (restrictedWrites) the sweep reaches are probed as the
@@ -71,7 +71,7 @@ const EnvArtifact = "SEP2_WADL_SWEEP_OUT"
 func bootTarget(t *testing.T, links *wadl.LinkSchema) *wadl.Target {
 	t.Helper()
 
-	srv := csiptest.BootServer(t)
+	srv := csiptest.BootServer(t, csiptest.WithDeviceLog())
 	if len(srv.MountedPatterns) == 0 {
 		t.Fatal("the booted server reported no mounted patterns, so the route cross-check would be vacuous")
 	}

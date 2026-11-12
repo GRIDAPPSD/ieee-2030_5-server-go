@@ -205,6 +205,7 @@ var canonicalProtocolRoutes = []string{
 	"POST /mup",
 	"POST /mup/{id}",
 	"POST /mup/{id}/mr",
+	"POST /ntfy",
 	"POST /rsps/{rspsId}/rsp",
 	"POST /upt",
 	"PUT /edev/{id}",

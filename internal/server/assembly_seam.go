@@ -31,6 +31,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 )
 
 // NewEmbedConfig projects the server's own concrete types onto the router-level
@@ -69,9 +70,17 @@ func newEmbedConfig(cfg *config.Config, stores *Stores, notifier assembly.Resour
 // Replaces the in-tree BuildProtocolRouter deleted in Phase 2. Core's
 // assembly.BuildProtocolRouter is now the sole protocol router; there is
 // no longer a toggle or an in-tree alternative.
-func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
+func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
+	return BuildProtocolRouterLogged(cfg, stores, svc, serverSFDI, serverLFDI, notifier, nil)
+}
+
+// BuildProtocolRouterLogged is BuildProtocolRouter with a device log writer
+// for the routes that record into it (POST /ntfy); nil serves them without one.
+func BuildProtocolRouterLogged(cfg *config.Config, stores *Stores, _ *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier, log *devicelog.Writer) (http.Handler, []string) {
+	embed := NewEmbedConfig(cfg, stores, notifier)
+	embed.Router.DeviceLog = log
 	coreHandler, patterns := sep2server.BuildHandler(
-		NewEmbedConfig(cfg, stores, notifier),
+		embed,
 		sep2srv.Identity{SFDI: serverSFDI, LFDI: serverLFDI},
 	)
 	// wrapMutationHandlers is a no-op in production builds (see

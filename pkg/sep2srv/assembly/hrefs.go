@@ -184,6 +184,7 @@ func MintableHrefs() []MintableHref {
 		{"/msg", http.MethodGet, "handlers/dcap.HandleDeviceCapability MessagingProgramListLink", "messaging programs"},
 		{"/rsps", http.MethodGet, "handlers/dcap.HandleDeviceCapability ResponseSetListLink", "response sets"},
 		{"/rt", http.MethodGet, "routefamily.All", "ReadingType list, mounted on the top-level mux"},
+		{"/ntfy", http.MethodPost, "handlers/notification.HandlePost", "where a device delivers a Notification; no resource links to it"},
 
 		// EndDevice and its immediate children.
 		{"/edev/{}", http.MethodGet, "handlers/enddevice.HandleCreateEndDevice", "the Location header a client follows after POST /edev, and the self href of every EndDevice in the list"},

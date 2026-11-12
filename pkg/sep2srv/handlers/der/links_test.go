@@ -325,3 +325,43 @@ func assertLinks(t *testing.T, d sep2.DER, want map[string]string) {
 		}
 	}
 }
+
+func TestAssociationLinks_RouteStoredRecordsAndDropClientOnes(t *testing.T) {
+	t.Parallel()
+	p := coredel.DERLinkPolicy{AssociatedPrograms: true, CurrentProgram: true, AssociatedUsagePoint: true}
+	const base = "/edev/1/der/1"
+
+	stored := sep2.DER{
+		CurrentDERProgramLink:    &sep2.Link{Href: "/edev/1/fsa/1/derp/1"},
+		AssociatedUsagePointLink: &sep2.Link{Href: "/upt/A"},
+	}
+	coredel.FillAbsentDERLinks(&stored, base, p)
+	if stored.CurrentDERProgramLink.Href != base+"/cdp" || stored.AssociatedUsagePointLink.Href != base+"/upt" {
+		t.Errorf("stored records served as %q and %q, want the DER's own routes", stored.CurrentDERProgramLink.Href, stored.AssociatedUsagePointLink.Href)
+	}
+	if stored.AssociatedDERProgramListLink == nil || stored.AssociatedDERProgramListLink.Href != base+"/derp" {
+		t.Errorf("AssociatedDERProgramListLink = %+v, want %s/derp", stored.AssociatedDERProgramListLink, base)
+	}
+
+	bare := sep2.DER{}
+	coredel.FillAbsentDERLinks(&bare, base, p)
+	if bare.CurrentDERProgramLink != nil || bare.AssociatedUsagePointLink != nil {
+		t.Errorf("a DER with no stored association was given one: %+v %+v", bare.CurrentDERProgramLink, bare.AssociatedUsagePointLink)
+	}
+
+	off := sep2.DER{CurrentDERProgramLink: &sep2.Link{Href: "/edev/1/fsa/1/derp/1"}}
+	coredel.FillAbsentDERLinks(&off, base, coredel.DERLinkPolicy{})
+	if off.CurrentDERProgramLink.Href != "/edev/1/fsa/1/derp/1" || off.AssociatedDERProgramListLink != nil {
+		t.Errorf("an unpermitted association was rewritten or derived: %+v", off)
+	}
+
+	client := sep2.DER{
+		AssociatedDERProgramListLink: &sep2.ListLink{Href: "/x"},
+		CurrentDERProgramLink:        &sep2.Link{Href: "/y"},
+		AssociatedUsagePointLink:     &sep2.Link{Href: "/z"},
+	}
+	coredel.DropUnpermittedDERLinks(&client, p)
+	if client.AssociatedDERProgramListLink != nil || client.CurrentDERProgramLink != nil || client.AssociatedUsagePointLink != nil {
+		t.Errorf("a client-supplied association survived the PUT drop: %+v", client)
+	}
+}

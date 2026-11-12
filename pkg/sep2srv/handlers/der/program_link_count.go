@@ -30,6 +30,36 @@ type DERControlCountedProgramStore struct {
 	programs store.ScopedStore[sep2.DERProgram]
 	controls DERControlCounter
 	active   DERControlCounter
+	curves   curveCounter
+}
+
+// curveCounter counts the curves a program lists.
+type curveCounter interface {
+	Count(ctx context.Context) (uint32, error)
+}
+
+// WithCurveList makes the store also advertise the program's DERCurveList
+// where none is stored, as the program's own href plus /dc and an all of the
+// curve count. A stored DERCurveListLink is left as stored. Without it no link
+// is derived, since a link to a list this server does not mount is a section
+// 4.4 violation.
+func (s *DERControlCountedProgramStore) WithCurveList(curves curveCounter) *DERControlCountedProgramStore {
+	s.curves = curves
+	return s
+}
+
+// stampCurveList fills an absent DERCurveListLink. A failed count serves no
+// link rather than a wrong all.
+func (s *DERControlCountedProgramStore) stampCurveList(ctx context.Context, p *sep2.DERProgram) {
+	if s.curves == nil || p.DERCurveListLink != nil || p.Href == "" {
+		return
+	}
+	n, err := s.curves.Count(ctx)
+	if err != nil {
+		log.Printf("der: counting DERCurves for %s: %s; serving no DERCurveListLink", logsafe.Quote(p.Href), logsafe.Err(err))
+		return
+	}
+	p.DERCurveListLink = &sep2.ListLink{Href: p.Href + "/dc", All: n}
 }
 
 // WithActiveList makes the store also serve each program's
@@ -54,6 +84,7 @@ func (s *DERControlCountedProgramStore) Get(ctx context.Context, parentID, id st
 		return p, err
 	}
 	s.stampCount(ctx, &p)
+	s.stampCurveList(ctx, &p)
 	return p, nil
 }
 
@@ -64,6 +95,7 @@ func (s *DERControlCountedProgramStore) List(ctx context.Context, parentID strin
 	}
 	for i := range result.Items {
 		s.stampCount(ctx, &result.Items[i])
+		s.stampCurveList(ctx, &result.Items[i])
 	}
 	return result, nil
 }

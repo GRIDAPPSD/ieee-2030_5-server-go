@@ -77,13 +77,31 @@ func newManagementFleet(t *testing.T) managementFleet {
 func seedManagedSubResources(t *testing.T, stores *assembly.Stores, edevID string) {
 	t.Helper()
 	ctx := context.Background()
-	seedDER(t, stores, edevID, edevID)
+	der := seedDER(t, stores, edevID, edevID)
+	progHref := "/edev/" + edevID + "/fsa/" + edevID + "/derp/" + edevID
 	if err := stores.DERPrograms.Create(ctx, edevID, edevID, sep2.DERProgram{
 		SubscribableResource: sep2.SubscribableResource{
-			Resource: sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + edevID + "/derp/" + edevID},
+			Resource: sep2.Resource{Href: progHref},
 		},
 	}); err != nil {
 		t.Fatalf("seed DERProgram: %v", err)
+	}
+	// The association records the cdp and upt routes resolve, and the usage
+	// point and curve behind them, so those reads answer 200 for the owner.
+	der.CurrentDERProgramLink = &sep2.Link{Href: progHref}
+	der.AssociatedUsagePointLink = &sep2.Link{Href: "/upt/" + edevID}
+	if err := stores.DERs.Update(ctx, edevID, edevID, der); err != nil {
+		t.Fatalf("seed DER associations: %v", err)
+	}
+	if err := stores.UsagePoints.Create(ctx, edevID, sep2.UsagePoint{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/upt/" + edevID}},
+	}); err != nil {
+		t.Fatalf("seed UsagePoint: %v", err)
+	}
+	if err := stores.DERCurves.Create(ctx, edevID, sep2.DERCurve{
+		Resource: sep2.Resource{Href: "/dc/" + edevID},
+	}); err != nil {
+		t.Fatalf("seed DERCurve: %v", err)
 	}
 	seedDERControl(t, stores, edevID, edevID, 0, 1700000000)
 	if err := stores.LogEvents.Create(ctx, edevID, edevID, sep2.LogEvent{

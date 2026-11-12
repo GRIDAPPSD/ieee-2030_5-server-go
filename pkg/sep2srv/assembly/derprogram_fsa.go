@@ -24,6 +24,9 @@ var errProgramViewReadOnly = errors.New("assembly: the per-FSA DERProgram view i
 // is the only record of which FSA a program belongs to. A program whose href
 // does not parse belongs to no FSA and is served under none; warn reports it.
 //
+// An empty fsaID narrows nothing but the href check: every program that names
+// some FSA is held, which is the device-wide view the DER association list serves.
+//
 // The list and single-program routes both read through this one type, so the
 // two cannot disagree about which FSA a program is visible under.
 type programsInFSA struct {
@@ -37,7 +40,7 @@ func (v programsInFSA) holds(parentID string, p sep2.DERProgram) bool {
 	if !ok {
 		v.warn.report(parentID, p.Href)
 	}
-	return ok && fsa == v.fsaID
+	return ok && (v.fsaID == "" || fsa == v.fsaID)
 }
 
 func (v programsInFSA) Get(ctx context.Context, parentID, id string) (sep2.DERProgram, error) {

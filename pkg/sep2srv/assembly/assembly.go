@@ -1146,7 +1146,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// Its ActiveDERControlListLink is served because the actderc route below
 	// is mounted, and counts the same controls that route lists.
 	activeControls := coreder.NewActiveControlStore(derControls)
-	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls).WithActiveList(activeControls)
+	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls).WithActiveList(activeControls).WithCurveList(derCurves)
 
 	// The protocol routes below read through these two, which note the served
 	// mRIDs on the request's device log line. derPrograms above counts the
@@ -1177,6 +1177,11 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		Settings:     true,
 		Status:       true,
 		Availability: true,
+		// The associated program list is mounted below for every DER. The two
+		// record-backed links are advertised only on a DER that stores one.
+		AssociatedPrograms:   true,
+		CurrentProgram:       true,
+		AssociatedUsagePoint: stores.serves(famUsagePoints),
 	}
 
 	// The four DER lists below are served in the Table 50 order section 4.6.1
@@ -1205,6 +1210,14 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}/der/{derId}", derInstance)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}", derInstance)
 
+	// The DER's program associations, resolved against the DER as stored.
+	unscopedDER := newUnscopedProgramWarnings(log.Printf)
+	mux.HandleFunc("GET /edev/{id}/der/{derId}/derp", associatedProgramListHandler(stores.DERs, derPrograms, unscopedDER))
+	mux.HandleFunc("GET /edev/{id}/der/{derId}/cdp", currentProgramHandler(stores.DERs, derPrograms, unscopedDER))
+	if stores.serves(famUsagePoints) {
+		mux.HandleFunc("GET /edev/{id}/der/{derId}/upt", associatedUsagePointHandler(stores.DERs, stores.UsagePoints))
+	}
+
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dercap", dercap)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dercap", dercap)
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/derg", derg)
@@ -1231,6 +1244,10 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// exposes no write route for a single DERProgram, mirroring the DERControl
 	// single-resource route just below.
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}", derProgramHandler(derPrograms, unscoped))
+
+	// The curve catalog under a program, and one curve at its program-scoped href.
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc", programCurveListHandler(derCurves, derPrograms, unscoped))
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc/{dcId}", programCurveHandler(derCurves, derPrograms, unscoped))
 
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",

@@ -525,18 +525,18 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	registerDERRoutes(gated, stores)
 	registerMeteringRoutes(gated, stores, authPolicy)
 	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, deviceLogResolver, notifier)
-	registerNotificationRoute(next, cfg, stores, authPolicy.Identity, deviceLogResolver)
+	registerNotificationRoute(next, cfg, stores, authPolicy.Identity)
 	return gated
 }
 
 // registerNotificationRoute mounts POST /ntfy. It is mounted whether or not
 // the device log is on, so GET and HEAD answer 405 either way; with the log
 // off the handler refuses a POST with 503 instead of dropping it.
-func registerNotificationRoute(mux routeRegistrar, cfg RouterConfig, stores *Stores, identity identity.Func, resolver *devicelog.CachingResolver) {
+func registerNotificationRoute(mux routeRegistrar, cfg RouterConfig, stores *Stores, identity identity.Func) {
 	var rec notification.Recorder
-	lookups := deviceLogLookups{devices: stores.EndDevices, managers: stores.EndDeviceManagers}
+	lookups := newDeviceLogLookups(stores)
 	// A typed nil must not reach the interface: it would read as a recorder.
-	if r := devicelog.NewNotificationRecorder(cfg.DeviceLog, identity, lookups.registered, resolver.Resolve); r != nil {
+	if r := devicelog.NewNotificationRecorder(cfg.DeviceLog, identity, lookups.registered); r != nil {
 		rec = r
 	}
 	mux.HandleFunc("POST "+notification.Href, notification.HandlePost(rec))

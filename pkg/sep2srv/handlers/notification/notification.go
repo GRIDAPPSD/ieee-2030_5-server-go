@@ -31,6 +31,7 @@ const maxStatus = sep2.NotificationStatusCanceledDeleted
 // HandlePost returns the handler for POST /ntfy (WADL mode M, 200 or 201
 // with a Location header). The server keeps no Notification resource, so the
 // device log line is the only record and the Location is the endpoint itself.
+// A 200 means the line was queued for writing, not that it reached disk.
 //
 // A device the recorder does not know is refused with 403, the status the
 // ACL gives a caller whose credentials a path does not accept. A nil

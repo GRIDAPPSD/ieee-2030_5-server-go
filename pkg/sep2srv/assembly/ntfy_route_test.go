@@ -16,6 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/reqlimit"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
 
 const ntfyBody = `<Notification xmlns="urn:ieee:std:2030.5:ns">` +
@@ -31,7 +32,25 @@ const otherLFDI = "0011223344556677889900112233445566778899"
 // the default test identity (testLFDI, a registered device).
 func ntfyServer(t *testing.T, logOn bool, identity func(context.Context) (string, string, bool)) (srv *httptest.Server, dir string, notificationLines func() []map[string]any) {
 	t.Helper()
-	dir = t.TempDir()
+	env := newNtfyEnv(t, logOn, identity, nil)
+	return env.srv, env.dir, env.lines
+}
+
+// ntfyEnv is a served router with the stores and log writer behind it, for
+// tests that arm a store fault, seed a device late or close the writer.
+type ntfyEnv struct {
+	srv    *httptest.Server
+	dir    string
+	w      *devicelog.Writer
+	stores *assembly.Stores
+	lines  func() []map[string]any
+}
+
+// newNtfyEnv builds the router over a device log in a temp dir; mutate, when
+// non-nil, changes the stores before the router is built.
+func newNtfyEnv(t *testing.T, logOn bool, identity func(context.Context) (string, string, bool), mutate func(*assembly.Stores)) *ntfyEnv {
+	t.Helper()
+	dir := t.TempDir()
 	cfg := assembly.RouterConfig{}
 	var w *devicelog.Writer
 	if logOn {
@@ -44,20 +63,17 @@ func ntfyServer(t *testing.T, logOn bool, identity func(context.Context) (string
 	}
 	stores := testStores()
 	seedOwnedDevices(t, stores.EndDevices, "d1")
+	if mutate != nil {
+		mutate(stores)
+	}
 	pol := testAuthPolicy()
 	if identity != nil {
 		pol.Identity = identity
 	}
 	handler, _ := assembly.BuildProtocolRouter(cfg, stores, pol, testSFDI, testLFDI, nil)
-	srv = httptest.NewServer(handler)
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	if logOn && identity == nil {
-		// Until the device's registration lookup settles, its lines go to the
-		// shared file; warm it so the line lands in the device's own.
-		warmDeviceLog(t, srv, dir, testLFDI, "/edev/d1")
-	}
-
-	notificationLines = func() []map[string]any {
+	notificationLines := func() []map[string]any {
 		if w == nil {
 			return nil
 		}
@@ -90,7 +106,7 @@ func ntfyServer(t *testing.T, logOn bool, identity func(context.Context) (string
 		}
 		return out
 	}
-	return srv, dir, notificationLines
+	return &ntfyEnv{srv: srv, dir: dir, w: w, stores: stores, lines: notificationLines}
 }
 
 func ntfyDo(t *testing.T, srv *httptest.Server, method, body string) (*http.Response, string) {
@@ -208,5 +224,70 @@ func TestNtfy_DeviceLogOffRefusesWith503(t *testing.T) {
 	resp, _ := ntfyDo(t, srv, http.MethodPost, ntfyBody)
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+// A device that was seen unregistered, then registers, is filed to its own
+// file from its next notification, not after the resolver's negative answer
+// expires.
+func TestNtfy_DeviceRegisteredJustBeforePostingIsRecordedInItsOwnFile(t *testing.T) {
+	late := func(context.Context) (string, string, bool) { return otherLFDI, "", true }
+	env := newNtfyEnv(t, true, late, nil)
+	if status, _ := gateRequest(t, env.srv, http.MethodGet, "/tm", otherLFDI, ""); status != http.StatusOK {
+		t.Fatalf("GET /tm status = %d, want 200", status)
+	}
+	waitForFile(t, filepath.Join(env.dir, devicelog.UnregisteredFile+".jsonl"))
+	seedDevice(t, env.stores.EndDevices, "late", otherLFDI, "")
+
+	resp, body := ntfyDo(t, env.srv, http.MethodPost, ntfyBody)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", resp.StatusCode, body)
+	}
+	got := env.lines()
+	if len(got) != 1 || got[0]["file"] != otherLFDI+".jsonl" || got[0]["actor"] != otherLFDI {
+		t.Errorf("lines = %v, want one in %s.jsonl", got, otherLFDI)
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s never appeared", path)
+}
+
+func TestNtfy_WriterRefusingTheLineAnswers500AndRecordsNothing(t *testing.T) {
+	env := newNtfyEnv(t, true, nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := env.w.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	resp, body := ntfyDo(t, env.srv, http.MethodPost, ntfyBody)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d (%s), want 500", resp.StatusCode, body)
+	}
+	if got := env.lines(); len(got) != 0 {
+		t.Errorf("recorded %v, want nothing", got)
+	}
+}
+
+func TestNtfy_RegistrationLookupFailureAnswers500NotForbidden(t *testing.T) {
+	fault := &storetest.Fault{}
+	env := newNtfyEnv(t, true, nil, func(s *assembly.Stores) {
+		s.EndDevices = storetest.NewFaultyEndDeviceStore(s.EndDevices, fault)
+	})
+	fault.Arm(storetest.ErrBackendUnavailable)
+	resp, body := ntfyDo(t, env.srv, http.MethodPost, ntfyBody)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d (%s), want 500", resp.StatusCode, body)
+	}
+	if got := env.lines(); len(got) != 0 {
+		t.Errorf("recorded %v, want nothing", got)
 	}
 }

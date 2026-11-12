@@ -127,10 +127,12 @@ import (
 // total is the length of this list, asserted by TestProtocolRouteSurface.
 //
 // DELETE on the DeviceStatus and PUT on the LogEvent instance are ADDED
-// (#1264, first slice).
+// (#1264, first slice). DELETE on the FlowReservationRequest instance is
+// ADDED (#1264, second slice).
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/dstat",
+	"DELETE /edev/{id}/frq/{frqId}",
 	"DELETE /edev/{id}/lel/{lelId}",
 	"DELETE /edev/{id}/rg",
 	"DELETE /edev/{id}/sub/{subId}",

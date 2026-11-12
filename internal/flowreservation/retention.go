@@ -215,21 +215,76 @@ func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
 	return removed, errors.Join(passErrs...)
 }
 
-// retire removes one request and its chain when the chain has ended. The
-// first read is unlocked so a live chain costs no lock; the decision is taken
-// again on a fresh read under the fleet lock.
+// retire removes one request and its chain when the chain has ended by
+// Grace. It reports whether the request was removed.
 func (r *Retention) retire(ctx context.Context, edevID, frqID string, now time.Time) (bool, error) {
+	outcome, err := r.removeEnded(ctx, edevID, frqID, now, r.Grace)
+	return outcome == outcomeRemoved, err
+}
+
+// ErrRequestActive is returned by Remove for a request whose chain has not
+// ended: the standard requires a server to keep it so the client can cancel
+// it (IEEE 2030.5-2018 10.9.3.1).
+var ErrRequestActive = errors.New("flowreservation: the request has an unanswered or active response")
+
+// Remove deletes the request stored under (edevID, frqID) with its responses
+// and their lifecycle and answer records, when every response has ended by
+// now. It is the client's DELETE of a request, held to the same rule as the
+// sweep and with no grace: a request that is unanswered or has a live
+// response returns ErrRequestActive and changes nothing, and a missing one
+// returns store.ErrNotFound. Subscribers of the response list are notified
+// after the removal.
+func (r *Retention) Remove(ctx context.Context, edevID, frqID string, now time.Time) error {
+	if r.FRQ == nil || r.FRP == nil || r.Lifecycles == nil || r.Ledger == nil || r.Fleets == nil {
+		return ErrIncompleteRetention
+	}
+	exists, err := r.requestExists(ctx, edevID, frqID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return store.ErrNotFound
+	}
+	outcome, err := r.removeEnded(ctx, edevID, frqID, now, 0)
+	if outcome == outcomeRemoved || err != nil {
+		notifyHook{n: r.Notifier}.fire(ctx, edevID)
+	}
+	if err != nil {
+		return err
+	}
+	switch outcome {
+	case outcomeMissing:
+		return store.ErrNotFound
+	case outcomeActive:
+		return ErrRequestActive
+	}
+	return nil
+}
+
+type removeOutcome int
+
+const (
+	outcomeActive removeOutcome = iota
+	outcomeMissing
+	outcomeRemoved
+)
+
+// removeEnded removes one request and its chain when the chain has ended by
+// grace. The first read is unlocked so a live chain costs no lock; the
+// decision is taken again on a fresh read under the fleet lock.
+func (r *Retention) removeEnded(ctx context.Context, edevID, frqID string, now time.Time, grace time.Duration) (removeOutcome, error) {
 	chain, err := ChainOf(ctx, r.FRP, edevID, frqID)
 	if err != nil {
-		return false, err
+		return outcomeActive, err
 	}
-	if !ended(chain, r.Grace, now) {
-		return false, nil
+	if !ended(chain, grace, now) {
+		return outcomeActive, nil
 	}
-	gone := false
+	outcome := outcomeActive
 	err = r.underFleetLock(ctx, edevID, func() error {
 		if _, err := r.FRQ.Get(ctx, edevID, frqID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
+				outcome = outcomeMissing
 				return nil
 			}
 			return fmt.Errorf("get request: %w", err)
@@ -238,16 +293,16 @@ func (r *Retention) retire(ctx context.Context, edevID, frqID string, now time.T
 		if err != nil {
 			return err
 		}
-		if !ended(chain, r.Grace, now) {
+		if !ended(chain, grace, now) {
 			return nil
 		}
 		if err := r.deleteChain(ctx, edevID, frqID, len(chain)); err != nil {
 			return err
 		}
-		gone = true
+		outcome = outcomeRemoved
 		return nil
 	})
-	return gone, err
+	return outcome, err
 }
 
 // deleteChain deletes a request whose chain holds n responses, in Sweep's

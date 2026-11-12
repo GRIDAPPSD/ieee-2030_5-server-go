@@ -1877,11 +1877,26 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// from the registered method set.
 		//
 		// PUT on the request is the client's withdrawal (#667, mode M at
-		// sep_wadl.xml:3963): it changes only RequestStatus. POST and DELETE
-		// answer 405 from the registered method set.
+		// sep_wadl.xml:3963): it changes only RequestStatus. POST answers 405
+		// from the registered method set.
 		frqInstance := scopedResourceHandler[sep2.FlowReservationRequest](
 			stores.FlowReservationRequests, "id", "frqId", itemMethods{}, nil)
 		mux.HandleFunc("GET /edev/{id}/frq/{frqId}", frqInstance)
+		// DELETE (mode O) removes a request whose responses have all ended,
+		// with them and their lifecycle and answer records, through the
+		// retention sweep's own delete. The responses store is the cascading
+		// one, so the answer records go with them. Deprecated DELETE on the
+		// response (mode D) stays 405: deleting a response alone would orphan
+		// its request, which recovery would then answer again.
+		mux.HandleFunc("DELETE /edev/{id}/frq/{frqId}", coreflowrsv.HandleDeleteFlowReservationRequest(
+			&flowreservation.Retention{
+				FRQ:        stores.FlowReservationRequests,
+				FRP:        flowReservationResponses,
+				Lifecycles: stores.FlowReservationResponseLifecycles,
+				Ledger:     stores.CommitmentLedger,
+				Fleets:     commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers},
+				Notifier:   notifier,
+			}, time.Now))
 		mux.HandleFunc("PUT /edev/{id}/frq/{frqId}", coreflowrsv.HandlePutFlowReservationRequest(
 			stores.FlowReservationRequests,
 			flowreservation.NewCanceller(

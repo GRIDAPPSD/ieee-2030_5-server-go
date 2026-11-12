@@ -22,13 +22,13 @@ import (
 // Measured against the server csiptest boots, with the route set core's
 // assembly registers, on 2026-11-05. The manager-only writes go to the device
 // the sweep's manager manages, so they are measured as that manager's own.
-const outsidePolicyCeiling = 410
+const outsidePolicyCeiling = 409
 
 // outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
 // mode cannot hide behind a fall in another. The values sum to the total.
 var outsidePolicyByMode = map[wadl.Mode]int{
 	wadl.ModeMandatory:  158,
-	wadl.ModeOptional:   60,
+	wadl.ModeOptional:   59,
 	wadl.ModeDeprecated: 47,
 	wadl.ModeError:      145,
 }

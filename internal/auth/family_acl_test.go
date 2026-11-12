@@ -30,6 +30,7 @@ var goldenFamilies = map[string]struct {
 	"/rt":   {"GET,HEAD", false},
 	"/msg":  {"GET,HEAD,POST", false},
 	"/rsps": {"GET,HEAD,POST", false},
+	"/ntfy": {"POST", false},
 }
 
 func TestFamilyACLDecisionsMatchGolden(t *testing.T) {

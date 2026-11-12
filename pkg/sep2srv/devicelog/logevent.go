@@ -6,7 +6,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
-	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -68,14 +67,9 @@ func (s *LogEventStore) Update(ctx context.Context, parentID, id string, ev sep2
 // record queues one logevent line for ev, dropping and counting it when the
 // request carries no usable identity.
 func (s *LogEventStore) record(ctx context.Context, parentID string, ev sep2.LogEvent) {
-	lfdi, _, ok := s.identity(ctx)
+	actor, ok := Actor(ctx, s.identity)
 	if !ok {
-		s.w.Lost("unknown device", "no identity on the request, LogEvent line dropped")
-		return
-	}
-	actor, ok := sep2lfdi.Canonical(lfdi)
-	if !ok {
-		s.w.Lost("unknown device", "identity LFDI is not canonical, LogEvent line dropped")
+		s.w.Lost("unknown device", "no usable identity on the request, LogEvent line dropped")
 		return
 	}
 	fields := map[string]any{

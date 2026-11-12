@@ -48,16 +48,22 @@ type deviceLogLookups struct {
 	managers store.EndDeviceManagementReader
 }
 
+// newDeviceLogLookups is the one constructor of deviceLogLookups; a nil
+// stores gives lookups that find nothing.
+func newDeviceLogLookups(stores *Stores) deviceLogLookups {
+	if stores == nil {
+		return deviceLogLookups{}
+	}
+	return deviceLogLookups{devices: stores.EndDevices, managers: stores.EndDeviceManagers}
+}
+
 // newDeviceLogResolver returns the resolver for w over stores, or nil when
 // logging is off.
 func newDeviceLogResolver(w *devicelog.Writer, stores *Stores) *devicelog.CachingResolver {
 	if w == nil {
 		return nil
 	}
-	var l deviceLogLookups
-	if stores != nil {
-		l = deviceLogLookups{devices: stores.EndDevices, managers: stores.EndDeviceManagers}
-	}
+	l := newDeviceLogLookups(stores)
 	r := devicelog.NewResolver(devicelog.ResolverConfig{Registered: l.registered, Target: l.target})
 	w.AddStat("lookups refused at the in-flight limit", r.Refused)
 	return r
@@ -77,6 +83,7 @@ func (o requestObservers) wrap(next http.Handler) http.Handler {
 			return
 		}
 		o.activity.Record(lfdi)
+		actor, haveActor := devicelog.ActorFromLFDI(lfdi, ok)
 		if o.log == nil {
 			next.ServeHTTP(w, r)
 			return
@@ -92,21 +99,20 @@ func (o requestObservers) wrap(next http.Handler) http.Handler {
 		defer func() {
 			if p := recover(); p != nil {
 				rec.Status = http.StatusInternalServerError
-				o.logRequest(r, lfdi, rec, note, o.now().Sub(start))
+				o.logRequest(r, actor, haveActor, rec, note, o.now().Sub(start))
 				panic(p)
 			}
 		}()
 		next.ServeHTTP(rec, r)
-		o.logRequest(r, lfdi, rec, note, o.now().Sub(start))
+		o.logRequest(r, actor, haveActor, rec, note, o.now().Sub(start))
 	})
 }
 
 // logRequest hands one line to the device log. It runs after the handler
 // has returned, never reads the request body, does no store read, and never
 // fails the request: a full queue drops and counts the line inside the Writer.
-func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswriter.Recorder, note *devicelog.Note, dur time.Duration) {
-	actor, ok := sep2lfdi.Canonical(lfdi)
-	if !ok {
+func (o requestObservers) logRequest(r *http.Request, actor string, haveActor bool, rec *statuswriter.Recorder, note *devicelog.Note, dur time.Duration) {
+	if !haveActor {
 		// A certificate identity is always an LFDI; anything else has no
 		// file to key on.
 		return

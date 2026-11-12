@@ -89,7 +89,7 @@ func TestRouteFamilyTableCoversMountedPatterns(t *testing.T) {
 func TestUnnamedPathsAreRefusedBeforeAnyHandler(t *testing.T) {
 	t.Parallel()
 
-	paths := []string{"/", "/zzz", "/dcap/x", "/tm/x", "/edevx", "/dcapx", "/admin", "/ntfy"}
+	paths := []string{"/", "/zzz", "/dcap/x", "/tm/x", "/edevx", "/dcapx", "/admin", "/ntfy/x"}
 	kinds := []struct {
 		name string
 		cert bool

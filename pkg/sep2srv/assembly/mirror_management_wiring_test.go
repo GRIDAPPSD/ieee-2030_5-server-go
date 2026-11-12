@@ -127,8 +127,8 @@ func TestAssembly_MirrorUnmanagedClaimRefusedThroughTheRouter(t *testing.T) {
 }
 
 // mupWiringInstanceRoutes is every /mup route BESIDES POST /mup (the two
-// tests above already cover creation): the five separate HandleFunc calls in
-// registerMirrorRoutes (assembly.go), each its own call passing
+// tests above already cover creation): the separate HandleFunc calls in
+// registerMirrorRoutes (assembly.go) other than POST /mup, each its own call passing
 // stores.EndDeviceManagers and the RequireDeviceRecords option, so a mutation
 // on any ONE call is a defect this table must catch on that call's own row. path is relative to the created
 // mirror's Location; wantStatus is the response on the admitted case.
@@ -138,6 +138,9 @@ var mupWiringInstanceRoutes = []struct {
 	path       func(loc string) string
 	body       func(mrid string) string
 	wantStatus int
+	// onReading makes loc the Location a reading POST returned, instead of
+	// the mirror's own, so the route reads a reading that already exists.
+	onReading bool
 }{
 	{
 		name:       "GET /mup/{id}",
@@ -174,6 +177,14 @@ var mupWiringInstanceRoutes = []struct {
 		wantStatus: http.StatusCreated,
 	},
 	{
+		name:       "GET /mup/{id}/mr/{mrId}",
+		method:     http.MethodGet,
+		path:       func(loc string) string { return loc },
+		body:       func(string) string { return "" },
+		wantStatus: http.StatusOK,
+		onReading:  true,
+	},
+	{
 		// DELETE last: it removes the resource, so within one subtest's own
 		// server this must run after any read/write case that needs the
 		// record present. Each route below runs in its OWN subtest with its
@@ -208,6 +219,28 @@ func mupWiringCreateAsManager(t *testing.T, srv *httptest.Server, creator, mrid 
 	return loc
 }
 
+// mupWiringTarget returns the Location the route under test is requested at:
+// the mirror's own, or, for an onReading route, the Location of a reading
+// posted to it by creator.
+func mupWiringTarget(t *testing.T, srv *httptest.Server, creator, loc string, onReading bool) string {
+	t.Helper()
+	if !onReading {
+		return loc
+	}
+	body := `<MirrorMeterReading xmlns="urn:ieee:std:2030.5:ns"><mRID>WIRING_SEED_MMR</mRID></MirrorMeterReading>`
+	resp := mupWiringRequest(t, http.MethodPost, srv.URL+loc+"/mr", creator, body)
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed reading as %q: status = %d, want 201; body = %s", creator, resp.StatusCode, respBody)
+	}
+	rloc := resp.Header.Get("Location")
+	if rloc == "" {
+		t.Fatal("seed reading: no Location header")
+	}
+	return rloc
+}
+
 // TestAssembly_MirrorInstanceRoutesManagerWiring is the MEDIUM fix (#720
 // round 2): TestAssembly_MirrorManagerWiringThroughTheRouter above proved
 // only POST /mup and a GET as the DEVICE ITSELF, which cannot tell a wired
@@ -229,6 +262,7 @@ func TestAssembly_MirrorInstanceRoutesManagerWiring(t *testing.T) {
 				t.Fatalf("assign manager: %v", err)
 			}
 			loc := mupWiringCreateAsManager(t, srv, wiringManagerLFDI, mrid)
+			loc = mupWiringTarget(t, srv, wiringManagerLFDI, loc, rt.onReading)
 
 			resp := mupWiringRequest(t, rt.method, srv.URL+rt.path(loc), wiringManagerLFDI, rt.body(mrid))
 			respBody, _ := io.ReadAll(resp.Body)
@@ -251,6 +285,7 @@ func TestAssembly_MirrorInstanceRoutesManagerWiring(t *testing.T) {
 				t.Fatalf("assign seed creator: %v", err)
 			}
 			loc := mupWiringCreateAsManager(t, srv, seedCreator, mrid)
+			loc = mupWiringTarget(t, srv, seedCreator, loc, rt.onReading)
 
 			resp := mupWiringRequest(t, rt.method, srv.URL+rt.path(loc), wiringManagerLFDI, rt.body(mrid))
 			respBody, _ := io.ReadAll(resp.Body)
@@ -278,6 +313,7 @@ func TestAssembly_MirrorInstanceRoutesNeedTheManagedRecord(t *testing.T) {
 				t.Fatalf("assign manager: %v", err)
 			}
 			loc := mupWiringCreateAsManager(t, srv, wiringManagerLFDI, mrid)
+			loc = mupWiringTarget(t, srv, wiringManagerLFDI, loc, rt.onReading)
 			if err := stores.EndDevices.Delete(context.Background(), "88"); err != nil {
 				t.Fatalf("remove the managed device's record: %v", err)
 			}

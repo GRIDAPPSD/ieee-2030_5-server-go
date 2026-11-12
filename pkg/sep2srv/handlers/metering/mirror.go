@@ -971,6 +971,45 @@ func HandleMirrorUsagePoint(
 	}
 }
 
+// HandleMirrorMeterReading returns a handler for GET /mup/{id}/mr/{mrId}, the
+// address POST /mup/{id} and POST /mup/{id}/mr return in Location. The WADL
+// requires that Location (sep_wadl.xml:2314) but declares no resource for it,
+// so the server serves the record it just stored rather than leave the header
+// naming nothing.
+//
+// It is owner-scoped like every other /mup route: the gate runs on the parent
+// MirrorUsagePoint first, so a reading is as private as the mirror it hangs on.
+func HandleMirrorMeterReading(
+	mupStore store.ResourceStore[sep2.MirrorUsagePoint],
+	mmrStore store.ScopedReader[sep2.MirrorMeterReading],
+	managers store.EndDeviceManagementReader,
+	lfdiProvider LFDIProvider,
+	opts ...MirrorOption,
+) http.HandlerFunc {
+	actFor := newMirrorActor(managers, opts...)
+	denials := newMirrorDenialLog(log.Printf)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			encoding.MethodNotAllowed(w, "GET, HEAD")
+			return
+		}
+		parentID := r.PathValue("id")
+		if _, _, ok := authorizeMirrorOwner(w, r, mupStore, actFor, denials, lfdiProvider, parentID); !ok {
+			return
+		}
+		mmr, err := mmrStore.Get(r.Context(), parentID, r.PathValue("mrId"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "mirror meter reading not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, fmt.Errorf("read mirror meter reading: %w", err))
+			return
+		}
+		encoding.WriteXML(w, http.StatusOK, &mmr)
+	}
+}
+
 // HandlePutMirrorUsagePoint returns a handler for PUT /mup/{id}.
 //
 // PUT on the MirrorUsagePoint is mode M in the WADL (sep_wadl.xml:2303), and

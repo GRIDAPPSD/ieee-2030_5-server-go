@@ -31,7 +31,7 @@ import (
 //
 // # Why each href is spelled out rather than tabulated
 //
-// The four fills below repeat base + a literal suffix instead of ranging over a
+// The fills below repeat base + a literal suffix instead of ranging over a
 // table. That repetition is load-bearing: the mintable-href source scan
 // (pkg/sep2srv/assembly/hrefsource_test.go) folds a literal-rooted concatenation
 // into a shape and fails when the shape is not declared and routed, and it
@@ -51,9 +51,11 @@ import (
 // ONE commit, because under section 4.4 mounting and advertising are a single
 // act.
 //
-// AssociatedDERProgramList, CurrentDERProgram and AssociatedUsagePoint are
-// absent for exactly that reason: nothing yet owns their routes, and the
-// last two have no field on [sep2.DER] yet either.
+// The three association links are policy bits like the rest, with one
+// difference in what backs them. AssociatedPrograms is derived for every DER.
+// CurrentProgram and AssociatedUsagePoint are records: the association exists
+// only where the stored DER carries the link, and the served link then names
+// the DER's own route (base/cdp, base/upt), which resolves the stored target.
 type DERLinkPolicy struct {
 	// Capability gates DERCapabilityLink, which 2018 section 10.10.5 requires
 	// on every served DER. A router that mounts the DER function set at all
@@ -67,6 +69,12 @@ type DERLinkPolicy struct {
 	Status bool
 	// Availability gates DERAvailabilityLink.
 	Availability bool
+	// AssociatedPrograms gates AssociatedDERProgramListLink.
+	AssociatedPrograms bool
+	// CurrentProgram gates CurrentDERProgramLink.
+	CurrentProgram bool
+	// AssociatedUsagePoint gates AssociatedUsagePointLink.
+	AssociatedUsagePoint bool
 }
 
 // FillAbsentDERLinks stamps the permitted sub-resource links onto d for every
@@ -102,10 +110,26 @@ func FillAbsentDERLinks(d *sep2.DER, base string, p DERLinkPolicy) {
 
 	// Ordered as the sep.xsd DER sequence orders the fields, so a reader
 	// comparing this against the struct is comparing like with like.
+	if p.AssociatedPrograms && d.AssociatedDERProgramListLink == nil {
+		d.AssociatedDERProgramListLink = &sep2.ListLink{Href: base + "/derp"}
+	}
+	routeStoredAssociation(&d.AssociatedUsagePointLink, p.AssociatedUsagePoint, base+"/upt")
+	routeStoredAssociation(&d.CurrentDERProgramLink, p.CurrentProgram, base+"/cdp")
 	fillLink(&d.DERAvailabilityLink, p.Availability, base+"/dera", "DERAvailabilityLink", base)
 	fillLink(&d.DERCapabilityLink, p.Capability, base+"/dercap", "DERCapabilityLink", base)
 	fillLink(&d.DERSettingsLink, p.Settings, base+"/derg", "DERSettingsLink", base)
 	fillLink(&d.DERStatusLink, p.Status, base+"/ders", "DERStatusLink", base)
+}
+
+// routeStoredAssociation points a stored association link at the DER's own
+// route for it. The stored link is the association record, naming the target
+// resource, and that route is what resolves it; an absent link means the DER
+// has no such association and none is invented. The stored record is read by
+// the route from the store, never from the served document.
+func routeStoredAssociation(dst **sep2.Link, permitted bool, route string) {
+	if permitted && *dst != nil {
+		*dst = &sep2.Link{Href: route}
+	}
 }
 
 // fillLink applies the fill-absent rule to one link field. want is the href the
@@ -149,15 +173,25 @@ func DropUnpermittedDERLinks(d *sep2.DER, p DERLinkPolicy) {
 	dropLink(&d.DERSettingsLink, p.Settings, "DERSettingsLink")
 	dropLink(&d.DERStatusLink, p.Status, "DERStatusLink")
 
-	// AssociatedDERProgramListLink has no policy field because nothing derives
-	// it and no route serves /edev/{id}/der/{derId}/derp yet, so it is never
-	// permitted. When that lands it gains a field, a fill and a mount
-	// together, and this special case goes away.
+	// The association links are server-authored: a client PUT cannot create or
+	// redirect one (writing associations is a separate function), so a supplied
+	// one is dropped whatever the policy permits.
 	if d.AssociatedDERProgramListLink != nil {
-		log.Printf("der: dropping client-supplied AssociatedDERProgramListLink %s: no route serves the associated DERProgram list yet",
+		log.Printf("der: dropping client-supplied AssociatedDERProgramListLink %s: the server derives it",
 			logsafe.Quote(d.AssociatedDERProgramListLink.Href))
 		d.AssociatedDERProgramListLink = nil
 	}
+	dropServerAuthored(&d.CurrentDERProgramLink, "CurrentDERProgramLink")
+	dropServerAuthored(&d.AssociatedUsagePointLink, "AssociatedUsagePointLink")
+}
+
+// dropServerAuthored clears a link only the server may set.
+func dropServerAuthored(dst **sep2.Link, field string) {
+	if *dst == nil {
+		return
+	}
+	log.Printf("der: dropping client-supplied %s %s: only the server sets it", field, logsafe.Quote((*dst).Href))
+	*dst = nil
 }
 
 // dropLink clears one link field when its function set is not served.
@@ -166,7 +200,7 @@ func dropLink(dst **sep2.Link, permitted bool, field string) {
 		return
 	}
 	log.Printf("der: dropping client-supplied %s %s: this server does not serve that function set (2018 section 4.4)",
-		field, logsafe.Quote((*dst).Href))
+		logsafe.Str(field), logsafe.Quote((*dst).Href))
 	*dst = nil
 }
 

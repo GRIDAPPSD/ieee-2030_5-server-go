@@ -24,12 +24,27 @@ var errProgramViewReadOnly = errors.New("assembly: the per-FSA DERProgram view i
 // is the only record of which FSA a program belongs to. A program whose href
 // does not parse belongs to no FSA and is served under none; warn reports it.
 //
+// An empty fsaID matches nothing, so a route mounted without {fsaId} serves
+// nothing rather than every FSA. The device-wide view the DER association list
+// serves is a different constructor, [newProgramsInAnyFSA], not an empty id.
+//
 // The list and single-program routes both read through this one type, so the
 // two cannot disagree about which FSA a program is visible under.
 type programsInFSA struct {
 	store.ScopedStore[sep2.DERProgram]
-	fsaID string
-	warn  *unscopedProgramWarnings
+	fsaID  string
+	anyFSA bool
+	warn   *unscopedProgramWarnings
+}
+
+// newProgramsInFSA views programs as the ones in FSA fsaID.
+func newProgramsInFSA(programs store.ScopedStore[sep2.DERProgram], fsaID string, warn *unscopedProgramWarnings) programsInFSA {
+	return programsInFSA{ScopedStore: programs, fsaID: fsaID, warn: warn}
+}
+
+// newProgramsInAnyFSA views programs as every one that names some FSA.
+func newProgramsInAnyFSA(programs store.ScopedStore[sep2.DERProgram], warn *unscopedProgramWarnings) programsInFSA {
+	return programsInFSA{ScopedStore: programs, anyFSA: true, warn: warn}
 }
 
 func (v programsInFSA) holds(parentID string, p sep2.DERProgram) bool {
@@ -37,7 +52,7 @@ func (v programsInFSA) holds(parentID string, p sep2.DERProgram) bool {
 	if !ok {
 		v.warn.report(parentID, p.Href)
 	}
-	return ok && fsa == v.fsaID
+	return ok && (v.anyFSA || fsa == v.fsaID)
 }
 
 func (v programsInFSA) Get(ctx context.Context, parentID, id string) (sep2.DERProgram, error) {
@@ -118,7 +133,7 @@ func (w *unscopedProgramWarnings) report(parentID, href string) {
 // programs in FSA {fsaId}, in Table 50 order, paged after both.
 func derProgramListHandler(programs store.ScopedStore[sep2.DERProgram], warn *unscopedProgramWarnings) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		inFSA := programsInFSA{ScopedStore: programs, fsaID: r.PathValue("fsaId"), warn: warn}
+		inFSA := newProgramsInFSA(programs, r.PathValue("fsaId"), warn)
 		st := store.Under(store.OrderedScoped[sep2.DERProgram](inFSA, coreder.CompareDERProgram), r.PathValue("id"))
 		corelisthandler.SortedListHandler(st, store.SortByListOrdering, coreder.BuildDERProgramList, 900).ServeHTTP(w, r)
 	}
@@ -128,7 +143,7 @@ func derProgramListHandler(programs store.ScopedStore[sep2.DERProgram], warn *un
 // for a program of another FSA, the same boundary the list route holds.
 func derProgramHandler(programs store.ScopedStore[sep2.DERProgram], warn *unscopedProgramWarnings) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		inFSA := programsInFSA{ScopedStore: programs, fsaID: r.PathValue("fsaId"), warn: warn}
+		inFSA := newProgramsInFSA(programs, r.PathValue("fsaId"), warn)
 		scopedResourceHandler[sep2.DERProgram](inFSA, "id", "derpId", itemMethods{}, nil).ServeHTTP(w, r)
 	}
 }

@@ -236,6 +236,7 @@ func MintableHrefs() []MintableHref {
 		{"/edev/{}/sub/{}", http.MethodGet, "handlers/subscription.HandleSubscription", "the Location header returned by POST /edev/{}/sub; a client re-reads its subscription to confirm what the server stored"},
 		{"/edev/{}/sub/{}", http.MethodDelete, "handlers/subscription.HandleCreateSubscription", "the same Location header, used to cancel the subscription"},
 		{"/edev/{}/lel/{}", http.MethodGet, "handlers/logevent.HandlePostLogEvent", "the Location header returned by POST /edev/{}/lel"},
+		{"/edev/{}/lel/{}", http.MethodPut, "handlers/logevent.HandlePostLogEvent", "the same Location header, used to replace the event; PUT on the LogEvent is mode O (sep_wadl.xml:1404)"},
 		{"/edev/{}/lel/{}", http.MethodDelete, "handlers/logevent.HandlePostLogEvent", "the same Location header, used to remove the event; DELETE on the LogEvent is Mandatory (sep_wadl.xml:1430)"},
 		{"/edev/{}/frq/{}", http.MethodGet, "handlers/flow_reservation.HandlePostFlowReservationRequest", "the Location header returned by POST /edev/{}/frq"},
 		{"/edev/{}/frp/{}", http.MethodGet, "handlers/flow_reservation.HandlePostFlowReservationRequest", "the FlowReservationResponse href stamped alongside the request, which the client polls for the server's decision"},

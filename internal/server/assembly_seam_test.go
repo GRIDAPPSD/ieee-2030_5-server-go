@@ -125,8 +125,12 @@ import (
 // POST /edev/{id}/sub returns was read and replaced with 405 until now. The
 // list's own header count and the two figures above stop at #1263; the pinned
 // total is the length of this list, asserted by TestProtocolRouteSurface.
+//
+// DELETE on the DeviceStatus and PUT on the LogEvent instance are ADDED
+// (#1264, first slice).
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
+	"DELETE /edev/{id}/dstat",
 	"DELETE /edev/{id}/lel/{lelId}",
 	"DELETE /edev/{id}/rg",
 	"DELETE /edev/{id}/sub/{subId}",
@@ -207,6 +211,7 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/der/{derId}/ders",
 	"PUT /edev/{id}/dstat",
 	"PUT /edev/{id}/frq/{frqId}",
+	"PUT /edev/{id}/lel/{lelId}",
 	"PUT /edev/{id}/ps",
 	"PUT /edev/{id}/rg",
 	"PUT /edev/{id}/sub/{subId}",

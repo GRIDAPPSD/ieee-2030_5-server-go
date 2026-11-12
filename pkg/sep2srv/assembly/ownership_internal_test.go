@@ -227,6 +227,8 @@ func TestDelegable(t *testing.T) {
 		"PUT /edev/{id}/der/{derId}":                  false, // refused: UTIL-002 names only the four DER sub-resources
 		"PUT /edev/{id}/cfg":                          false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
 		"PUT /edev/{id}/dstat":                        false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"DELETE /edev/{id}/dstat":                     false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/lel/{lelId}":                  false, // refused: no aggregator text replaces a LogEvent
 		"PUT /edev/{id}/ps":                           false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
 		"POST /edev/{id}/frq":                         false, // refused: flow reservation appears in no aggregator text
 		"PUT /edev/{id}/frq/{frqId}":                  false, // refused: a client's own withdrawal, not an aggregator act (#667)
@@ -289,13 +291,15 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/cfg": true,
 	"PUT /edev/{id}/cfg": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
 
-	"GET /edev/{id}/dstat": true,
-	"PUT /edev/{id}/dstat": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
+	"GET /edev/{id}/dstat":    true,
+	"PUT /edev/{id}/dstat":    false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
+	"DELETE /edev/{id}/dstat": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
 
 	"GET /edev/{id}/lel":            true,
 	"POST /edev/{id}/lel":           true, // LogEvent, CSIP V1.2 UTIL-001
 	"GET /edev/{id}/lel/{lelId}":    true,
 	"DELETE /edev/{id}/lel/{lelId}": false, // no aggregator text deletes a LogEvent
+	"PUT /edev/{id}/lel/{lelId}":    false, // no aggregator text replaces a LogEvent
 
 	"GET /edev/{id}/ps": true,
 	"PUT /edev/{id}/ps": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default

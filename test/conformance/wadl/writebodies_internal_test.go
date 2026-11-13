@@ -154,43 +154,59 @@ func TestRequestBodyEverywhereElseStaysEmpty(t *testing.T) {
 	}
 }
 
-// TestDERWriteBodiesAreSchemaValid holds each body to sep.xsd when a copy is
-// supplied, and the control shows the check refuses a body missing a required
-// child, so a pass here cannot be a validator that accepts everything.
+// TestDERWriteBodiesAreSchemaValid runs every writeBodies entry through the
+// structural validator when a sep.xsd copy is supplied. The validator checks
+// element presence, order and maxOccurs only, not simple-type values,
+// attributes or facets; the full lexical check moves to core's exported
+// validator (GRIDAPPSD/ieee-2030_5-core-go#256). The control drops a required
+// element, so a pass cannot be a validator that accepts everything.
 func TestDERWriteBodiesAreSchemaValid(t *testing.T) {
 	links := SchemaForTest(t)
 	if links == nil {
 		t.Skip("no sep.xsd: the bodies are checked against the schema")
 	}
-	for _, c := range derBodies {
-		t.Run(c.id, func(t *testing.T) {
-			body := requestBody(Method{ResourceID: c.id, Verb: c.verb, RequestElements: []string{c.root}})
+	if len(writeBodies) == 0 {
+		t.Fatal("writeBodies is empty, so nothing was checked")
+	}
+	for key, raw := range writeBodies {
+		t.Run(key.resource, func(t *testing.T) {
+			body := []byte(raw)
 			if err := links.ValidateBody(body); err != nil {
-				t.Fatalf("%s %s body is not schema-valid: %v\n%s", c.verb, c.id, err, body)
+				t.Fatalf("%s %s body is not schema-valid: %v\n%s", key.verb, key.resource, err, body)
 			}
-			dropped := strings.Replace(string(body), "<mRID>", "<mRIDX>", 1)
-			dropped = strings.Replace(dropped, "</mRID>", "</mRIDX>", 1)
-			if err := links.ValidateBody([]byte(dropped)); err == nil {
-				t.Fatal("control: a body with its mRID renamed validated, so the check cannot fail")
+			start := strings.Index(raw, "<mRID>")
+			end := strings.Index(raw, "</mRID>")
+			if start < 0 || end < start {
+				t.Fatalf("control: %s body has no mRID to drop: %s", key.resource, raw)
+			}
+			dropped := raw[:start] + raw[end+len("</mRID>"):]
+			err := links.ValidateBody([]byte(dropped))
+			if err == nil {
+				t.Fatal("control: a body missing its required mRID validated, so the check cannot fail")
+			}
+			if !strings.Contains(err.Error(), "required mRID is missing") {
+				t.Fatalf("control: error = %v, want the required-missing refusal for mRID", err)
 			}
 		})
 	}
 }
 
 // TestDERWriteBodiesMatchTheWADL keeps the table's keys honest against the
-// normative WADL: each names a real optional write whose request may carry the
-// element the body is rooted at.
+// normative WADL: each key names a real optional write whose request may carry
+// the element its body is rooted at. It iterates writeBodies itself, so a new
+// entry is checked without a second list to update.
 func TestDERWriteBodiesMatchTheWADL(t *testing.T) {
 	m := MustLoadModel(t)
-	for _, c := range derBodies {
+	for key, raw := range writeBodies {
+		root := rootElement([]byte(raw))
 		found := false
 		for _, meth := range m.Methods {
-			if meth.ResourceID == c.id && meth.Verb == c.verb && containsStr(meth.RequestElements, c.root) {
+			if meth.ResourceID == key.resource && meth.Verb == key.verb && containsStr(meth.RequestElements, root) {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("no WADL method %s %s accepts a %s request", c.verb, c.id, c.root)
+			t.Errorf("no WADL method %s %s accepts a %s request", key.verb, key.resource, root)
 		}
 	}
 }

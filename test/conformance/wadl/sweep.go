@@ -907,8 +907,11 @@ type writeBodyKey struct{ resource, verb string }
 // against a WADL that declares only success. A server-authored resource has
 // required fields (mRID, primacy, an interval), so an empty element is not a
 // probe of the write at all. This is the one place such a body is added; a
-// write with no entry here is sent the empty element. TestDERWriteBodiesAreSchemaValid
-// holds each body to sep.xsd when a copy is supplied.
+// write with no entry here is sent the empty element.
+// TestDERWriteBodiesAreSchemaValid runs each body through a structural check
+// against sep.xsd (elements, order, maxOccurs; not simple-type values or
+// facets) when a copy is supplied; the full check moves to core's exported
+// validator, GRIDAPPSD/ieee-2030_5-core-go#256.
 var writeBodies = map[writeBodyKey]string{
 	{"DERProgramList", http.MethodPost}: `<DERProgram xmlns="` + sepNS + `">` +
 		`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FF1</mRID><description>wadl sweep derp post</description>` +

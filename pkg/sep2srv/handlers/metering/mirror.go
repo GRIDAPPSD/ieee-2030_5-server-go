@@ -1215,27 +1215,7 @@ func HandlePutMirrorUsagePoint(
 // deployment choice, not an indeterminate check.
 //
 // A readings store that IS wired but cannot cascade is the opposite case and is
-// treated as an error: see [parentCascader].
-
-// parentCascader removes a whole parent collection in one operation and reports
-// how many resources went with it.
-//
-// It is declared HERE, at the consumer, rather than in pkg/store, because it is
-// not part of the store contract and should not become part of it by accident.
-// The contract addresses resources as (parent, id) pairs and offers no key
-// enumeration, so a cascade cannot be expressed as a loop over it: there is no
-// way to ask which ids live under a parent, and a loop would not be atomic even
-// if there were. That makes bulk parent removal a capability an implementation
-// either has or does not, which is exactly what an optional interface asserted
-// at the point of use is for.
-//
-// An implementation that does not provide it is not silently tolerated. See the
-// fail-closed branch in [HandleDeleteMirrorUsagePoint]: a store that cannot
-// cascade blocks the parent delete rather than completing it and orphaning the
-// children.
-type parentCascader interface {
-	DeleteParent(ctx context.Context, parentID string) (uint32, error)
-}
+// treated as an error: see [store.CascadeParent].
 
 func HandleDeleteMirrorUsagePoint(
 	s store.ResourceStore[sep2.MirrorUsagePoint],
@@ -1264,23 +1244,11 @@ func HandleDeleteMirrorUsagePoint(
 		}
 
 		if !store.IsAbsent(mmrStore) {
-			cascader, ok := mmrStore.(parentCascader)
-			if !ok {
-				// Fail closed, and leave the parent in place. The readings
-				// store is wired, so a collection under this id may exist and
-				// would be orphaned by a delete this handler cannot follow
-				// with a cascade. Answering 204 here would report a clean
-				// deletion while leaving exactly the state the cascade exists
-				// to prevent, and the client could not tell.
-				srverr.Internal(w, r, fmt.Errorf("the readings store (%T) cannot cascade a parent delete, "+
-					"so the MirrorUsagePoint is left in place", mmrStore))
-				return
-			}
-			removed, err := cascader.DeleteParent(r.Context(), id)
+			// Fail closed, and leave the parent in place: the readings store is
+			// wired, so a collection under this id may exist and would be orphaned
+			// by a delete this handler cannot follow with a cascade.
+			removed, err := store.CascadeParent(r.Context(), mmrStore, id)
 			if err != nil {
-				// The parent is deliberately still here. Surfacing the failure
-				// with the resource intact is recoverable; deleting it anyway
-				// would leave orphans no client could see or clean up.
 				srverr.Internal(w, r, fmt.Errorf("the cascade delete of the readings under this parent failed, "+
 					"so the MirrorUsagePoint is left in place: %w", err))
 				return

@@ -1718,6 +1718,41 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 		flatReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(flatReadingTypes))
+
+	registerMeteringWrites(mux, stores, meterReadings, readingSets, readings, readingTypes, readingScope)
+}
+
+// registerMeteringWrites mounts the Optional PUTs and DELETEs on records that
+// exist. Each is a manager-only write (manager_only.go), so none checks the
+// caller. A PUT replaces a stored record and never creates one, so the client
+// does not choose a key.
+func registerMeteringWrites(
+	mux routeRegistrar,
+	stores *Stores,
+	meterReadings store.ScopedStore[sep2.MeterReading],
+	readingSets store.ScopedStore[sep2.ReadingSet],
+	readings store.ScopedStore[sep2.Reading],
+	readingTypes store.ScopedStore[sep2.ReadingType],
+	readingScope scopeFunc,
+) {
+	tree := coremetering.UsagePointTree{
+		UsagePoints: stores.UsagePoints, MeterReadings: meterReadings,
+		ReadingSets: readingSets, Readings: readings, ReadingTypes: readingTypes,
+	}
+	mux.HandleFunc("DELETE /upt/{uptId}", coremetering.HandleDeleteUsagePoint(tree))
+	mux.HandleFunc("DELETE /upt/{uptId}/mr/{mrId}", coremetering.HandleDeleteMeterReading(tree))
+	mux.HandleFunc("DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}", coremetering.HandleDeleteReadingSet(tree))
+
+	// The href is the address the PUT named, never the client's own.
+	mux.HandleFunc("PUT /upt/{uptId}/mr/{mrId}/rt", scopedResourceHandler(readingTypes, "uptId", "mrId",
+		itemMethods{PutUpdateOnly: true},
+		func(r *http.Request, rt *sep2.ReadingType) { rt.Href = r.URL.Path }))
+	readingItem := itemMethods{PutUpdateOnly: true, Delete: true}
+	readingStamp := func(r *http.Request, rd *sep2.Reading) { rd.Href = r.URL.Path }
+	mux.HandleFunc("PUT /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+		scopedResourceHandlerWith(readingScope, readings, "rId", readingItem, readingStamp))
+	mux.HandleFunc("DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+		scopedResourceHandlerWith(readingScope, readings, "rId", readingItem, readingStamp))
 }
 
 // logUnseededScope names the case where an update-only PUT answered 404 because

@@ -69,7 +69,7 @@ func All() []Family {
 		{Prefix: "/edev", Subtree: true, Methods: readWrite},
 		{Prefix: "/mup", Subtree: true, Methods: readWrite, Anchor: AnchorMirrorUsagePoints},
 		{Prefix: "/dc", Subtree: true, Methods: read, Anchor: AnchorDERs},
-		{Prefix: "/upt", Subtree: true, Methods: readPost, Anchor: AnchorUsagePoints},
+		{Prefix: "/upt", Subtree: true, Methods: readWrite, Anchor: AnchorUsagePoints},
 		{Prefix: "/rt", Subtree: true, Methods: read, Anchor: AnchorUsagePoints},
 		{Prefix: "/msg", Subtree: true, Methods: readPost, Anchor: AnchorMessagingPrograms},
 		{Prefix: "/rsps", Subtree: true, Methods: readPost, Anchor: AnchorResponseSets},

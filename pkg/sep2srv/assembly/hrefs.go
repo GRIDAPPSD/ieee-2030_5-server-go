@@ -228,6 +228,11 @@ func MintableHrefs() []MintableHref {
 		{"/edev/{}/der/{}/derg", http.MethodGet, "handlers/der.DERSingletonHandlers", "DERSettings self href"},
 		{"/edev/{}/der/{}/ders", http.MethodGet, "handlers/der.DERSingletonHandlers", "DERStatus self href"},
 		{"/edev/{}/der/{}/dera", http.MethodGet, "handlers/der.DERSingletonHandlers", "DERAvailability self href"},
+		{"/edev/{}/der/{}/derp", http.MethodGet, "handlers/der.FillAbsentDERLinks AssociatedDERProgramListLink", "the programs stored under the DER's device"},
+		{"/edev/{}/der/{}/cdp", http.MethodGet, "handlers/der.FillAbsentDERLinks CurrentDERProgramLink", "the program a stored DER names as its current one, advertised only on a DER that stores the link"},
+		{"/edev/{}/der/{}/upt", http.MethodGet, "handlers/der.FillAbsentDERLinks AssociatedUsagePointLink", "the UsagePoint a stored DER names, advertised only on a DER that stores the link and only where UsagePoints are served"},
+		{"/edev/{}/fsa/{}/derp/{}/dc", http.MethodGet, "handlers/der.DERControlCountedProgramStore DERCurveListLink", "the curve catalog under a program"},
+		{"/edev/{}/fsa/{}/derp/{}/dc/{}", http.MethodGet, "assembly.programCurveListBuilder", "a curve's program-scoped href, the member href of the program's curve list"},
 		{"/edev/{}/fsa/{}/derp/{}/dderc", http.MethodGet, "handlers/der.DefaultDERControlHandler", "DefaultDERControl self href"},
 
 		// Resources created by a client POST. Every one of these is handed

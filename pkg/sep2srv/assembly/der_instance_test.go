@@ -56,6 +56,8 @@ func seedDER(t *testing.T, stores *assembly.Stores, edevID, derID string) sep2.D
 		DERCapabilityLink:    &sep2.Link{Href: base + "/dercap"},
 		DERSettingsLink:      &sep2.Link{Href: base + "/derg"},
 		DERStatusLink:        &sep2.Link{Href: base + "/ders"},
+
+		AssociatedDERProgramListLink: &sep2.ListLink{Href: base + "/derp"},
 	}
 	if err := stores.DERs.Create(context.Background(), edevID, derID, d); err != nil {
 		t.Fatalf("seeding DER %s: %v", base, err)
@@ -159,14 +161,17 @@ func TestDERInstance_GETServesTheResourceWithItsSubResourceLinks(t *testing.T) {
 		assertDERLinks(t, d, path)
 	})
 
-	t.Run("no link is emitted for a function set this server does not serve", func(t *testing.T) {
-		// AssociatedDERProgramList is not mounted, and 2018 section 4.4 p.19
-		// says a link to an unimplemented function set SHALL
-		// NOT be included. Absence here is the conformant answer, not a gap.
+	t.Run("the associated program list is derived and the record-backed links are absent", func(t *testing.T) {
+		// The program list is mounted for every DER. The current program and
+		// usage point links exist only on a DER that stores them, so a bare
+		// DER carries neither (2018 section 4.4: no link without a resource).
 		d := getDER(t, srv, derHref("7", "4"))
-		if d.AssociatedDERProgramListLink != nil {
-			t.Errorf("AssociatedDERProgramListLink = %q, want absent: no route serves it (2018 section 4.4)",
-				d.AssociatedDERProgramListLink.Href)
+		if d.AssociatedDERProgramListLink == nil || d.AssociatedDERProgramListLink.Href != derHref("7", "4")+"/derp" {
+			t.Errorf("AssociatedDERProgramListLink = %+v, want href %s", d.AssociatedDERProgramListLink, derHref("7", "4")+"/derp")
+		}
+		if d.CurrentDERProgramLink != nil || d.AssociatedUsagePointLink != nil {
+			t.Errorf("CurrentDERProgramLink = %+v, AssociatedUsagePointLink = %+v, want both absent",
+				d.CurrentDERProgramLink, d.AssociatedUsagePointLink)
 		}
 	})
 }
@@ -332,9 +337,8 @@ func TestDERInstance_PUTStoresTheServersOwnHrefAndDropsUnservedLinks(t *testing.
 	if got.Href != path {
 		t.Errorf("Href = %q, want %q: the URI a resource was written to is the server's fact, not the client's", got.Href, path)
 	}
-	if got.AssociatedDERProgramListLink != nil {
-		t.Errorf("AssociatedDERProgramListLink = %q, want absent: a client must not inject a link to a function set we do not serve (2018 section 4.4)",
-			got.AssociatedDERProgramListLink.Href)
+	if got.AssociatedDERProgramListLink == nil || got.AssociatedDERProgramListLink.Href != path+"/derp" {
+		t.Errorf("AssociatedDERProgramListLink = %+v, want the derived %s: the server owns that link, and the one the client wrote must not be stored", got.AssociatedDERProgramListLink, path+"/derp")
 	}
 	assertDERLinks(t, got, path)
 }
@@ -447,7 +451,7 @@ func TestDERInstance_MultipleDERsUnderOneEndDeviceStayIndependent(t *testing.T) 
 // TestDERList_SeededOutputIsByteIdenticalToTheUnfilledBuild is the
 // byte-identical invariant for the single-DER case.
 //
-// Seeding already stamps all four links, so under the phase-1 policy the fill is
+// Seeding already stamps all five links, so under the phase-1 policy the fill is
 // a no-op and the DERList bytes must not move. This is asserted rather than
 // argued: the two builders are run over the same store result and their
 // marshalled bytes compared, and the served response is compared against the
@@ -460,7 +464,7 @@ func TestDERList_SeededOutputIsByteIdenticalToTheUnfilledBuild(t *testing.T) {
 	seeded := seedDER(t, stores, "1", "1")
 
 	const listPath = "/edev/1/der"
-	policy := coreder.DERLinkPolicy{Capability: true, Settings: true, Status: true, Availability: true}
+	policy := coreder.DERLinkPolicy{Capability: true, Settings: true, Status: true, Availability: true, AssociatedPrograms: true}
 
 	// Each builder gets its own page: the members are completed in place, so
 	// sharing one would let the first call decide the second call's input.

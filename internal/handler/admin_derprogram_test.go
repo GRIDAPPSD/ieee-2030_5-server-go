@@ -14,6 +14,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -60,7 +61,7 @@ func newTemplateFixtureWith(t *testing.T, programs *memory.DERProgramStore, devi
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &handler.AdminFSAHandler{
+	h := &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{},
 		AdminFSAs:   memory.NewAdminFSAStore(),
 		DeviceFSAs:  memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		EndDevices:  devices,

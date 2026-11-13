@@ -7,6 +7,7 @@ import "github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 var (
 	newAdminFlowReservationHandler = adminplane.NewAdminFlowReservationHandler
 	newAdminDERControlHandler      = adminplane.NewAdminDERControlHandler
+	newAdminFSAHandler             = adminplane.NewAdminFSAHandler
 	recoveryWriters                = adminplane.RecoveryWriters
 	persists                       = adminplane.Persists
 )

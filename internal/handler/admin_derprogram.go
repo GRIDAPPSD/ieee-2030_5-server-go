@@ -134,8 +134,8 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		if len(h.AdminFSAs.Templates(r.Context(), fsaID)) >= maxTemplatesPerFSA {
 			writeError(w, http.StatusConflict, fmt.Sprintf("fsa already has %d program templates", maxTemplatesPerFSA))
@@ -371,8 +371,8 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		// Under the lock, so an unassign cannot remove the device's FSA
 		// between this check and the write.
@@ -437,7 +437,7 @@ func (h *AdminFSAHandler) ensureDeviceFailed(w http.ResponseWriter, r *http.Requ
 // writeTemplate adds tmpl, whose ids are minted, to fsaID and copies it to
 // every assigned device, returning those devices. Every copy is checked before
 // anything is written, so a conflict refuses the template with nothing to undo.
-// The caller holds programMu.
+// The caller holds the DER write lock.
 func (h *AdminFSAHandler) writeTemplate(r *http.Request, fsaID string, tmpl memory.ProgramTemplate) ([]string, *membershipFault) {
 	ctx := r.Context()
 	devices := h.AdminFSAs.Devices(ctx, fsaID)

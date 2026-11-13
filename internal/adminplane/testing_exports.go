@@ -58,6 +58,11 @@ func NewAdminFlowReservationHandler(stores *Stores) *handler.AdminFlowReservatio
 	return newAdminFlowReservationHandler(stores)
 }
 
+// NewAdminFSAHandler is newAdminFSAHandler.
+func NewAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
+	return newAdminFSAHandler(stores)
+}
+
 // NewAdminDERControlHandler is newAdminDERControlHandler.
 func NewAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 	return newAdminDERControlHandler(stores)

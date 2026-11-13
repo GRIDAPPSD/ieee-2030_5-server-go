@@ -4,6 +4,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -12,10 +13,10 @@ import (
 // NewStores builds a fully populated, pure in-memory store set.
 //
 // Every field is non-nil except the optional FlowReservationQueue and
-// DERControlIssuer, which the assembly builds itself when nil. That matters:
-// core treats a nil store field as "skip those routes", so a partially
-// populated set does not fail loudly, it serves a quietly smaller protocol
-// surface. A consumer that wants persistence or pre-seeded contents builds its
+// DERControlIssuer, which the assembly builds when nil. DERWrites is built
+// here because the admin plane refuses a set without one. That matters: core
+// treats a nil store field as "skip those routes", so a partially populated
+// set does not fail loudly, it serves a quietly smaller protocol surface. A consumer that wants persistence or pre-seeded contents builds its
 // own set and passes it as [Config.Stores]; this is the baseline that makes
 // the simple case a one-liner.
 //
@@ -73,6 +74,7 @@ func NewStores() *assembly.Stores {
 		FlowReservationResponseLifecycles: responseLifecycles,
 		FlowReservationAnswers:            responseAnswers,
 	}
+	s.DERWrites = &derwrite.Owner{}
 	s.CommitmentLedger = sources.NewLedger(
 		s.EndDevices, s.EndDeviceManagers,
 		s.FlowReservationResponses, s.FlowReservationResponseLifecycles,

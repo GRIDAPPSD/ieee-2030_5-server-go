@@ -147,6 +147,7 @@ var readerStoresExcludedFields = map[string]string{
 	"Edition2023":          "edition config read by the serve-time status derivation, not a store",
 	"FlowReservationQueue": "a timer-holding service the server closes, not resource data",
 	"DERControlIssuer":     "a lock-holding write service, not resource data",
+	"DERWrites":            "a lock-holding write service, not resource data",
 }
 
 // TestNewReaderStoresWiresEveryMirroredField fails when a field is added to

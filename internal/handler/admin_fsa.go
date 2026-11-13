@@ -11,10 +11,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
@@ -84,9 +84,20 @@ type AdminFSAHandler struct {
 	Managers     store.EndDeviceManagementReader
 	FleetDevices FleetDeviceLookup
 
-	// programMu serializes every program write with assignments, so a device
-	// assigned while a template is created gets exactly one copy of it.
-	programMu sync.Mutex
+	// DERWrites owns the lock that serializes every program write with
+	// assignments, so a device assigned while a template is created gets
+	// exactly one copy of it. Production wiring sets the process's one owner;
+	// a nil owner is a wiring bug, so a write panics rather than lock a
+	// private copy that excludes nothing.
+	DERWrites *derwrite.Owner
+}
+
+// writes is the owner whose lock every program write takes.
+func (h *AdminFSAHandler) writes() *derwrite.Owner {
+	if h.DERWrites == nil {
+		panic("handler: AdminFSAHandler.DERWrites is nil; wiring must set the process's one derwrite.Owner")
+	}
+	return h.DERWrites
 }
 
 // DeviceFSAWriter mirrors the slice of *memory.ScopedStore[FSA] surface
@@ -378,8 +389,8 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		if fault := h.assignLocked(r, deviceID, fsaID, fsa, fsaprogram.RefuseIfAssigned); fault != nil {
 			fault.answer(w)
@@ -411,8 +422,8 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		if fault := h.unassignLocked(r, deviceID, fsaID); fault != nil {
 			fault.answer(w)

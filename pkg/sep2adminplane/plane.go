@@ -30,6 +30,9 @@ var (
 	ErrNoAllowedHosts = errors.New("sep2adminplane: no allowed hosts")
 	// ErrNoStores: Stores is nil.
 	ErrNoStores = errors.New("sep2adminplane: no stores")
+	// ErrNoDERWrites: Stores.DERWrites is nil, so the admin handlers would
+	// each lock a private owner that excludes nothing.
+	ErrNoDERWrites = errors.New("sep2adminplane: Stores.DERWrites is nil")
 	// ErrShortCredential: AdminKey is shorter than MinAdminKeyLength.
 	ErrShortCredential = errors.New("sep2adminplane: admin key is too short")
 	// ErrBlankAllowedHost: an AllowedHosts entry is blank.
@@ -165,6 +168,9 @@ func New(cfg Config) (*Plane, error) {
 	}
 	if cfg.Stores == nil {
 		return nil, ErrNoStores
+	}
+	if cfg.Stores.DERWrites == nil {
+		return nil, ErrNoDERWrites
 	}
 	if cfg.ReadOnly && cfg.ControlWrites {
 		return nil, ErrReadOnlyWithControlWrites

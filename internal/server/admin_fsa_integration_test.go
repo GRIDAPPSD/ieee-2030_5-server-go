@@ -13,6 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -31,6 +32,7 @@ func setupAdminRouter(t *testing.T) (*server.Stores, http.Handler) {
 		FSAs:        memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		DERPrograms: memory.NewDERProgramStore(),
 		AdminFSAs:   memory.NewAdminFSAStore(),
+		DERWrites:   &derwrite.Owner{},
 	}
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	router, _ := adminplane.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, nil)

@@ -161,8 +161,8 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 
 		// Held through the write, so no device is assigned or unassigned
 		// between reading the FSA's devices and writing their copies.
-		fh.programMu.Lock()
-		defer fh.programMu.Unlock()
+		fh.writes().Lock()
+		defer fh.writes().Unlock()
 		ctx := r.Context()
 		t, ok := fh.lookupTemplate(w, r, fsaID, tmplID)
 		if !ok {
@@ -411,8 +411,8 @@ func (h *AdminFSAControlHandler) HandleCancel() http.HandlerFunc {
 
 		// Held so no device is assigned, and handed a live replica, while
 		// the copies are being cancelled.
-		fh.programMu.Lock()
-		defer fh.programMu.Unlock()
+		fh.writes().Lock()
+		defer fh.writes().Unlock()
 		ctx := r.Context()
 		t, ok := fh.lookupTemplate(w, r, fsaID, tmplID)
 		if !ok {
@@ -503,7 +503,7 @@ type cancelResult struct {
 
 // cancelControl is the one cancel of an FSA control: every copy is cancelled
 // before the record, so a cancel that stops partway leaves the record live and
-// a retry finishes it. The caller holds programMu and has checked rec with
+// a retry finishes it. The caller holds the DER write lock and has checked rec with
 // cancelRefusal. Its errors are *cancelStopError and *recordCancelError.
 func (h *AdminFSAControlHandler) cancelControl(ctx context.Context, fsaID string, rec memory.FSAControl, reason string) (cancelResult, error) {
 	ch, fh := h.Controls, h.FSAs

@@ -15,6 +15,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -95,7 +96,7 @@ func bootFSAWire(t *testing.T, dir string, failCreateAt int) *fsaWireServer {
 	pen := fsaWirePEN
 	issuer, err := dercontrol.NewIssuer(programs, issuerControls, lifecycles, dercontrol.Config{PEN: &pen})
 	must(err)
-	fsaH := &handler.AdminFSAHandler{
+	fsaH := &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{},
 		AdminFSAs:  admin,
 		DeviceFSAs: stores.FSAs,
 		EndDevices: stores.EndDevices,

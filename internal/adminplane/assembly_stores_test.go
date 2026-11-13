@@ -5,6 +5,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -28,6 +29,7 @@ func TestStoresFromAssemblyHoldsTheSameInstances(t *testing.T) {
 		FlowReservationResponses:          memory.NewScopedStore[sep2.FlowReservationResponse](),
 		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 		FlowReservationAnswers:            memory.NewScopedStore[flowreservation.AnswerRecord](),
+		DERWrites:                         &derwrite.Owner{},
 	}
 	out, err := StoresFromAssembly(in)
 	if err != nil {
@@ -49,6 +51,7 @@ func TestStoresFromAssemblyHoldsTheSameInstances(t *testing.T) {
 		{"FlowReservationResponses", out.FlowReservationResponses, in.FlowReservationResponses},
 		{"FlowReservationResponseLifecycles", out.FlowReservationResponseLifecycles, in.FlowReservationResponseLifecycles},
 		{"FlowReservationAnswers", out.FlowReservationAnswers, in.FlowReservationAnswers},
+		{"DERWrites", out.DERWrites, in.DERWrites},
 	}
 	for _, s := range same {
 		if s.got != s.want {

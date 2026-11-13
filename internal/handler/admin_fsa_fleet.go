@@ -66,8 +66,8 @@ func (h *AdminFSAHandler) deleteFleet(w http.ResponseWriter, r *http.Request, fs
 		h.serverManagedRefused(w, fsaID)
 		return
 	}
-	h.programMu.Lock()
-	defer h.programMu.Unlock()
+	h.writes().Lock()
+	defer h.writes().Unlock()
 
 	// Fail closed: a lookup that cannot answer never reads as "gone".
 	managed, err := h.Managers.ManagedBy(ctx, aggregatorLFDI)
@@ -125,12 +125,12 @@ func (h *AdminFSAHandler) FleetFSA(r *http.Request, aggregatorLFDI string) (stri
 	if aggregatorLFDI == "" {
 		return "", errors.New("fleet FSA: aggregator LFDI required")
 	}
-	h.programMu.Lock()
-	defer h.programMu.Unlock()
+	h.writes().Lock()
+	defer h.writes().Unlock()
 	return h.fleetFSALocked(r, aggregatorLFDI)
 }
 
-// fleetFSALocked is FleetFSA for a caller that holds programMu.
+// fleetFSALocked is FleetFSA for a caller that holds the DER write lock.
 func (h *AdminFSAHandler) fleetFSALocked(r *http.Request, aggregatorLFDI string) (string, error) {
 	fsaID, err := h.ensureFleetFSA(r, aggregatorLFDI)
 	if err != nil {
@@ -143,7 +143,7 @@ func (h *AdminFSAHandler) fleetFSALocked(r *http.Request, aggregatorLFDI string)
 }
 
 // ensureFleetFSA returns the aggregator's fleet FSA id after creating the FSA,
-// or its program template, when either is missing. The caller holds programMu.
+// or its program template, when either is missing. The caller holds the DER write lock.
 func (h *AdminFSAHandler) ensureFleetFSA(r *http.Request, aggregatorLFDI string) (string, error) {
 	ctx := r.Context()
 	fsaID, ok := h.AdminFSAs.FleetFSA(aggregatorLFDI)
@@ -217,7 +217,7 @@ func (h *AdminFSAHandler) fleetWant(ctx context.Context, aggregatorLFDI string) 
 }
 
 // reconcileFleet makes fsaID's assigned devices equal fleetWant. The caller
-// holds programMu. A failed device is a *FleetDeviceError in the joined
+// holds the DER write lock. A failed device is a *FleetDeviceError in the joined
 // error and does not stop the others; the next call converges from whatever
 // was written.
 func (h *AdminFSAHandler) reconcileFleet(r *http.Request, fsaID, aggregatorLFDI string) error {

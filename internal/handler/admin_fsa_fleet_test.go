@@ -271,7 +271,7 @@ func (failingManagers) ManagedBy(context.Context, string) ([]string, error) {
 	return nil, errors.New("pairs unreadable")
 }
 
-// Reconciles and operator assignments all take programMu, so a pair change
+// Reconciles and operator assignments all take the DER write lock, so a pair change
 // racing reconciles ends with exactly the managed devices assigned, one fleet
 // FSA, and every operator assignment to the fleet refused.
 func TestFleetFSA_ConcurrentReconcilesAndAssignsLeaveTheManagedSet(t *testing.T) {

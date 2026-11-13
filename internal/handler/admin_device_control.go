@@ -165,8 +165,8 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 
 		// The lock is held through the issue: the writes before it are undone
 		// if the issue fails, and nothing else may see or edit them meanwhile.
-		fh.programMu.Lock()
-		defer fh.programMu.Unlock()
+		fh.writes().Lock()
+		defer fh.writes().Unlock()
 		tx := &deviceTxn{}
 		defer tx.finish(fh, r)
 

@@ -1,8 +1,11 @@
 package devicelog
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -131,4 +134,45 @@ func TestResponseStore_DeleteNotesTheRemovedResponse(t *testing.T) {
 			t.Errorf("fields after failed Delete = %v, want none", got)
 		}
 	})
+}
+
+type failingGet struct {
+	*memory.ScopedStore[sep2.Response]
+}
+
+func (failingGet) Get(context.Context, string, string) (sep2.Response, error) {
+	return sep2.Response{}, errors.New("read boom")
+}
+
+// A Response that cannot be read before its delete is still deleted, notes
+// no facts, and the read failure is logged rather than lost. Not parallel: it
+// swaps the process-wide log output.
+func TestResponseStore_DeleteLogsAFailedRead(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	inner := memory.NewScopedStore[sep2.Response]()
+	if err := inner.Create(context.Background(), "1", "r", sep2.Response{EndDeviceLFDI: lfdiB}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewResponseStore(failingGet{inner}, fixedIdentity(lfdiA, true))
+	ctx, note := WithNote(context.Background())
+	if err := s.Delete(ctx, "1", "r"); err != nil {
+		t.Fatalf("Delete = %v, want nil", err)
+	}
+	if got := note.Fields(); len(got) != 0 {
+		t.Errorf("fields after an unreadable Response = %v, want none", got)
+	}
+	if _, err := inner.Get(context.Background(), "1", "r"); err == nil {
+		t.Error("Response still stored after Delete")
+	}
+	if out := buf.String(); !strings.Contains(out, "read boom") {
+		t.Errorf("log = %q, want the read failure", out)
+	}
 }

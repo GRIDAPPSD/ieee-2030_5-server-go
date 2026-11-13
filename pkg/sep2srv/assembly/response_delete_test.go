@@ -119,6 +119,14 @@ func TestDeleteResponseManager(t *testing.T) {
 	if status, _ := gateRequest(t, srv, http.MethodDelete, href, unmanagedLFDI, ""); status != http.StatusForbidden {
 		t.Fatalf("DELETE by an unrelated device = %d, want 403", status)
 	}
+	// A manager of one device has no say over a Response naming another.
+	unmanagedHref := postResponseAt(t, srv, unmanagedLFDI, responseBody(unmanagedLFDI, rspSubject, "4"))
+	if status, _ := gateRequest(t, srv, http.MethodDelete, unmanagedHref, managerLFDI, ""); status != http.StatusForbidden {
+		t.Fatalf("DELETE by a manager of another device = %d, want 403", status)
+	}
+	if status, _ := gateRequest(t, srv, http.MethodGet, unmanagedHref, unmanagedLFDI, ""); status != http.StatusOK {
+		t.Errorf("GET after the refused delete = %d, want 200", status)
+	}
 	if status, _ := gateRequest(t, srv, http.MethodDelete, href, managerLFDI, ""); status != http.StatusNoContent {
 		t.Fatalf("DELETE by the device's manager = %d, want 204", status)
 	}
@@ -145,17 +153,21 @@ func TestDeleteResponseManager(t *testing.T) {
 			del["status"], del["subject"], del["rspStatus"], del["target"], rspSubject, victimLFDI)
 	}
 	_, other := readLogLines(t, filepath.Join(dir, unmanagedLFDI+".jsonl"))
+	var refused map[string]any
 	for _, l := range other {
-		if l["method"] != http.MethodDelete {
-			continue
+		if l["method"] == http.MethodDelete {
+			refused = l
 		}
-		if l["status"] != 403.0 {
-			t.Errorf("refused DELETE line status = %v, want 403", l["status"])
-		}
-		for _, k := range []string{"subject", "subjectInvalid", "rspStatus", "target"} {
-			if _, has := l[k]; has {
-				t.Errorf("refused DELETE line carries %s = %v, want none", k, l[k])
-			}
+	}
+	if refused == nil {
+		t.Fatalf("unrelated device's file has no DELETE line: %v", other)
+	}
+	if refused["status"] != 403.0 {
+		t.Errorf("refused DELETE line status = %v, want 403", refused["status"])
+	}
+	for _, k := range []string{"subject", "subjectInvalid", "rspStatus", "target"} {
+		if _, has := refused[k]; has {
+			t.Errorf("refused DELETE line carries %s = %v, want none", k, refused[k])
 		}
 	}
 }

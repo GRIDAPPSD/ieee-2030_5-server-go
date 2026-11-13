@@ -53,7 +53,7 @@ pkg/sep2srv/assembly/ownership.go 6
 pkg/sep2srv/handlers/der/links.go 2
 pkg/sep2srv/handlers/der/program_link_count.go 2
 pkg/sep2srv/handlers/enddevice/owner.go 6
-pkg/sep2srv/handlers/flow_reservation/flow_reservation.go 6
+pkg/sep2srv/handlers/flow_reservation/flow_reservation.go 2
 pkg/sep2srv/handlers/metering/mirror.go 8
 pkg/sep2srv/srverr/srverr.go 2
 pkg/store/memory/enddevice.go 2

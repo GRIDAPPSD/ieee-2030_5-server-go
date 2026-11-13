@@ -14,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
@@ -444,19 +445,7 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 				http.Error(w, "endDeviceLFDI must be 40 hexadecimal digits", http.StatusBadRequest)
 				return
 			}
-			allowed, sender := false, ""
-			if authorize != nil {
-				allowed, sender, err = authorize(r, lfdi)
-				if err != nil {
-					srverr.Internal(w, r, err)
-					return
-				}
-			}
-			if !allowed {
-				// lfdi is canonical hex and sender a certificate identity;
-				// the path is quoted because it is decoded request text.
-				log.Printf("rsps: refused a Response for endDeviceLFDI %s from sender %s: neither the sender nor a device it manages (%s %q)", lfdi, sender, r.Method, r.URL.Path)
-				http.Error(w, "endDeviceLFDI is not the sender or a device it manages", http.StatusForbidden)
+			if !admitResponseCaller(w, r, authorize, lfdi) {
 				return
 			}
 			rsp.EndDeviceLFDI = lfdi
@@ -504,19 +493,7 @@ func HandleDeleteResponse(rspStore store.ScopedStore[sep2.Response], authorize R
 			return
 		}
 
-		allowed, sender := false, ""
-		if lfdi, ok := sep2lfdi.Canonical(rsp.EndDeviceLFDI); ok && authorize != nil {
-			allowed, sender, err = authorize(r, lfdi)
-			if err != nil {
-				srverr.Internal(w, r, err)
-				return
-			}
-		}
-		if !allowed {
-			// sender is a certificate identity; the path is quoted because it
-			// is decoded request text.
-			log.Printf("rsps: refused deleting a Response from sender %s: neither the sender nor a manager of the device it names (%s %q)", sender, r.Method, r.URL.Path)
-			http.Error(w, "the Response does not name the sender or a device it manages", http.StatusForbidden)
+		if !admitResponseCaller(w, r, authorize, rsp.EndDeviceLFDI) {
 			return
 		}
 
@@ -532,11 +509,44 @@ func HandleDeleteResponse(rspStore store.ScopedStore[sep2.Response], authorize R
 	}
 }
 
-// ResponseSenderAuthorizer reports whether the sender of r may post a
-// Response naming endDeviceLFDI (canonical uppercase): the sender's own
+// admitResponseCaller is the one authorization step POST and DELETE share. It
+// reports whether the caller may act on a Response naming endDeviceLFDI, and
+// has already written the 403 or 500 answer when it reports false. An
+// LFDI that is not canonical hex names no usable device and is refused 403:
+// POST rejects malformed request text with 400 before it gets here, so only
+// a stored value can arrive malformed, and that is not the caller's fault.
+// The refusal log names its cause.
+func admitResponseCaller(w http.ResponseWriter, r *http.Request, authorize ResponseSenderAuthorizer, endDeviceLFDI string) bool {
+	lfdi, named := sep2lfdi.Canonical(endDeviceLFDI)
+	cause, sender := "Response names no device", ""
+	switch {
+	case !named:
+	case authorize == nil:
+		cause = "no identity configured"
+	default:
+		allowed, who, err := authorize(r, lfdi)
+		if err != nil {
+			srverr.Internal(w, r, err)
+			return false
+		}
+		if allowed {
+			return true
+		}
+		cause, sender = "caller not admitted", who
+	}
+	if !named {
+		lfdi = "none"
+	}
+	log.Printf("rsps: refused a Response for endDeviceLFDI %s from sender %s: %s (%s %s)", logsafe.Str(lfdi), logsafe.Str(sender), logsafe.Str(cause), logsafe.Str(r.Method), logsafe.Quote(r.URL.Path))
+	http.Error(w, "the Response does not name the sender or a device it manages", http.StatusForbidden)
+	return false
+}
+
+// ResponseSenderAuthorizer reports whether the sender of r may post or delete
+// a Response naming endDeviceLFDI (canonical uppercase): the sender's own
 // device, or one it manages. sender is the sender's LFDI for the refusal
 // log, or "" when the request carries no identity. A non-nil error means
-// the check could not complete, and the POST answers 500.
+// the check could not complete, and the request answers 500.
 type ResponseSenderAuthorizer func(r *http.Request, endDeviceLFDI string) (allowed bool, sender string, err error)
 
 // responseRoot returns the local name of body's root element, or "" when it

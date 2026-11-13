@@ -275,6 +275,7 @@ func bootCORE014(t *testing.T, extraOpts []csiptest.BootOption) (*csiptest.Boote
 		csiptest.WithDeviceIdentity(owner),
 	}, extraOpts...)
 	srv := csiptest.BootServer(t, allOpts...)
+	seedDERRecord(t, srv.Stores.DERs, fixtureEndDeviceID, "0")
 
 	return srv, buildClient(t, srv.RootCA, owner.Cert)
 }

@@ -16,8 +16,9 @@
 //
 // The fixture (aggregator-topology.yaml) does NOT pre-seed the DER
 // singletons - they are written exclusively by the test, per the V1.2
-// commissioning procedure. Singleton handlers create-or-update, so
-// PUT-without-prior-GET is the spec's first-commissioning flow.
+// commissioning procedure. The test seeds each inverter's DER record first,
+// since a sub-resource PUT under a missing DER answers 404; the singleton
+// itself is created by the first PUT.
 //
 // derId is "0" for all inverters by convention (one DER per managed
 // inverter); the fixture's per-inverter DERListLink advertises all=1.
@@ -58,6 +59,9 @@ func TestUTIL_002_Commissioning(t *testing.T) {
 
 	srv := bootAggregatorTopology(t)
 	client := srv.Client()
+	for _, edevID := range aggManagedInverters {
+		seedDERRecord(t, srv.Stores.DERs, edevID, utilDERID)
+	}
 
 	// Step 1: GET /edev -> EndDeviceList.
 	dcap, err := client.GetDeviceCapability(ctx)

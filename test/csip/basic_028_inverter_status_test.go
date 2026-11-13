@@ -90,6 +90,7 @@ func TestBASIC_028_InverterStatus(t *testing.T) {
 	const edevID = "statusdev"
 	const derID = "der1"
 	seedOwnedEndDevice(t, srv.Stores.EndDevices, edevID, owner)
+	seedDERRecord(t, srv.Stores.DERs, edevID, derID)
 	dersPath := fmt.Sprintf("/edev/%s/der/%s/ders", edevID, derID)
 
 	// Step 2: PUT a populated DERStatus. Values are deterministic so

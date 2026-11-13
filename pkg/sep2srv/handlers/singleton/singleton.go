@@ -14,6 +14,19 @@ import (
 // SingletonKey is the fixed key used for singleton sub-resources.
 const SingletonKey = "default"
 
+// Option adjusts a singleton handler.
+type Option[T any] func(*options[T])
+
+type options[T any] struct {
+	stamp func(r *http.Request, resource *T)
+}
+
+// WithStamp sets fields of a PUT body from the request path before it is
+// stored, so a client cannot choose them (the self href above all).
+func WithStamp[T any](stamp func(r *http.Request, resource *T)) Option[T] {
+	return func(o *options[T]) { o.stamp = stamp }
+}
+
 // HandleSingletonGetPut creates a handler for GET/PUT on a singleton
 // resource scoped under a parent. Used for DERCapability, DERSettings,
 // DERStatus, DERAvailability, DefaultDERControl.
@@ -24,7 +37,12 @@ func HandleSingletonGetPut[T store.Copier[T]](
 	scopedStore store.ScopedStore[T],
 	parentKeyFunc func(r *http.Request) string,
 	defaultFactory func(r *http.Request) T,
+	opts ...Option[T],
 ) http.HandlerFunc {
+	var o options[T]
+	for _, opt := range opts {
+		opt(&o)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		parentKey := parentKeyFunc(r)
 
@@ -54,6 +72,10 @@ func HandleSingletonGetPut[T store.Copier[T]](
 			if err := xml.Unmarshal(body, &resource); err != nil {
 				srverr.BadRequestMessage(w, r, "invalid XML", err)
 				return
+			}
+
+			if o.stamp != nil {
+				o.stamp(r, &resource)
 			}
 
 			// Try create first, update if already exists

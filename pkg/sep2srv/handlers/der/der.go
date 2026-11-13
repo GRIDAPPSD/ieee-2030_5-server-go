@@ -160,33 +160,47 @@ func DERSingletonHandlers(
 		return r.PathValue("id") + "/" + r.PathValue("derId")
 	}
 
+	dercapHref := func(r *http.Request) string {
+		return fmt.Sprintf("/edev/%s/der/%s/dercap", r.PathValue("id"), r.PathValue("derId"))
+	}
 	dercap = coresingleton.HandleSingletonGetPut[sep2.DERCapability](caps, derParentKey,
 		func(r *http.Request) sep2.DERCapability {
-			return sep2.DERCapability{Resource: sep2.Resource{
-				Href: fmt.Sprintf("/edev/%s/der/%s/dercap", r.PathValue("id"), r.PathValue("derId")),
-			}}
-		})
+			return sep2.DERCapability{Resource: sep2.Resource{Href: dercapHref(r)}}
+		},
+		coresingleton.WithStamp(func(r *http.Request, c *sep2.DERCapability) { c.Href = dercapHref(r) }))
 
+	dergHref := func(r *http.Request) string {
+		return fmt.Sprintf("/edev/%s/der/%s/derg", r.PathValue("id"), r.PathValue("derId"))
+	}
 	derg = coresingleton.HandleSingletonGetPut[sep2.DERSettings](settings, derParentKey,
 		func(r *http.Request) sep2.DERSettings {
 			s := sep2.DERSettings{}
-			s.Href = fmt.Sprintf("/edev/%s/der/%s/derg", r.PathValue("id"), r.PathValue("derId"))
+			s.Href = dergHref(r)
 			return s
-		})
+		},
+		coresingleton.WithStamp(func(r *http.Request, s *sep2.DERSettings) { s.Href = dergHref(r) }))
 
+	dersHref := func(r *http.Request) string {
+		return fmt.Sprintf("/edev/%s/der/%s/ders", r.PathValue("id"), r.PathValue("derId"))
+	}
 	ders = coresingleton.HandleSingletonGetPut[sep2.DERStatus](statuses, derParentKey,
 		func(r *http.Request) sep2.DERStatus {
 			s := sep2.DERStatus{}
-			s.Href = fmt.Sprintf("/edev/%s/der/%s/ders", r.PathValue("id"), r.PathValue("derId"))
+			s.Href = dersHref(r)
 			return s
-		})
+		},
+		coresingleton.WithStamp(func(r *http.Request, s *sep2.DERStatus) { s.Href = dersHref(r) }))
 
+	deraHref := func(r *http.Request) string {
+		return fmt.Sprintf("/edev/%s/der/%s/dera", r.PathValue("id"), r.PathValue("derId"))
+	}
 	dera = coresingleton.HandleSingletonGetPut[sep2.DERAvailability](avails, derParentKey,
 		func(r *http.Request) sep2.DERAvailability {
 			s := sep2.DERAvailability{}
-			s.Href = fmt.Sprintf("/edev/%s/der/%s/dera", r.PathValue("id"), r.PathValue("derId"))
+			s.Href = deraHref(r)
 			return s
-		})
+		},
+		coresingleton.WithStamp(func(r *http.Request, s *sep2.DERAvailability) { s.Href = deraHref(r) }))
 
 	return
 }

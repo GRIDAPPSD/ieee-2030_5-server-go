@@ -1233,14 +1233,16 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		mux.HandleFunc("GET /edev/{id}/der/{derId}/upt", associatedUsagePointHandler(stores.DERs, stores.UsagePoints))
 	}
 
+	// A first write under an existing DER creates its singleton; under a DER
+	// that is not stored it answers 404 and creates nothing.
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dercap", dercap)
-	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dercap", dercap)
+	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dercap", requireParent(derExists(stores.DERs), dercap))
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/derg", derg)
-	mux.HandleFunc("PUT /edev/{id}/der/{derId}/derg", derg)
+	mux.HandleFunc("PUT /edev/{id}/der/{derId}/derg", requireParent(derExists(stores.DERs), derg))
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/ders", ders)
-	mux.HandleFunc("PUT /edev/{id}/der/{derId}/ders", ders)
+	mux.HandleFunc("PUT /edev/{id}/der/{derId}/ders", requireParent(derExists(stores.DERs), ders))
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dera", dera)
-	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dera", dera)
+	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dera", requireParent(derExists(stores.DERs), dera))
 
 	// DERProgram under FSA. The handle is the configured store itself, not
 	// something reached out of it: the route used to take the *ScopedStore that

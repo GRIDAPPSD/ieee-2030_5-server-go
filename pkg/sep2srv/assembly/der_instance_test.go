@@ -343,45 +343,43 @@ func TestDERInstance_PUTStoresTheServersOwnHrefAndDropsUnservedLinks(t *testing.
 	assertDERLinks(t, got, path)
 }
 
-// TestDERInstance_PUTCreatesAtTheIDThePathNames asserts PUT upserts without
-// inventing an id: the resource lands at the derId in the request path and
-// nowhere else.
-func TestDERInstance_PUTCreatesAtTheIDThePathNames(t *testing.T) {
+// TestDERInstance_PUTIsUpdateOnlyAndNeverCreates: a PUT to a derId with no
+// stored DER answers 404 and stores nothing. The id in the path is the client's
+// choice, so an upsert let it pick the key and the stamped href; the encoded
+// traversal below once stored the href /edev/7/der/../../d9/dstat.
+func TestDERInstance_PUTIsUpdateOnlyAndNeverCreates(t *testing.T) {
 	t.Parallel()
 
 	srv, stores := derInstanceServer(t)
 	seedDER(t, stores, "7", "3")
 
-	path := derHref("7", "8")
-	req, err := http.NewRequest(http.MethodPut, srv.URL+path,
-		strings.NewReader(`<DER xmlns="urn:ieee:std:2030.5:ns"/>`))
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("PUT: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("PUT status = %d, want 204", resp.StatusCode)
+	for _, path := range []string{
+		derHref("7", "8"),
+		derHref("7", "..%2F..%2Fd9%2Fdstat"),
+		derHref("7", "%2E%2E"),
+		derHref("7", "3%2Fx"),
+	} {
+		req, err := http.NewRequest(http.MethodPut, srv.URL+path,
+			strings.NewReader(`<DER xmlns="urn:ieee:std:2030.5:ns"/>`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("PUT %s status = %d, want 404 and no DER created", path, resp.StatusCode)
+		}
 	}
 
-	stored, err := stores.DERs.Get(context.Background(), "7", "8")
+	res, err := stores.DERs.List(context.Background(), "7", store.ListOptions{Unbounded: true})
 	if err != nil {
-		t.Fatalf("the PUT did not store a DER at derId 8: %v", err)
+		t.Fatalf("list DERs of 7: %v", err)
 	}
-	if stored.Href != path {
-		t.Errorf("stored Href = %q, want %q", stored.Href, path)
-	}
-	if stored.DERCapabilityLink == nil || stored.DERCapabilityLink.Href != path+"/dercap" {
-		t.Errorf("stored DERCapabilityLink = %+v, want href %q", stored.DERCapabilityLink, path+"/dercap")
-	}
-	// The DER that was already there is untouched.
-	if other, err := stores.DERs.Get(context.Background(), "7", "3"); err != nil {
-		t.Errorf("the pre-existing DER 3 disappeared: %v", err)
-	} else if other.Href != derHref("7", "3") {
-		t.Errorf("DER 3 Href = %q, want %q", other.Href, derHref("7", "3"))
+	if len(res.Items) != 1 || res.Items[0].Href != derHref("7", "3") {
+		t.Errorf("device 7 holds %d DERs %+v after the refused PUTs, want only the seeded /edev/7/der/3", len(res.Items), res.Items)
 	}
 }
 

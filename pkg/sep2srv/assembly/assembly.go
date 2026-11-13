@@ -1212,7 +1212,8 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	//
 	// PUT is mode O in the WADL (sep_wadl.xml:4116) but on the certified path:
 	// SunSpec CTP CORE-014 and CORE-016 walk DERList through to the DER and PUT
-	// to these resources. GET and PUT share ONE handler value so the two verbs
+	// to these resources. It replaces a DER that exists and never creates one,
+	// so a client cannot choose the key or the stamped href. GET and PUT share ONE handler value so the two verbs
 	// cannot drift into different scope derivations, the same reason the four
 	// sub-resources above are registered as pairs against one handler.
 	//
@@ -1220,7 +1221,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// to a 405 carrying an Allow header derived from itemMethods, which section
 	// 4.3 c) 4) requires and an unmounted path could not produce: it would 404.
 	derInstance := scopedResourceHandler[sep2.DER](
-		stores.DERs, "id", "derId", itemMethods{Put: true}, coreder.StampDERInstance(derLinks),
+		stores.DERs, "id", "derId", itemMethods{PutUpdateOnly: true}, coreder.StampDERInstance(derLinks),
 	)
 	mux.HandleFunc("GET /edev/{id}/der/{derId}", derInstance)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}", derInstance)

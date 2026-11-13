@@ -1166,7 +1166,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// Its ActiveDERControlListLink is served because the actderc route below
 	// is mounted, and counts the same controls that route lists.
 	activeControls := coreder.NewActiveControlStore(derControls)
-	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls).WithActiveList(activeControls)
+	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls).WithActiveList(activeControls).WithCurveList(derCurves)
 
 	// The protocol routes below read through these two, which note the served
 	// mRIDs on the request's device log line. derPrograms above counts the
@@ -1197,6 +1197,11 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		Settings:     true,
 		Status:       true,
 		Availability: true,
+		// The associated program list is mounted below for every DER. The two
+		// record-backed links are advertised only on a DER that stores one.
+		AssociatedPrograms:   true,
+		CurrentProgram:       true,
+		AssociatedUsagePoint: stores.serves(famUsagePoints),
 	}
 
 	// The four DER lists below are served in the Table 50 order section 4.6.1
@@ -1225,6 +1230,14 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}/der/{derId}", derInstance)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}", derInstance)
 
+	// The DER's program associations, resolved against the DER as stored.
+	unscopedDER := newUnscopedProgramWarnings(log.Printf)
+	mux.HandleFunc("GET /edev/{id}/der/{derId}/derp", associatedProgramListHandler(stores.DERs, derPrograms, unscopedDER))
+	mux.HandleFunc("GET /edev/{id}/der/{derId}/cdp", currentProgramHandler(stores.DERs, derPrograms, unscopedDER))
+	if stores.serves(famUsagePoints) {
+		mux.HandleFunc("GET /edev/{id}/der/{derId}/upt", associatedUsagePointHandler(stores.DERs, stores.UsagePoints))
+	}
+
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dercap", dercap)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dercap", dercap)
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/derg", derg)
@@ -1251,6 +1264,10 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// exposes no write route for a single DERProgram, mirroring the DERControl
 	// single-resource route just below.
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}", derProgramHandler(derPrograms, unscoped))
+
+	// The curve catalog under a program, and one curve at its program-scoped href.
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc", programCurveListHandler(derCurves, derPrograms, unscoped))
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc/{dcId}", programCurveHandler(derCurves, derPrograms, unscoped))
 
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
@@ -1550,11 +1567,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 		case r.Method == http.MethodGet, r.Method == http.MethodHead:
 			resource, err := scopedStore.Get(r.Context(), parentKey, id)
 			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				}
-				srverr.Internal(w, r, err)
+				writeLookupFailure(w, r, err)
 				return
 			}
 			if stamp != nil {
@@ -1583,11 +1596,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 				// One Update, no Create: a DELETE that wins the race is a 404,
 				// and the client's id never becomes a new key.
 				if err := scopedStore.Update(r.Context(), parentKey, id, resource); err != nil {
-					if errors.Is(err, store.ErrNotFound) {
-						http.Error(w, "not found", http.StatusNotFound)
-						return
-					}
-					srverr.Internal(w, r, err)
+					writeLookupFailure(w, r, err)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -1610,11 +1619,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 			// there tells a client its delete took effect, and a client that
 			// believes a stale event is gone stops reconciling it.
 			if err := scopedStore.Delete(r.Context(), parentKey, id); err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				}
-				srverr.Internal(w, r, err)
+				writeLookupFailure(w, r, err)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -1700,17 +1705,23 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(flatReadingTypes))
 }
 
+// writeLookupFailure answers a failed store read: store.ErrNotFound is the
+// only error that may say "absent" (404); any other is a 500.
+func writeLookupFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	srverr.Internal(w, r, err)
+}
+
 // requireParent runs exists before next and answers 404 when the parent it
 // checks is absent, so a list under a missing parent is not served as an empty
 // 200. A failed check is a 500: only store.ErrNotFound may say "absent".
 func requireParent(exists func(r *http.Request) error, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := exists(r); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			srverr.Internal(w, r, err)
+			writeLookupFailure(w, r, err)
 			return
 		}
 		next(w, r)

@@ -270,6 +270,11 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/actderc":       true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}": true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc":         true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc":            true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc/{dcId}":     true,
+	"GET /edev/{id}/der/{derId}/derp":                        true,
+	"GET /edev/{id}/der/{derId}/cdp":                         true,
+	"GET /edev/{id}/der/{derId}/upt":                         true,
 	// The PUT route a closed defect (#456) once refused was removed from the
 	// mux entirely, so no pattern exists here for it to name.
 

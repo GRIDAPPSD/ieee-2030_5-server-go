@@ -2,57 +2,572 @@ package wadl_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/conformance/wadl"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// outsidePolicyCeiling is the number of methods outside the method-mode policy
-// (policy.go): Mandatory and Optional methods that are not conformant, Deprecated
-// methods answering anything but 405 or conformant, and Error methods answering
-// anything but 400 or 405. Methods of a resource the crawl did not reach are not
-// probed and count as outside.
+// expectedGap is what the sweep measures for one WADL resource today. A resource
+// with no entry must be fully inside the method-mode policy (policy.go), reached
+// by the crawl, and refuse the ordinary device on every manager-only write it
+// declares.
 //
-// It is a RATCHET, not a target. The gap it records is real and tracked; pinning
-// it keeps the gap from widening unnoticed. Lower it whenever a fix beats it:
-// TestMethodModePolicyRatchet logs the new value to use.
+// The map below is a RATCHET, not a target: the gap is real and tracked, and
+// pinning it per resource keeps it from widening unnoticed and keeps a fix from
+// going unrecorded. With the schema every field is an equality, so a fix pins
+// its own resource's entry in the PR that makes it and touches no other lines.
+// Write each entry on several lines and lower it to zero rather than deleting it
+// while the epic runs, so neighbouring entries stay separate hunks in a merge.
 //
-// Measured against the server csiptest boots, with the route set core's
-// assembly registers, on 2026-11-05. The manager-only writes go to the device
-// the sweep's manager manages, so they are measured as that manager's own.
-const outsidePolicyCeiling = 404
-
-// outsidePolicyByMode is outsidePolicyCeiling split by wx:mode, so a rise in one
-// mode cannot hide behind a fall in another. The values sum to the total.
-var outsidePolicyByMode = map[wadl.Mode]int{
-	wadl.ModeMandatory:  157,
-	wadl.ModeOptional:   59,
-	wadl.ModeDeprecated: 45,
-	wadl.ModeError:      143,
+// The end state is an empty map and len(outside) == 0: the last slice deletes
+// expectedGaps and this type and the tests assert zero outright.
+//
+// This is names, not a transcription: resource ids are what the standard calls
+// them, and no method list or path is committed.
+type expectedGap struct {
+	// Methods outside the policy, by wx:mode. A method of a resource the crawl
+	// did not reach counts here too, since it is not probed.
+	Mandatory, Optional, Deprecated, Error int
+	// Unreached marks a resource with a Mandatory or Optional method that the
+	// crawl misses though the schema names a link for it.
+	Unreached bool
+	// Unlinked marks a resource with a Mandatory or Optional method that the
+	// schema names no link for, so no crawl reaches it and the sweep probes it at
+	// its sample path. It is a pinned mark: unlinkedMarks checks it against the
+	// schema, and the sweep does not measure it.
+	Unlinked bool
+	// RestrictedNotForbidden counts the manager-only writes probed as the device
+	// that were not refused with a 403 from an authority check.
+	RestrictedNotForbidden int
 }
 
-// The manager-only writes (restrictedWrites) the sweep reaches are probed as the
-// ordinary device. restrictedProbedFloor is how many it reaches, and
-// restrictedNotForbiddenCeiling is how many of those the device is not refused
-// with a 403 from an authority check. Those left are writes no route serves yet,
-// so the mux answers 405 before any check; each gets its refusal with the route
-// that mounts it, and the ceiling falls toward zero as they do. The unreached remainder of the
-// declared writes is not probed and sits in neither number.
-const (
-	restrictedProbedFloor         = 17
-	restrictedNotForbiddenCeiling = 14
-)
-
-// notReachedCeiling is the number of WADL resources with a Mandatory or Optional
-// method that the crawl from /dcap misses though the schema names a link for
-// them, and crawlReachedFloor is how many it finds. A resource served without a
-// link to it counts against the first and cannot raise the second.
-const (
-	notReachedCeiling = 75
-	crawlReachedFloor = 49
-)
+// expectedGaps is measured against the server csiptest boots, with the route set
+// core's assembly registers.
+var expectedGaps = map[string]expectedGap{
+	"AccountBalance": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"ActiveBillingPeriodList": {
+		Mandatory: 2,
+		Error:     3,
+		Unreached: true,
+	},
+	"ActiveDERControlList": {
+		Error: 3,
+	},
+	"ActiveEndDeviceControlList": {
+		Mandatory: 2,
+		Error:     3,
+		Unreached: true,
+	},
+	"ActiveSupplyInterruptionOverrideList": {
+		Mandatory: 2,
+		Error:     3,
+		Unreached: true,
+	},
+	"ActiveTextMessageList": {
+		Error: 1,
+	},
+	"ActiveTimeTariffIntervalList": {
+		Mandatory: 2,
+		Error:     3,
+		Unreached: true,
+	},
+	"AssociatedDERProgramList": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"AssociatedUsagePoint": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"BillingPeriod": {
+		Mandatory:  2,
+		Deprecated: 2,
+		Error:      1,
+		Unreached:  true,
+	},
+	"BillingPeriodList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"BillingReading": {
+		Mandatory:  2,
+		Deprecated: 2,
+		Error:      1,
+		Unreached:  true,
+	},
+	"BillingReadingList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"BillingReadingSet": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"BillingReadingSetList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"ConsumptionTariffInterval": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"ConsumptionTariffIntervalList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"CreditRegister": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"CreditRegisterList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"CurrentDERProgram": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"CustomerAccount": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"CustomerAccountList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"CustomerAgreement": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"CustomerAgreementList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"DER": {
+		Optional: 1,
+	},
+	"DERControl": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DERControlList": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DERControlResponse": {
+		Optional:  3,
+		Unreached: true,
+	},
+	"DERCurve": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DERCurveList": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DERList": {
+		Optional: 1,
+	},
+	"DERProgram": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DERProgramList": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DefaultDERControl": {
+		Optional:               1,
+		Error:                  2,
+		RestrictedNotForbidden: 1,
+	},
+	"DemandResponseProgram": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"DemandResponseProgramList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"DeviceInformation": {
+		Mandatory: 1,
+		Optional:  1,
+		Error:     1,
+	},
+	"DrResponse": {
+		Optional:  3,
+		Unreached: true,
+	},
+	"EndDeviceControl": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"EndDeviceControlList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"File": {
+		Mandatory:  2,
+		Deprecated: 2,
+		Error:      1,
+		Unreached:  true,
+	},
+	"FileList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"FileStatus": {
+		Mandatory: 3,
+		Error:     2,
+		Unreached: true,
+	},
+	"FlowReservationRequest": {
+		Mandatory: 1,
+	},
+	"FlowReservationRequestList": {
+		Mandatory: 1,
+	},
+	"FlowReservationResponseResponse": {
+		Optional:  3,
+		Unreached: true,
+	},
+	"HistoricalReading": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"HistoricalReadingList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"IPAddr": {
+		Mandatory: 2,
+		Optional:  2,
+		Error:     1,
+		Unreached: true,
+	},
+	"IPAddrList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"IPInterface": {
+		Mandatory: 2,
+		Optional:  2,
+		Error:     1,
+		Unreached: true,
+	},
+	"IPInterfaceList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"LLInterface": {
+		Mandatory: 2,
+		Optional:  2,
+		Error:     1,
+		Unreached: true,
+	},
+	"LLInterfaceList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"LoadShedAvailability": {
+		Mandatory: 3,
+		Optional:  1,
+		Error:     1,
+		Unreached: true,
+	},
+	"LoadShedAvailabilityList": {
+		Mandatory: 3,
+		Error:     2,
+		Unreached: true,
+	},
+	"MeterReading": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"MeterReadingList": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"MirrorUsagePoint": {
+		Mandatory: 1,
+	},
+	"MirrorUsagePointList": {
+		Mandatory: 1,
+	},
+	"Neighbor": {
+		Mandatory: 2,
+		Optional:  2,
+		Error:     1,
+		Unreached: true,
+	},
+	"NeighborList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"Notification": {
+		Deprecated: 2,
+		Error:      3,
+	},
+	"NotificationList": {
+		Mandatory: 0,
+		Unlinked:  true,
+	},
+	"PrepayOperationStatus": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"Prepayment": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"PrepaymentList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"PriceResponse": {
+		Optional:  3,
+		Unreached: true,
+	},
+	"PriceResponseCfg": {
+		Mandatory: 4,
+		Error:     1,
+		Unreached: true,
+	},
+	"PriceResponseCfgList": {
+		Mandatory: 3,
+		Error:     2,
+		Unreached: true,
+	},
+	"ProjectionReading": {
+		Mandatory:  2,
+		Deprecated: 2,
+		Error:      1,
+		Unreached:  true,
+	},
+	"ProjectionReadingList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"RPLInstance": {
+		Mandatory: 2,
+		Optional:  2,
+		Error:     1,
+		Unreached: true,
+	},
+	"RPLInstanceList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"RPLSourceRoutes": {
+		Mandatory: 2,
+		Optional:  2,
+		Error:     1,
+		Unreached: true,
+	},
+	"RPLSourceRoutesList": {
+		Mandatory: 2,
+		Optional:  1,
+		Error:     2,
+		Unreached: true,
+	},
+	"RateComponent": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"RateComponentList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"Reading": {
+		Optional:               2,
+		RestrictedNotForbidden: 2,
+	},
+	"ReadingList": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"ReadingSet": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"ReadingSetList": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"ReadingType": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+	"Response": {
+		Optional: 1,
+	},
+	"ServiceSupplier": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"Subscription": {
+		Mandatory: 4,
+		Unreached: true,
+	},
+	"SubscriptionList": {
+		Mandatory: 3,
+		Unreached: true,
+	},
+	"SupplyInterruptionOverride": {
+		Mandatory:  2,
+		Deprecated: 2,
+		Error:      1,
+		Unreached:  true,
+	},
+	"SupplyInterruptionOverrideList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"SupportedLocale": {
+		Mandatory: 4,
+		Error:     1,
+		Unreached: true,
+	},
+	"SupportedLocaleList": {
+		Mandatory: 3,
+		Error:     2,
+		Unreached: true,
+	},
+	"TargetReading": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"TargetReadingList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"TariffProfile": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"TariffProfileList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"TextMessage": {
+		Mandatory: 2,
+		Error:     1,
+		Unreached: true,
+	},
+	"TextMessageList": {
+		Deprecated: 1,
+	},
+	"TextResponse": {
+		Optional:  3,
+		Unreached: true,
+	},
+	"TimeTariffInterval": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"TimeTariffIntervalList": {
+		Mandatory:  2,
+		Deprecated: 1,
+		Error:      2,
+		Unreached:  true,
+	},
+	"UsagePoint": {
+		Optional:               1,
+		RestrictedNotForbidden: 1,
+	},
+}
 
 // EnvArtifact names an optional file to write the full row-by-row sweep to.
 //
@@ -161,19 +676,16 @@ func TestWADLConformanceSweep(t *testing.T) {
 	}
 }
 
-// TestMethodModePolicyRatchet keeps the count of methods outside the method-mode
-// policy from widening without failing on the gap that exists today.
-//
-// The count is a ceiling, not an equality: a fix that lowers it passes, and
-// the test says so when the ceiling is beaten and worth re-pinning. A regression
-// that raises it fails.
-//
-// This is a count, deliberately not a list. A committed list of which methods
-// are outside the policy would be a partial transcription of the WADL, which is
-// not distributed with this project.
+// TestMethodModePolicyRatchet pins the gap per WADL resource: the methods outside
+// the method-mode policy, the resources the crawl misses, and the manager-only
+// writes the device is not refused. With the schema each resource must equal its
+// expectedGaps entry; without it the sweep is strict, so the measure is only a
+// ceiling and the not-reached counts are left out, but a resource the crawl misses
+// that no entry marks Unreached or Unlinked still fails.
 func TestMethodModePolicyRatchet(t *testing.T) {
 	model := wadl.MustLoadModel(t)
-	res := wadl.Sweep(bootTarget(t, wadl.SchemaForTest(t)), model)
+	links := wadl.SchemaForTest(t)
+	res := wadl.Sweep(bootTarget(t, links), model)
 
 	outside := res.OutsidePolicy(model)
 	for _, line := range wadl.PolicyBreakdown(outside) {
@@ -181,103 +693,228 @@ func TestMethodModePolicyRatchet(t *testing.T) {
 	}
 	t.Logf("methods outside the method-mode policy: %d of %d declared", len(outside), len(model.Methods))
 
-	if len(outside) > outsidePolicyCeiling {
-		t.Errorf("methods outside the method-mode policy = %d, which exceeds the ceiling of %d: "+
-			"a route or a link that used to be served is gone, or a method now answers outside its mode",
-			len(outside), outsidePolicyCeiling)
+	exact := links != nil
+	measured, err := measureGaps(res, links, outside)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(outside) < outsidePolicyCeiling {
-		t.Logf("methods outside the method-mode policy = %d, below the ceiling of %d; "+
-			"lower outsidePolicyCeiling to %d to lock the improvement in",
-			len(outside), outsidePolicyCeiling, len(outside))
-	}
-
-	byMode := map[wadl.Mode]int{}
-	for _, row := range outside {
-		byMode[row.Mode]++
-	}
-	for mode, ceiling := range outsidePolicyByMode {
-		if byMode[mode] > ceiling {
-			t.Errorf("methods outside the policy in mode %s = %d, which exceeds its ceiling of %d",
-				mode, byMode[mode], ceiling)
-		}
-		if byMode[mode] < ceiling {
-			t.Logf("mode %s = %d, below its ceiling of %d; lower outsidePolicyByMode[%s] to lock the improvement in",
-				mode, byMode[mode], ceiling, mode)
+	if !exact {
+		for _, msg := range lostLinks(res, expectedGaps) {
+			t.Error(msg)
 		}
 	}
-	for mode, n := range byMode {
-		if _, pinned := outsidePolicyByMode[mode]; !pinned {
-			t.Errorf("%d methods outside the policy in mode %q, which has no ceiling in outsidePolicyByMode", n, mode)
+	if exact {
+		for _, msg := range unlinkedMarks(expectedGaps, links) {
+			t.Error(msg)
 		}
+	}
+	for _, msg := range diffGaps(measured, expectedGaps, exact) {
+		t.Error(msg)
 	}
 }
 
 // TestRestrictedWritesForbidDevice sweeps with a manager certificate and shows what
 // an ordinary device is answered on each write the server restricts to a manager.
-// The manager's own answer is scored by the policy ratchet like any other row.
+// The manager's own answer is scored by the policy ratchet like any other row, and
+// the device's by the per-resource RestrictedNotForbidden count.
 func TestRestrictedWritesForbidDevice(t *testing.T) {
 	model := wadl.MustLoadModel(t)
 	res := wadl.Sweep(bootTarget(t, wadl.SchemaForTest(t)), model)
 
 	asManager := len(res.Filter(func(r wadl.Row) bool { return r.AsManager }))
-	probed := len(res.Filter(func(r wadl.Row) bool { return r.Phase == wadl.PhaseRestricted }))
+	probed := res.DeviceProbed()
 	if asManager == 0 || asManager != probed {
 		t.Fatalf("%d restricted writes were made as the manager and %d probed as the device: "+
 			"the two must pair, or the 403 assertion is vacuous", asManager, probed)
 	}
 
-	notForbidden := res.DeviceProbedNotForbidden()
 	t.Logf("restricted writes: %d declared, %d probed as manager and device, %d of those without a device 403",
-		wadl.RestrictedWrites(model), probed, notForbidden)
-
-	if probed < restrictedProbedFloor {
-		t.Errorf("restricted writes probed = %d, below the floor of %d: a pair the sweep used to reach is no longer probed",
-			probed, restrictedProbedFloor)
-	}
-	if probed > restrictedProbedFloor {
-		t.Logf("restricted writes probed = %d, above the floor of %d; raise restrictedProbedFloor to %d to lock the new reach in",
-			probed, restrictedProbedFloor, probed)
-	}
-	if notForbidden > restrictedNotForbiddenCeiling {
-		t.Errorf("probed restricted writes without a device 403 = %d, which exceeds the ceiling of %d",
-			notForbidden, restrictedNotForbiddenCeiling)
-	}
-	if notForbidden < restrictedNotForbiddenCeiling {
-		t.Logf("probed restricted writes without a device 403 = %d, below the ceiling of %d; "+
-			"lower restrictedNotForbiddenCeiling to %d to lock the improvement in",
-			notForbidden, restrictedNotForbiddenCeiling, notForbidden)
-	}
+		wadl.RestrictedWrites(model), probed, res.DeviceProbedNotForbidden())
 }
 
-// TestCrawlReachRatchet keeps the crawl from finding fewer resources, and the
-// schema-named resources it misses from growing. Without a schema the missed set
-// is not comparable, so the ceiling is checked only when one is supplied.
-func TestCrawlReachRatchet(t *testing.T) {
-	model := wadl.MustLoadModel(t)
-	links := wadl.SchemaForTest(t)
-	res := wadl.Sweep(bootTarget(t, links), model)
+// measureGaps splits a sweep into one expectedGap per resource that has any gap.
+// Without a schema (links nil) resources the crawl missed are left out of every
+// field: the strict sweep cannot tell an unlinked resource from a missed one, so
+// those counts are not comparable. lostLinks covers that case. An outside row
+// with a mode the switch does not know is an error, never dropped.
+func measureGaps(res *wadl.Results, links *wadl.LinkSchema, outside []wadl.PolicyRow) (map[string]expectedGap, error) {
+	exact := links != nil
+	out := map[string]expectedGap{}
+	for _, row := range outside {
+		if row.Verdict == wadl.VerdictNotReached && !exact {
+			continue
+		}
+		g := out[row.ResourceID]
+		switch row.Mode {
+		case wadl.ModeMandatory:
+			g.Mandatory++
+		case wadl.ModeOptional:
+			g.Optional++
+		case wadl.ModeDeprecated:
+			g.Deprecated++
+		case wadl.ModeError:
+			g.Error++
+		default:
+			return nil, fmt.Errorf("resource %s has an outside-policy row in mode %q, which has no field in expectedGap",
+				row.ResourceID, row.Mode)
+		}
+		out[row.ResourceID] = g
+	}
+	if exact {
+		for _, row := range res.NotReachedRows() {
+			g := out[row.ResourceID]
+			g.Unreached = true
+			out[row.ResourceID] = g
+		}
+	}
+	for _, row := range res.DeviceProbedNotForbiddenRows() {
+		g := out[row.ResourceID]
+		g.RestrictedNotForbidden++
+		out[row.ResourceID] = g
+	}
+	return out, nil
+}
 
-	missed := len(res.Filter(func(r wadl.Row) bool { return r.Verdict == wadl.VerdictNotReached }))
-	t.Logf("crawl reached %d resources, %d not reached", res.CrawlReached, missed)
+// unlinkedMarks reports each pinned Unlinked entry whose resource the schema does
+// name a link for, so a mark cannot silence lostLinks for a resource that is
+// linked.
+func unlinkedMarks(pinned map[string]expectedGap, links *wadl.LinkSchema) []string {
+	var msgs []string
+	for id, g := range pinned {
+		if g.Unlinked && links.Names(id) {
+			msgs = append(msgs, fmt.Sprintf("resource %s: pinned Unlinked, but the schema names a link for it", id))
+		}
+	}
+	sort.Strings(msgs)
+	return msgs
+}
 
-	if res.CrawlReached < crawlReachedFloor {
-		t.Errorf("crawl reached %d resources, below the floor of %d: a link the server used to emit is gone",
-			res.CrawlReached, crawlReachedFloor)
+// lostLinks reports each resource the crawl missed that its pinned entry does not
+// mark Unreached or Unlinked. It reads only the entry marks, so it holds without
+// the schema: a link the server stops emitting turns a reached resource into one
+// of these, whatever other gaps its entry pins.
+func lostLinks(res *wadl.Results, pinned map[string]expectedGap) []string {
+	var msgs []string
+	for _, row := range res.NotReachedRows() {
+		if g := pinned[row.ResourceID]; g.Unreached || g.Unlinked {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("resource %s: the crawl did not reach it and its entry does not mark it Unreached or Unlinked: a link the server used to emit is gone",
+			row.ResourceID))
 	}
-	if res.CrawlReached > crawlReachedFloor {
-		t.Logf("crawl reached %d, above the floor of %d; raise crawlReachedFloor to %d to lock the improvement in",
-			res.CrawlReached, crawlReachedFloor, res.CrawlReached)
+	return msgs
+}
+
+// diffGaps compares a measurement to the pinned entries, one message per resource
+// that differs, each carrying the entry to write. A resource with no entry is
+// pinned at all zero. Unlinked is not measured, so it is taken from the entry. With exact false a measurement may be below its entry, and
+// Unreached is not compared.
+func diffGaps(measured, pinned map[string]expectedGap, exact bool) []string {
+	ids := map[string]bool{}
+	for id := range measured {
+		ids[id] = true
 	}
-	if links == nil {
-		t.Skip("no sep.xsd: the not_reached ceiling needs the schema to tell unlinked resources from missed ones")
+	for id := range pinned {
+		ids[id] = true
 	}
-	if missed > notReachedCeiling {
-		t.Errorf("not_reached resources = %d, which exceeds the ceiling of %d", missed, notReachedCeiling)
+	sorted := make([]string, 0, len(ids))
+	for id := range ids {
+		sorted = append(sorted, id)
 	}
-	if missed < notReachedCeiling {
-		t.Logf("not_reached resources = %d, below the ceiling of %d; lower notReachedCeiling to %d to lock the improvement in",
-			missed, notReachedCeiling, missed)
+	sort.Strings(sorted)
+
+	var msgs []string
+	for _, id := range sorted {
+		got, want := measured[id], pinned[id]
+		got.Unlinked = want.Unlinked
+		if exact && got == want {
+			continue
+		}
+		if !exact && !gapExceeds(got, want) {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("resource %s: measured %+v but pinned %+v; write this entry in expectedGaps:\n%s",
+			id, got, want, formatGapEntry(id, got)))
+	}
+	return msgs
+}
+
+// gapExceeds reports whether any counted field of got is above want's.
+func gapExceeds(got, want expectedGap) bool {
+	return got.Mandatory > want.Mandatory || got.Optional > want.Optional ||
+		got.Deprecated > want.Deprecated || got.Error > want.Error ||
+		got.RestrictedNotForbidden > want.RestrictedNotForbidden
+}
+
+// formatGapEntry renders the multi-line, gofmt-aligned entry that pins g. An
+// all-zero gap is written as an explicit zero field, never as a deleted entry.
+func formatGapEntry(id string, g expectedGap) string {
+	type field struct{ name, val string }
+	var fields []field
+	add := func(name string, n int) {
+		if n != 0 {
+			fields = append(fields, field{name, strconv.Itoa(n)})
+		}
+	}
+	add("Mandatory", g.Mandatory)
+	add("Optional", g.Optional)
+	add("Deprecated", g.Deprecated)
+	add("Error", g.Error)
+	if g.Unreached {
+		fields = append(fields, field{"Unreached", "true"})
+	}
+	if g.Unlinked {
+		fields = append(fields, field{"Unlinked", "true"})
+	}
+	add("RestrictedNotForbidden", g.RestrictedNotForbidden)
+	if len(fields) == 0 {
+		fields = []field{{"Mandatory", "0"}}
+	}
+	width := 0
+	for _, f := range fields {
+		width = max(width, len(f.name))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\t%q: {\n", id)
+	for _, f := range fields {
+		fmt.Fprintf(&b, "\t\t%-*s %s,\n", width+1, f.name+":", f.val)
+	}
+	b.WriteString("\t},")
+	return b.String()
+}
+
+// TestDiffGaps shows the ratchet fails on a rise, a fall and an unpinned gap, and
+// names the entry to write, without needing the WADL.
+func TestDiffGaps(t *testing.T) {
+	pinned := map[string]expectedGap{"A": {Mandatory: 2, Unreached: true}}
+	tests := []struct {
+		name     string
+		measured map[string]expectedGap
+		exact    bool
+		want     int
+		entry    string
+	}{
+		{"equal", map[string]expectedGap{"A": {Mandatory: 2, Unreached: true}}, true, 0, ""},
+		{"rise", map[string]expectedGap{"A": {Mandatory: 3, Unreached: true}}, true, 1, "\t\tMandatory: 3,"},
+		{"fall is unpinned", map[string]expectedGap{"A": {Mandatory: 1, Unreached: true}}, true, 1, "\t\tMandatory: 1,"},
+		{"unreached cleared", map[string]expectedGap{"A": {Mandatory: 2}}, true, 1, "\t\tMandatory: 2,"},
+		{"gap with no entry", map[string]expectedGap{"A": {Mandatory: 2, Unreached: true}, "B": {Error: 1, RestrictedNotForbidden: 1}}, true, 1,
+			"\t\tError:                  1,\n\t\tRestrictedNotForbidden: 1,"},
+		{"fix to zero", map[string]expectedGap{}, true, 1, "\t\tMandatory: 0,"},
+		{"fall passes without schema", map[string]expectedGap{"A": {Mandatory: 1}}, false, 0, ""},
+		{"rise fails without schema", map[string]expectedGap{"A": {Mandatory: 3}}, false, 1, "Mandatory: 3,"},
+		{"unreached ignored without schema", map[string]expectedGap{"A": {Mandatory: 2}}, false, 0, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := diffGaps(tc.measured, pinned, tc.exact)
+			if len(got) != tc.want {
+				t.Fatalf("diffGaps() = %d messages %q, want %d", len(got), got, tc.want)
+			}
+			if tc.want == 1 && !strings.Contains(got[0], tc.entry) {
+				t.Errorf("message %q does not carry the entry %q", got[0], tc.entry)
+			}
+		})
 	}
 }
 
@@ -302,4 +939,66 @@ func writeArtifact(t *testing.T, path string, res *wadl.Results) {
 		}
 	}
 	t.Logf("sweep artifact written: %s (%d rows)", path, len(res.Rows))
+}
+
+// TestLostLinksWithoutSchema shows the no-schema check fails on a missed resource
+// no entry accounts for, whatever gaps its entry pins.
+func TestLostLinksWithoutSchema(t *testing.T) {
+	pinned := map[string]expectedGap{
+		"Missed":   {Mandatory: 2, Unreached: true},
+		"Unlinked": {Mandatory: 0, Unlinked: true},
+		"Reached":  {Error: 3},
+	}
+	row := func(id string) wadl.Row {
+		return wadl.Row{Phase: wadl.PhaseWADL, ResourceID: id, Verdict: wadl.VerdictNotReached}
+	}
+	tests := []struct {
+		name string
+		rows []wadl.Row
+		want []string
+	}{
+		{"pinned missed and unlinked pass", []wadl.Row{row("Missed"), row("Unlinked")}, nil},
+		{"resource with no entry", []wadl.Row{row("Time")}, []string{"Time"}},
+		{"reached resource with a gap entry", []wadl.Row{row("Reached")}, []string{"Reached"}},
+		{"nothing missed", nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var ids []string
+			for _, msg := range lostLinks(&wadl.Results{Rows: tc.rows}, pinned) {
+				for _, id := range tc.want {
+					if strings.Contains(msg, "resource "+id+":") {
+						ids = append(ids, id)
+					}
+				}
+			}
+			if len(ids) != len(tc.want) {
+				t.Fatalf("lostLinks flagged %v, want %v", ids, tc.want)
+			}
+		})
+	}
+}
+
+// TestMeasureGapsRejectsAnUnknownMode shows an outside row whose mode the switch
+// does not know fails the measurement instead of being dropped.
+func TestMeasureGapsRejectsAnUnknownMode(t *testing.T) {
+	outside := []wadl.PolicyRow{{ResourceID: "A", Mode: wadl.Mode("X"), Verdict: wadl.VerdictMethodRefused}}
+	if _, err := measureGaps(&wadl.Results{}, nil, outside); err == nil {
+		t.Fatal("measureGaps accepted a row with an unknown mode")
+	}
+}
+
+// TestUnlinkedMarksCheckedAgainstSchema shows a pinned Unlinked mark fails for a
+// resource the schema names a link for.
+func TestUnlinkedMarksCheckedAgainstSchema(t *testing.T) {
+	links := wadl.SchemaForTest(t)
+	if links == nil {
+		t.Skip("no sep.xsd: the marks are checked against the schema")
+	}
+	if msgs := unlinkedMarks(map[string]expectedGap{"EndDevice": {Unlinked: true}}, links); len(msgs) != 1 {
+		t.Errorf("unlinkedMarks flagged %q for a linked resource, want one message", msgs)
+	}
+	if msgs := unlinkedMarks(map[string]expectedGap{"NotificationList": {Unlinked: true}}, links); len(msgs) != 0 {
+		t.Errorf("unlinkedMarks flagged %q for the unlinked NotificationList", msgs)
+	}
 }

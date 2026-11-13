@@ -164,8 +164,21 @@ func UsagePointStoreID(clientMRID string) string {
 // on 201, and the Location header on the ErrAlreadyExists branch cannot drift
 // into three different strings for one resource.
 func UsagePointHref(id string) string {
-	return "/upt/" + id
+	return usagePointHrefPrefix + id
 }
+
+// UsagePointIDFromHref is the inverse of [UsagePointHref]: the store id a
+// UsagePoint href names, and false for any other shape, including an empty id
+// or one that nests a path.
+func UsagePointIDFromHref(href string) (string, bool) {
+	id, ok := strings.CutPrefix(href, usagePointHrefPrefix)
+	if !ok || id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
+const usagePointHrefPrefix = "/upt/"
 
 // HandleCreateUsagePoint returns a handler for POST /upt.
 //

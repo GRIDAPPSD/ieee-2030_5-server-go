@@ -14,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
@@ -292,6 +293,33 @@ func HandlePostFlowReservationRequest(
 // interface so a test can stub it.
 type Canceller interface {
 	Cancel(ctx context.Context, edevID, frqID string, status sep2.RequestStatus) error
+}
+
+// Remover deletes the request stored under (edevID, frqID) with its
+// responses once they have ended. Satisfied by
+// *internal/flowreservation.Retention.
+type Remover interface {
+	Remove(ctx context.Context, edevID, frqID string, now time.Time) error
+}
+
+// HandleDeleteFlowReservationRequest returns a handler for DELETE
+// /edev/{id}/frq/{frqId} (mode O). A request whose responses have not all
+// ended is 409 and kept, because a server SHALL retain it so the client can
+// cancel it (10.9.3.1).
+func HandleDeleteFlowReservationRequest(remover Remover, now func() time.Time) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := remover.Remove(r.Context(), r.PathValue("id"), r.PathValue("frqId"), now())
+		switch {
+		case err == nil:
+			w.WriteHeader(http.StatusNoContent)
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "not found", http.StatusNotFound)
+		case errors.Is(err, flowreservation.ErrRequestActive):
+			http.Error(w, "request has an unanswered or active response", http.StatusConflict)
+		default:
+			srverr.Internal(w, r, err)
+		}
+	}
 }
 
 var errRequestFieldChanged = errors.New("a PUT may change only RequestStatus")

@@ -145,9 +145,10 @@ type Row struct {
 	LinkElement      string   `json:"link_element,omitempty"`
 	MintedBy         string   `json:"minted_by,omitempty"`
 
-	// BodyMinimal records that the request body was a minimal, namespace-correct
-	// instance rather than a fully-populated one. A 400 on such a request
-	// classifies routing, and is deliberately NOT a schema conformance verdict.
+	// BodyMinimal records that a request body was sent: an empty,
+	// namespace-correct element, or the populated body of a write that has an
+	// entry in writeBodies. A 400 on an empty one classifies routing, and is
+	// deliberately NOT a schema conformance verdict.
 	BodyMinimal bool `json:"body_minimal,omitempty"`
 
 	// MountedByRouter is the router's own answer to "is this path registered",
@@ -905,6 +906,57 @@ func seedSet() []seed {
 	}
 }
 
+// writeBodyKey names one write by the WADL resource id and verb.
+type writeBodyKey struct{ resource, verb string }
+
+// writeBodies are the populated request bodies for writes whose empty element a
+// correct server refuses with 400, which the sweep would score wrong_status
+// against a WADL that declares only success. A server-authored resource has
+// required fields (mRID, primacy, an interval), so an empty element is not a
+// probe of the write at all. This is the one place such a body is added; a
+// write with no entry here is sent the empty element.
+// TestDERWriteBodiesAreSchemaValid runs each body through a structural check
+// against sep.xsd (elements, order, maxOccurs; not simple-type values or
+// facets) when a copy is supplied; the full check moves to core's exported
+// validator, GRIDAPPSD/ieee-2030_5-core-go#256.
+var writeBodies = map[writeBodyKey]string{
+	{"DERProgramList", http.MethodPost}: `<DERProgram xmlns="` + sepNS + `">` +
+		`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FF1</mRID><description>wadl sweep derp post</description>` +
+		`<primacy>1</primacy></DERProgram>`,
+	{"AssociatedDERProgramList", http.MethodPost}: `<DERProgram xmlns="` + sepNS + `">` +
+		`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FF2</mRID><description>wadl sweep associated derp</description>` +
+		`<primacy>1</primacy></DERProgram>`,
+	{"DERControlList", http.MethodPost}: `<DERControl xmlns="` + sepNS + `">` +
+		`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FF3</mRID><creationTime>1785700000</creationTime>` +
+		`<EventStatus><currentStatus>0</currentStatus><dateTime>1785700000</dateTime>` +
+		`<potentiallySuperseded>false</potentiallySuperseded></EventStatus>` +
+		`<interval><duration>3600</duration><start>1785700100</start></interval>` +
+		`<DERControlBase><opModTargetW><multiplier>0</multiplier><value>50</value></opModTargetW></DERControlBase>` +
+		`</DERControl>`,
+	{"DefaultDERControl", http.MethodPut}: `<DefaultDERControl xmlns="` + sepNS + `">` +
+		`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FF4</mRID>` +
+		`<DERControlBase><opModTargetW><multiplier>0</multiplier><value>50</value></opModTargetW></DERControlBase>` +
+		`</DefaultDERControl>`,
+	{"DERCurveList", http.MethodPost}: `<DERCurve xmlns="` + sepNS + `">` +
+		`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FF5</mRID><creationTime>1785700000</creationTime>` +
+		`<CurveData><xvalue>0</xvalue><yvalue>0</yvalue></CurveData>` +
+		`<curveType>0</curveType><xMultiplier>0</xMultiplier><yMultiplier>0</yMultiplier>` +
+		`<yRefType>1</yRefType></DERCurve>`,
+}
+
+// requestBody is the body a mutating method is sent: its writeBodies entry, or
+// the empty element of the type its request names, or none for a method with
+// no request body.
+func requestBody(meth Method) []byte {
+	if (meth.Verb != http.MethodPut && meth.Verb != http.MethodPost) || len(meth.RequestElements) == 0 {
+		return nil
+	}
+	if b, ok := writeBodies[writeBodyKey{meth.ResourceID, meth.Verb}]; ok {
+		return []byte(b)
+	}
+	return []byte(`<` + meth.RequestElements[0] + ` xmlns="` + sepNS + `"/>`)
+}
+
 // phaseSeed returns the hrefs the seeds minted, for resources no advertised
 // link reaches (a Subscription is listed under no EndDevice link).
 //
@@ -1135,10 +1187,7 @@ func (t *Target) phaseWADL(m *Model, discovered []string, reached *crawl, rows *
 			}
 		}
 
-		var body []byte
-		if (meth.Verb == http.MethodPut || meth.Verb == http.MethodPost) && len(meth.RequestElements) > 0 {
-			body = []byte(`<` + meth.RequestElements[0] + ` xmlns="` + sepNS + `"/>`)
-		}
+		body := requestBody(meth)
 
 		client := t.Client
 		asManager := false

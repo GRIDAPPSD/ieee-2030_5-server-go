@@ -27,7 +27,7 @@ func TestDERSingletonHandlersCapability(t *testing.T) {
 	statuses := memory.NewScopedStore[sep2.DERStatus]()
 	avails := memory.NewScopedStore[sep2.DERAvailability]()
 
-	dercap, _, _, _ := coredel.DERSingletonHandlers(caps, settings, statuses, avails)
+	dercap, _, _, _ := coredel.DERSingletonHandlers(caps, settings, statuses, avails, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dercap", dercap)
@@ -72,7 +72,7 @@ func TestDERSingletonHandlersStatus(t *testing.T) {
 	statuses := memory.NewScopedStore[sep2.DERStatus]()
 	avails := memory.NewScopedStore[sep2.DERAvailability]()
 
-	_, _, ders, _ := coredel.DERSingletonHandlers(caps, settings, statuses, avails)
+	_, _, ders, _ := coredel.DERSingletonHandlers(caps, settings, statuses, avails, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}/ders", ders)
@@ -117,7 +117,7 @@ func TestDERSingletonHandlersSettings(t *testing.T) {
 	statuses := memory.NewScopedStore[sep2.DERStatus]()
 	avails := memory.NewScopedStore[sep2.DERAvailability]()
 
-	_, derg, _, _ := coredel.DERSingletonHandlers(caps, settings, statuses, avails)
+	_, derg, _, _ := coredel.DERSingletonHandlers(caps, settings, statuses, avails, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/derg", derg)
@@ -160,7 +160,7 @@ func TestDERSingletonHandlersAvailability(t *testing.T) {
 	statuses := memory.NewScopedStore[sep2.DERStatus]()
 	avails := memory.NewScopedStore[sep2.DERAvailability]()
 
-	_, _, _, dera := coredel.DERSingletonHandlers(caps, settings, statuses, avails)
+	_, _, _, dera := coredel.DERSingletonHandlers(caps, settings, statuses, avails, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dera", dera)

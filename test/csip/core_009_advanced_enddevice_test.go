@@ -78,11 +78,10 @@ func TestCORE_009_AdvancedEndDevice(t *testing.T) {
 // single-edev fixture and exercises PUT-then-GET on each of the four
 // DER singleton resources advertised under /edev/0/der/0/.
 //
-// The derId path segment is "0" - the fixture does not seed a DER
-// record (single-edev.yaml carries der_list_link metadata but no DER
-// children), and the singleton handler does not require one: it keys
-// only on the path values `{id}/{derId}`. Tests that walk the DER
-// list itself live in different CSIP procedures (CORE-010+).
+// The derId path segment is "0". The fixture carries der_list_link metadata
+// but no DER children, so bootWithSingleEdev seeds the DER record the
+// sub-resource PUTs require. Tests that walk the DER list itself live in
+// different CSIP procedures (CORE-010+).
 func runRoundtripAllFourResources(t *testing.T, extraOpts []csiptest.BootOption) {
 	t.Helper()
 
@@ -140,6 +139,7 @@ func bootWithSingleEdev(t *testing.T, extraOpts []csiptest.BootOption) (*csiptes
 		csiptest.WithDeviceIdentity(owner),
 	}, extraOpts...)
 	srv := csiptest.BootServer(t, allOpts...)
+	seedDERRecord(t, srv.Stores.DERs, fixtureEndDeviceID, "0")
 
 	return srv, buildClient(t, srv.RootCA, owner.Cert)
 }

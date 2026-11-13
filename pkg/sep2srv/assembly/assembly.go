@@ -1178,7 +1178,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	servedDefaults := devicelog.NewServedStore(defaultDERControls, func(c sep2.DefaultDERControl) string { return c.MRID })
 
 	dercap, derg, ders, dera := coreder.DERSingletonHandlers(
-		derCapabilities, derSettings, derStatuses, derAvailabilities,
+		derCapabilities, derSettings, derStatuses, derAvailabilities, derExists(stores.DERs),
 	)
 
 	// Which DER sub-resource links this router is permitted to advertise, per
@@ -1238,6 +1238,9 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		mux.HandleFunc("GET /edev/{id}/der/{derId}/upt", associatedUsagePointHandler(stores.DERs, stores.UsagePoints))
 	}
 
+	// The four sub-resources are gated on the DER being stored inside their
+	// handlers: a first write under an existing DER creates the singleton, and
+	// any request under a DER that is not stored answers 404.
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dercap", dercap)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dercap", dercap)
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/derg", derg)

@@ -26,3 +26,15 @@ func seedOwnedEndDevice(t *testing.T, devs store.EndDeviceStore, id string, owne
 		t.Fatalf("seed EndDevice %q: %v", id, err)
 	}
 }
+
+// seedDERRecord stores a DER at /edev/{edevID}/der/{derID}. A DER sub-resource
+// PUT answers 404 under a DER that is not stored, so a procedure that PUTs one
+// first seeds its parent here.
+func seedDERRecord(t *testing.T, ders store.ScopedStore[sep2.DER], edevID, derID string) {
+	t.Helper()
+	d := sep2.DER{}
+	d.Href = "/edev/" + edevID + "/der/" + derID
+	if err := ders.Create(context.Background(), edevID, derID, d); err != nil {
+		t.Fatalf("seed DER %s/%s: %v", edevID, derID, err)
+	}
+}

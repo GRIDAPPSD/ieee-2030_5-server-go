@@ -138,6 +138,9 @@ func TestPartialFamilyRefusesRatherThanPanicking(t *testing.T) {
 			if err := stores.MeterReadings.Create(context.Background(), "1", "1", sep2.MeterReading{}); err != nil {
 				t.Fatalf("seed MeterReading: %v", err)
 			}
+			// Likewise the DER sub-resources answer 404 for a DER that is
+			// absent.
+			seedDER(t, stores, "1", "1")
 			tc.clear(stores)
 			seedOwnedDevices(t, stores.EndDevices, "1")
 

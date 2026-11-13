@@ -352,6 +352,7 @@ func TestSecondImplementation_SingletonPutThenGet(t *testing.T) {
 	t.Parallel()
 
 	stores := fakeStores()
+	seedDER(t, stores, "3", "1")
 	srv := fakeBackedServer(t, stores)
 
 	const path = "/edev/3/der/1/ders"

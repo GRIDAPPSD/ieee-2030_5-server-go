@@ -161,7 +161,7 @@ func NewFlowReservationUnservedEndDeviceStore(devs store.EndDeviceStore) *FlowRe
 
 // probeDelete checks whether Delete(ctx, id) looks likely to succeed,
 // without mutating anything: its own two collections, and whatever s.devs
-// owns beneath it. See [deleteProber] and [probeScopedParent] for what this
+// owns beneath it. See [deleteProber] and [store.ProbeParent] for what this
 // does and does not guarantee.
 func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, id string) error {
 	if err := probeInner(ctx, s.devs, id); err != nil {
@@ -170,10 +170,10 @@ func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, i
 	if !s.served {
 		return nil
 	}
-	if err := probeScopedParent(ctx, s.reqs, id); err != nil {
+	if err := store.ProbeParent(ctx, s.reqs, id); err != nil {
 		return fmt.Errorf("checking flow reservation requests for %q: %w", id, err)
 	}
-	if err := probeScopedParent(ctx, s.resps, id); err != nil {
+	if err := store.ProbeParent(ctx, s.resps, id); err != nil {
 		return fmt.Errorf("checking flow reservation responses for %q: %w", id, err)
 	}
 	return nil
@@ -198,17 +198,8 @@ func takeParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], 
 	if t, ok := s.(ParentTaker); ok {
 		return t.TakeParent(ctx, parentID)
 	}
-	n, err := cascadeScopedParent(ctx, s, parentID)
+	n, err := store.CascadeParent(ctx, s, parentID)
 	return nil, n, err
-}
-
-// cascadeScopedParent is deleteScopedParent that also reports the count.
-func cascadeScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], parentID string) (uint32, error) {
-	cascader, ok := s.(parentCascader)
-	if !ok {
-		return 0, fmt.Errorf("the store (%T) cannot cascade a parent delete", s)
-	}
-	return cascader.DeleteParent(ctx, parentID)
 }
 
 // TakeParent implements [ParentTaker] for the in-memory store by detaching the

@@ -235,13 +235,16 @@ func TestReadingHierarchy_HeadAndWriteMethods(t *testing.T) {
 		t.Errorf("HEAD status = %d, want 200", resp.StatusCode)
 	}
 
-	// Writes are not served by this slice: each answers 405 with an Allow
-	// naming the reads, never a 404 and never a stored change.
-	for _, tc := range []struct{ method, path string }{
-		{http.MethodPut, "/upt/u1/mr/m1/rs/s2/r/r2"},
-		{http.MethodDelete, "/upt/u1/mr/m1/rs/s2"},
-		{http.MethodPost, "/upt/u1/mr/m1/rs"},
-		{http.MethodPut, "/upt/u1/mr/m1/rt"},
+	// An unauthenticated write is refused with 403 by the manager-only check,
+	// and a method the WADL marks Excluded answers 405. Neither changes a record.
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodPut, "/upt/u1/mr/m1/rs/s2/r/r2", http.StatusForbidden},
+		{http.MethodDelete, "/upt/u1/mr/m1/rs/s2", http.StatusForbidden},
+		{http.MethodPut, "/upt/u1/mr/m1/rt", http.StatusForbidden},
+		{http.MethodPost, "/upt/u1/mr/m1/rs", http.StatusMethodNotAllowed},
 	} {
 		req, err := http.NewRequest(tc.method, srv.URL+tc.path, nil) //nolint:noctx // test only
 		if err != nil {
@@ -252,8 +255,8 @@ func TestReadingHierarchy_HeadAndWriteMethods(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusMethodNotAllowed {
-			t.Errorf("%s %s status = %d, want 405", tc.method, tc.path, resp.StatusCode)
+		if resp.StatusCode != tc.want {
+			t.Errorf("%s %s status = %d, want %d", tc.method, tc.path, resp.StatusCode, tc.want)
 		}
 	}
 	if _, err := stores.Readings.Get(context.Background(), scopeOf(coremetering.ReadingScopeKey("u1", "m1", "s2")), "r2"); err != nil {

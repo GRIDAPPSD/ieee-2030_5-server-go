@@ -128,28 +128,28 @@ func (s *DeviceKeyedCascadeEndDeviceStore) scopedFamilies() []deviceKeyedFamily 
 	if !store.IsAbsent(s.configurations) {
 		out = append(out, deviceKeyedFamily{
 			name:   "configuration",
-			probe:  func(ctx context.Context, id string) error { return probeScopedParent(ctx, s.configurations, id) },
+			probe:  func(ctx context.Context, id string) error { return store.ProbeParent(ctx, s.configurations, id) },
 			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.configurations, id) },
 		})
 	}
 	if !store.IsAbsent(s.deviceStatuses) {
 		out = append(out, deviceKeyedFamily{
 			name:   "device status",
-			probe:  func(ctx context.Context, id string) error { return probeScopedParent(ctx, s.deviceStatuses, id) },
+			probe:  func(ctx context.Context, id string) error { return store.ProbeParent(ctx, s.deviceStatuses, id) },
 			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.deviceStatuses, id) },
 		})
 	}
 	if !store.IsAbsent(s.powerStatuses) {
 		out = append(out, deviceKeyedFamily{
 			name:   "power status",
-			probe:  func(ctx context.Context, id string) error { return probeScopedParent(ctx, s.powerStatuses, id) },
+			probe:  func(ctx context.Context, id string) error { return store.ProbeParent(ctx, s.powerStatuses, id) },
 			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.powerStatuses, id) },
 		})
 	}
 	if !store.IsAbsent(s.fsas) {
 		out = append(out, deviceKeyedFamily{
 			name:   "function set assignments",
-			probe:  func(ctx context.Context, id string) error { return probeScopedParent(ctx, s.fsas, id) },
+			probe:  func(ctx context.Context, id string) error { return store.ProbeParent(ctx, s.fsas, id) },
 			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.fsas, id) },
 		})
 	}
@@ -163,7 +163,7 @@ func (s *DeviceKeyedCascadeEndDeviceStore) appendDERFamilies(out []deviceKeyedFa
 	if !store.IsAbsent(s.ders) {
 		out = append(out, deviceKeyedFamily{
 			name:   "DER",
-			probe:  func(ctx context.Context, id string) error { return probeScopedParent(ctx, s.ders, id) },
+			probe:  func(ctx context.Context, id string) error { return store.ProbeParent(ctx, s.ders, id) },
 			delete: func(ctx context.Context, id string) error { return deleteScopedParent(ctx, s.ders, id) },
 		})
 	}
@@ -185,7 +185,7 @@ func (s *DeviceKeyedCascadeEndDeviceStore) appendDERFamilies(out []deviceKeyedFa
 func derSingletonFamily[T store.Copier[T]](name string, st store.ScopedStore[T]) deviceKeyedFamily {
 	return deviceKeyedFamily{
 		name:   name,
-		probe:  func(ctx context.Context, id string) error { return probeScopedParentsUnder(ctx, st, id+"/") },
+		probe:  func(ctx context.Context, id string) error { return store.ProbePrefix(ctx, st, id+"/") },
 		delete: func(ctx context.Context, id string) error { return deleteScopedParentsUnder(ctx, st, id+"/") },
 	}
 }
@@ -193,7 +193,7 @@ func derSingletonFamily[T store.Copier[T]](name string, st store.ScopedStore[T])
 // probeDelete checks whether Delete(ctx, id) looks likely to succeed,
 // without mutating anything: whatever s.devs owns beneath it, then each
 // ScopedStore family that is wired. See [deleteProber] and
-// [probeScopedParent] for what this does and does not guarantee.
+// [store.ProbeParent] for what this does and does not guarantee.
 //
 // The admin FSA links have no probe here: [AdminFSAStore]'s reads cannot
 // fail (they touch no disk), so there is nothing to check ahead of the

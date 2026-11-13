@@ -418,10 +418,10 @@ func TestFlowReservationInstances_ScopeBindsToTheDeviceInThePath(t *testing.T) {
 // test does not exercise scopedResourceHandler's own 405 branch. That branch is
 // covered directly in scopedresource_internal_test.go against itemMethods.
 //
-// PUT on the request is mounted (#667), so the request path's Allow is
-// "GET, HEAD, PUT" and its PUT is not a 405; the response path stays
-// "GET, HEAD". Registering a PUT pattern for the response shape fails this
-// test with Allow "GET, HEAD, PUT".
+// PUT (#667) and DELETE (#1264) on the request are mounted, so the request
+// path's Allow is "DELETE, GET, HEAD, PUT" and neither is a 405; the response
+// path stays "GET, HEAD". Registering a PUT pattern for the response shape
+// fails this test with Allow "GET, HEAD, PUT".
 func TestFlowReservationInstances_UnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 	t.Parallel()
 
@@ -429,10 +429,10 @@ func TestFlowReservationInstances_UnservedMethodsGet405WithAnAccurateAllow(t *te
 	loc := postFlowReservationRequest(t, srv, "e1", "4142434445464748494A4B4C4D4E4F50")
 	frpPath := "/edev/e1/frp/frp-1"
 
-	for _, tc := range []struct{ path, allow string }{{loc, "GET, HEAD, PUT"}, {frpPath, "GET, HEAD"}} {
+	for _, tc := range []struct{ path, allow string }{{loc, "DELETE, GET, HEAD, PUT"}, {frpPath, "GET, HEAD"}} {
 		path, allow := tc.path, tc.allow
 		for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodDelete, http.MethodPatch} {
-			if method == http.MethodPut && path == loc {
+			if (method == http.MethodPut || method == http.MethodDelete) && path == loc {
 				continue
 			}
 			t.Run(method+" "+path, func(t *testing.T) {

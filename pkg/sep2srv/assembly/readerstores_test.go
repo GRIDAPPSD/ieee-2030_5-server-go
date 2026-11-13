@@ -141,6 +141,8 @@ var readerStoresExcludedFields = map[string]string{
 		"misconfiguration; requireScoped's log would be false on most deployments",
 	"FlowReservationResponseLifecycles": "optional like DERControlLifecycles, " +
 		"and only the serve-time status derivation reads it",
+	"FlowReservationAnswers": "optional, and read only by the DELETE of a request " +
+		"that removes the answer records; a reader never serves them",
 	"CommitmentLedger":     "a lock-holding check service, not resource data",
 	"Edition2023":          "edition config read by the serve-time status derivation, not a store",
 	"FlowReservationQueue": "a timer-holding service the server closes, not resource data",

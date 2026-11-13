@@ -18,6 +18,13 @@ var managerOnlyWrites = map[string]bool{
 	"PUT /edev/{id}/rg":    true,
 	"DELETE /edev/{id}/rg": true,
 	"POST /upt":            true,
+
+	"DELETE /upt/{uptId}":                             true,
+	"DELETE /upt/{uptId}/mr/{mrId}":                   true,
+	"PUT /upt/{uptId}/mr/{mrId}/rt":                   true,
+	"DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}":         true,
+	"PUT /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}":    true,
+	"DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}": true,
 }
 
 // decideManagerOnly admits a manager certificate acting for a device it has a

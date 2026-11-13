@@ -15,7 +15,7 @@ import (
 // goldenFamilies pins what the ACL allowed for each family before the rows
 // were generated from the route family table, so a change to the table that
 // widens or narrows a family fails here and has to be made on purpose. /mup
-// gained PUT and DELETE, which its instance handlers have always served.
+// gained PUT and DELETE, which its instance handlers have always served, and /upt gained them for the manager-only metering writes.
 var goldenFamilies = map[string]struct {
 	methods         string
 	unauthenticated bool
@@ -26,7 +26,7 @@ var goldenFamilies = map[string]struct {
 	"/edev": {"GET,HEAD,POST,PUT,DELETE", false},
 	"/mup":  {"GET,HEAD,POST,PUT,DELETE", false},
 	"/dc":   {"GET,HEAD", false},
-	"/upt":  {"GET,HEAD,POST", false},
+	"/upt":  {"GET,HEAD,POST,PUT,DELETE", false},
 	"/rt":   {"GET,HEAD", false},
 	"/msg":  {"GET,HEAD,POST", false},
 	"/rsps": {"GET,HEAD,POST", false},

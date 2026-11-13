@@ -343,8 +343,7 @@ var expectedGaps = map[string]expectedGap{
 		Unreached: true,
 	},
 	"MeterReading": {
-		Optional:               1,
-		RestrictedNotForbidden: 1,
+		Mandatory: 0,
 	},
 	"MeterReadingList": {
 		Optional:               1,
@@ -457,24 +456,21 @@ var expectedGaps = map[string]expectedGap{
 		Unreached:  true,
 	},
 	"Reading": {
-		Optional:               2,
-		RestrictedNotForbidden: 2,
+		Mandatory: 0,
 	},
 	"ReadingList": {
 		Optional:               1,
 		RestrictedNotForbidden: 1,
 	},
 	"ReadingSet": {
-		Optional:               1,
-		RestrictedNotForbidden: 1,
+		Mandatory: 0,
 	},
 	"ReadingSetList": {
 		Optional:               1,
 		RestrictedNotForbidden: 1,
 	},
 	"ReadingType": {
-		Optional:               1,
-		RestrictedNotForbidden: 1,
+		Mandatory: 0,
 	},
 	"ServiceSupplier": {
 		Mandatory:  2,
@@ -561,8 +557,7 @@ var expectedGaps = map[string]expectedGap{
 		Unreached:  true,
 	},
 	"UsagePoint": {
-		Optional:               1,
-		RestrictedNotForbidden: 1,
+		Mandatory: 0,
 	},
 }
 

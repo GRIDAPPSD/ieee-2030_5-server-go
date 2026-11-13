@@ -128,13 +128,13 @@ func NewLogEventLinkedEndDeviceStore(devs store.EndDeviceStore, events store.Sco
 
 // probeDelete checks whether Delete(ctx, id) looks likely to succeed,
 // without mutating anything: its own LogEvent collection, and whatever
-// s.devs owns beneath it. See [deleteProber] and [probeScopedParent] for
+// s.devs owns beneath it. See [deleteProber] and [store.ProbeParent] for
 // what this does and does not guarantee.
 func (s *LogEventLinkedEndDeviceStore) probeDelete(ctx context.Context, id string) error {
 	if err := probeInner(ctx, s.devs, id); err != nil {
 		return err
 	}
-	if err := probeScopedParent(ctx, s.events, id); err != nil {
+	if err := store.ProbeParent(ctx, s.events, id); err != nil {
 		return fmt.Errorf("checking log events for %q: %w", id, err)
 	}
 	return nil

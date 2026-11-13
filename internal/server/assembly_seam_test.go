@@ -140,6 +140,10 @@ var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}/sub/{subId}",
 	"DELETE /mup/{id}",
 	"DELETE /rsps/{rspsId}/rsp/{rspId}",
+	"DELETE /upt/{uptId}",
+	"DELETE /upt/{uptId}/mr/{mrId}",
+	"DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}",
+	"DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
 	"GET /dc",
 	"GET /dc/{dcId}",
 	"GET /dcap",
@@ -228,6 +232,8 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/rg",
 	"PUT /edev/{id}/sub/{subId}",
 	"PUT /mup/{id}",
+	"PUT /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+	"PUT /upt/{uptId}/mr/{mrId}/rt",
 }
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now

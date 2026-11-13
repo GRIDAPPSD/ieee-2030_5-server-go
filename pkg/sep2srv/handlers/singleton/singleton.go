@@ -18,7 +18,20 @@ const SingletonKey = "default"
 type Option[T any] func(*options[T])
 
 type options[T any] struct {
-	stamp func(r *http.Request, resource *T)
+	stamp  func(r *http.Request, resource *T)
+	parent func(r *http.Request) error
+}
+
+// WithParent makes the singleton exist only under a parent that exists, as
+// reported by exists (store.ErrNotFound for absent, anything else a failed
+// check). GET and PUT under an absent parent answer 404.
+//
+// A PUT checks again after its write and removes what it wrote when the
+// parent has gone: a cascade that deletes the parent before its children
+// (the EndDevice delete removes DERs first) cannot then leave a child that a
+// later parent at the same key would serve.
+func WithParent[T any](exists func(r *http.Request) error) Option[T] {
+	return func(o *options[T]) { o.parent = exists }
 }
 
 // WithStamp sets fields of a PUT body from the request path before it is
@@ -48,6 +61,9 @@ func HandleSingletonGetPut[T store.Copier[T]](
 
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
+			if !parentPresent(w, r, o.parent) {
+				return
+			}
 			resource, err := scopedStore.Get(r.Context(), parentKey, SingletonKey)
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
@@ -62,6 +78,9 @@ func HandleSingletonGetPut[T store.Copier[T]](
 			encoding.WriteXML(w, http.StatusOK, &resource)
 
 		case http.MethodPut:
+			if !parentPresent(w, r, o.parent) {
+				return
+			}
 			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 			if err != nil {
 				http.Error(w, "read body failed", http.StatusBadRequest)
@@ -96,10 +115,35 @@ func HandleSingletonGetPut[T store.Copier[T]](
 				}
 			}
 
+			if !parentPresent(w, r, o.parent) {
+				if err := scopedStore.Delete(r.Context(), parentKey, SingletonKey); err != nil && !errors.Is(err, store.ErrNotFound) {
+					srverr.Internal(w, r, err)
+				}
+				return
+			}
+
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
 			encoding.MethodNotAllowed(w, "GET, HEAD, PUT")
 		}
 	}
+}
+
+// parentPresent answers 404 or 500 and returns false unless exists reports the
+// parent; a nil exists means the route has no parent to require.
+func parentPresent(w http.ResponseWriter, r *http.Request, exists func(r *http.Request) error) bool {
+	if exists == nil {
+		return true
+	}
+	err := exists(r)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, store.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+	default:
+		srverr.Internal(w, r, err)
+	}
+	return false
 }

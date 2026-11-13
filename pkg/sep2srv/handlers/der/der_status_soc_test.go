@@ -61,6 +61,7 @@ func TestDERStatusPUTAcceptsSpecCorrectStateOfChargeStatus(t *testing.T) {
 		memory.NewScopedStore[sep2.DERSettings](),
 		statuses,
 		memory.NewScopedStore[sep2.DERAvailability](),
+		nil,
 	)
 
 	mux := http.NewServeMux()

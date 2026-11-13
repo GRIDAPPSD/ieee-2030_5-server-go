@@ -3,10 +3,13 @@ package assembly_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -82,8 +85,9 @@ func TestDERSubResourcePut_MissingDERIs404AndStoresNothing(t *testing.T) {
 	}
 }
 
-// The stored href comes from the request path, and the first write under an
-// existing DER still creates the singleton.
+// The stored href comes from the request path on the create branch and on the
+// update branch, and the first write under an existing DER still creates the
+// singleton.
 func TestDERSubResourcePut_StoredHrefComesFromThePath(t *testing.T) {
 	for _, sr := range subResourcePuts {
 		t.Run(sr.suffix, func(t *testing.T) {
@@ -91,20 +95,132 @@ func TestDERSubResourcePut_StoredHrefComesFromThePath(t *testing.T) {
 			seedDER(t, stores, "7", "1")
 
 			path := "/edev/7/der/1/" + sr.suffix
-			if got := putSub(t, srv.URL, path, sr.body); got != http.StatusNoContent {
-				t.Fatalf("PUT status = %d, want 204", got)
+			foreign := strings.Replace(sr.body, "/edev/9/der/1/", "/edev/8/der/2/", 1)
+			for i, body := range []string{sr.body, foreign} {
+				if got := putSub(t, srv.URL, path, body); got != http.StatusNoContent {
+					t.Fatalf("PUT %d status = %d, want 204", i+1, got)
+				}
+
+				resp, err := srv.Client().Get(srv.URL + path)
+				if err != nil {
+					t.Fatalf("GET %s: %v", path, err)
+				}
+				var got struct {
+					Href string `xml:"href,attr"`
+				}
+				decodeXML(t, resp, &got)
+				if got.Href != path {
+					t.Errorf("after PUT %d served href = %q, want %q", i+1, got.Href, path)
+				}
+			}
+		})
+	}
+}
+
+// A GET under a DER that is not stored answers 404 like the PUT does, not an
+// empty shell with an href to a DER that does not exist. Control: under a
+// stored DER the same GET still serves the default shell.
+func TestDERSubResourceGet_MissingDERIs404(t *testing.T) {
+	for _, sr := range subResourcePuts {
+		t.Run(sr.suffix, func(t *testing.T) {
+			srv, stores := derInstanceServer(t)
+			seedDER(t, stores, "7", "1")
+
+			resp, err := srv.Client().Get(srv.URL + "/edev/7/der/1/" + sr.suffix)
+			if err != nil {
+				t.Fatalf("GET control: %v", err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("control GET under a stored DER = %d, want 200", resp.StatusCode)
 			}
 
-			resp, err := srv.Client().Get(srv.URL + path)
+			resp, err = srv.Client().Get(srv.URL + "/edev/7/der/99/" + sr.suffix)
 			if err != nil {
-				t.Fatalf("GET %s: %v", path, err)
+				t.Fatalf("GET: %v", err)
 			}
-			var got struct {
-				Href string `xml:"href,attr"`
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("GET under a missing DER = %d, want 404", resp.StatusCode)
 			}
-			decodeXML(t, resp, &got)
-			if got.Href != path {
-				t.Errorf("served href = %q, want %q", got.Href, path)
+		})
+	}
+}
+
+// holdingDERs pauses the first Get that succeeds after arm, once released it
+// lets the caller continue, so a test can land a DELETE between a handler's
+// parent check and its write.
+type holdingDERs struct {
+	store.ScopedStore[sep2.DER]
+	mu      sync.Mutex
+	armed   bool
+	passed  chan struct{}
+	release chan struct{}
+}
+
+func (h *holdingDERs) arm() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.armed = true
+}
+
+func (h *holdingDERs) Get(ctx context.Context, parentID, id string) (sep2.DER, error) {
+	d, err := h.ScopedStore.Get(ctx, parentID, id)
+	h.mu.Lock()
+	hold := h.armed && err == nil
+	if hold {
+		h.armed = false
+	}
+	h.mu.Unlock()
+	if hold {
+		close(h.passed)
+		<-h.release
+	}
+	return d, err
+}
+
+// DeleteParent keeps the cascade capability the wrapped store has, which the
+// EndDevice delete requires of every family it removes.
+func (h *holdingDERs) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
+	return store.CascadeParent(ctx, h.ScopedStore, parentID)
+}
+
+// A DELETE of the EndDevice landing between a PUT's parent check and its write
+// must not leave the singleton behind for a device later registered at the same
+// key: the PUT answers 404 and nothing is stored.
+func TestDERSubResourcePut_DeleteBetweenCheckAndWriteStoresNothing(t *testing.T) {
+	for _, sr := range subResourcePuts {
+		t.Run(sr.suffix, func(t *testing.T) {
+			stores := testStores()
+			seedOwnedDevices(t, stores.EndDevices, "e1")
+			hold := &holdingDERs{
+				ScopedStore: stores.DERs,
+				passed:      make(chan struct{}),
+				release:     make(chan struct{}),
+			}
+			stores.DERs = hold
+			seedDER(t, stores, "e1", "1")
+			handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil)
+			srv := httptest.NewServer(handler)
+			t.Cleanup(srv.Close)
+
+			hold.arm()
+			status := make(chan int, 1)
+			go func() { status <- putSub(t, srv.URL, "/edev/e1/der/1/"+sr.suffix, sr.body) }()
+			<-hold.passed
+
+			if got, _ := edevDelRequest(t, srv, http.MethodDelete, "/edev/e1"); got != http.StatusNoContent {
+				close(hold.release)
+				t.Fatalf("DELETE /edev/e1 = %d, want 204", got)
+			}
+			close(hold.release)
+
+			if got := <-status; got != http.StatusNotFound {
+				t.Errorf("PUT status = %d, want 404", got)
+			}
+			ds := &derStores{stores.DERCapabilities, stores.DERSettings, stores.DERStatuses, stores.DERAvailabilities}
+			if n := sr.count(t, ds, "e1/1"); n != 0 {
+				t.Errorf("%d record(s) stored under e1/1 after the device was deleted, want 0", n)
 			}
 		})
 	}

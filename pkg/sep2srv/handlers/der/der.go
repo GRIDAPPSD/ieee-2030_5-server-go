@@ -148,61 +148,44 @@ func BuildDERCurveList(href string, result store.ListResult[sep2.DERCurve], poll
 }
 
 // DERSingletonHandlers creates all DER singleton GET/PUT handlers
-// for DERCapability, DERSettings, DERStatus, DERAvailability.
+// for DERCapability, DERSettings, DERStatus, DERAvailability. A non-nil
+// derExists gates every one of them on the DER being stored (see
+// [coresingleton.WithParent]).
 func DERSingletonHandlers(
 	caps store.ScopedStore[sep2.DERCapability],
 	settings store.ScopedStore[sep2.DERSettings],
 	statuses store.ScopedStore[sep2.DERStatus],
 	avails store.ScopedStore[sep2.DERAvailability],
+	derExists func(r *http.Request) error,
 ) (dercap, derg, ders, dera http.HandlerFunc) {
-
-	derParentKey := func(r *http.Request) string {
-		return r.PathValue("id") + "/" + r.PathValue("derId")
-	}
-
-	dercapHref := func(r *http.Request) string {
-		return fmt.Sprintf("/edev/%s/der/%s/dercap", r.PathValue("id"), r.PathValue("derId"))
-	}
-	dercap = coresingleton.HandleSingletonGetPut[sep2.DERCapability](caps, derParentKey,
-		func(r *http.Request) sep2.DERCapability {
-			return sep2.DERCapability{Resource: sep2.Resource{Href: dercapHref(r)}}
-		},
-		coresingleton.WithStamp(func(r *http.Request, c *sep2.DERCapability) { c.Href = dercapHref(r) }))
-
-	dergHref := func(r *http.Request) string {
-		return fmt.Sprintf("/edev/%s/der/%s/derg", r.PathValue("id"), r.PathValue("derId"))
-	}
-	derg = coresingleton.HandleSingletonGetPut[sep2.DERSettings](settings, derParentKey,
-		func(r *http.Request) sep2.DERSettings {
-			s := sep2.DERSettings{}
-			s.Href = dergHref(r)
-			return s
-		},
-		coresingleton.WithStamp(func(r *http.Request, s *sep2.DERSettings) { s.Href = dergHref(r) }))
-
-	dersHref := func(r *http.Request) string {
-		return fmt.Sprintf("/edev/%s/der/%s/ders", r.PathValue("id"), r.PathValue("derId"))
-	}
-	ders = coresingleton.HandleSingletonGetPut[sep2.DERStatus](statuses, derParentKey,
-		func(r *http.Request) sep2.DERStatus {
-			s := sep2.DERStatus{}
-			s.Href = dersHref(r)
-			return s
-		},
-		coresingleton.WithStamp(func(r *http.Request, s *sep2.DERStatus) { s.Href = dersHref(r) }))
-
-	deraHref := func(r *http.Request) string {
-		return fmt.Sprintf("/edev/%s/der/%s/dera", r.PathValue("id"), r.PathValue("derId"))
-	}
-	dera = coresingleton.HandleSingletonGetPut[sep2.DERAvailability](avails, derParentKey,
-		func(r *http.Request) sep2.DERAvailability {
-			s := sep2.DERAvailability{}
-			s.Href = deraHref(r)
-			return s
-		},
-		coresingleton.WithStamp(func(r *http.Request, s *sep2.DERAvailability) { s.Href = deraHref(r) }))
-
+	dercap = derSubResource(caps, "/dercap", derExists, func(c *sep2.DERCapability, href string) { c.Href = href })
+	derg = derSubResource(settings, "/derg", derExists, func(s *sep2.DERSettings, href string) { s.Href = href })
+	ders = derSubResource(statuses, "/ders", derExists, func(s *sep2.DERStatus, href string) { s.Href = href })
+	dera = derSubResource(avails, "/dera", derExists, func(s *sep2.DERAvailability, href string) { s.Href = href })
 	return
+}
+
+// derSubResource is the one constructor of a DER sub-resource singleton: kept
+// under (device + "/" + derId), with its self href (the DER's href plus
+// suffix) taken from the request path rather than from a client body.
+func derSubResource[T store.Copier[T]](
+	st store.ScopedStore[T],
+	suffix string,
+	derExists func(r *http.Request) error,
+	setHref func(*T, string),
+) http.HandlerFunc {
+	href := func(r *http.Request) string {
+		return fmt.Sprintf("/edev/%s/der/%s", r.PathValue("id"), r.PathValue("derId")) + suffix
+	}
+	return coresingleton.HandleSingletonGetPut[T](st,
+		func(r *http.Request) string { return r.PathValue("id") + "/" + r.PathValue("derId") },
+		func(r *http.Request) T {
+			var shell T
+			setHref(&shell, href(r))
+			return shell
+		},
+		coresingleton.WithStamp(func(r *http.Request, v *T) { setHref(v, href(r)) }),
+		coresingleton.WithParent[T](derExists))
 }
 
 // DefaultDERControlHandler creates a handler for GET/HEAD on DefaultDERControl.

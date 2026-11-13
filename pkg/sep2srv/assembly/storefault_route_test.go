@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -283,9 +285,18 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 		t.Fatalf("assign the probe manager: %v", err)
 	}
 
+	faultyDevices := storetest.NewFaultyEndDeviceStore(device.raw, device.fault)
+	frpStore := storetest.NewFaultyScopedStore[sep2.FlowReservationResponse](memory.NewScopedStore[sep2.FlowReservationResponse](), fault)
+	frpLifecycles := storetest.NewFaultyScopedStore[dercontrol.LifecycleRecord](memory.NewScopedStore[dercontrol.LifecycleRecord](), fault)
+	// DELETE on a flow reservation request runs under the commitment ledger's
+	// fleet lock, so the probe stores need one. The DER control stores it
+	// reads are healthy memory stores that no route here serves.
+	ledger := sources.NewLedger(faultyDevices, managers, frpStore, frpLifecycles,
+		memory.NewScopedStore[sep2.DERControl](), memory.NewScopedStore[dercontrol.LifecycleRecord]())
+
 	return &assembly.Stores{
 		EndDeviceManagers:   managers,
-		EndDevices:          storetest.NewFaultyEndDeviceStore(device.raw, device.fault),
+		EndDevices:          faultyDevices,
 		Registrations:       newFaultyRegistrations(fault),
 		RegistrationPolicy:  testRegistrationPolicy(),
 		MirrorUsagePoints:   storetest.NewFaultyResourceStore[sep2.MirrorUsagePoint](memory.NewStore[sep2.MirrorUsagePoint](), fault),
@@ -317,9 +328,13 @@ func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeD
 		MessagingPrograms:        storetest.NewFaultyResourceStore[sep2.MessagingProgram](memory.NewStore[sep2.MessagingProgram](), fault),
 		TextMessages:             storetest.NewFaultyScopedStore[sep2.TextMessage](memory.NewScopedStore[sep2.TextMessage](), fault),
 		FlowReservationRequests:  storetest.NewFaultyScopedStore[sep2.FlowReservationRequest](memory.NewScopedStore[sep2.FlowReservationRequest](), fault),
-		FlowReservationResponses: storetest.NewFaultyScopedStore[sep2.FlowReservationResponse](memory.NewScopedStore[sep2.FlowReservationResponse](), fault),
-		ResponseSets:             storetest.NewFaultyResourceStore[sep2.ResponseSet](memory.NewStore[sep2.ResponseSet](), fault),
-		Responses:                storetest.NewFaultyScopedStore[sep2.Response](memory.NewScopedStore[sep2.Response](), fault),
+		FlowReservationResponses: frpStore,
+
+		FlowReservationResponseLifecycles: frpLifecycles,
+		CommitmentLedger:                  ledger,
+
+		ResponseSets: storetest.NewFaultyResourceStore[sep2.ResponseSet](memory.NewStore[sep2.ResponseSet](), fault),
+		Responses:    storetest.NewFaultyScopedStore[sep2.Response](memory.NewScopedStore[sep2.Response](), fault),
 	}, fault, device
 }
 

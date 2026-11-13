@@ -275,7 +275,6 @@ var expectedGaps = map[string]expectedGap{
 	},
 	"FlowReservationRequest": {
 		Mandatory: 1,
-		Optional:  1,
 	},
 	"FlowReservationRequestList": {
 		Mandatory: 1,

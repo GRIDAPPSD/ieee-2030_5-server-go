@@ -14,19 +14,12 @@ import (
 // recovery use. The raw response store is given, not the cascading one: the
 // sweep deletes each lifecycle and answer record itself, in its own order.
 func NewFlowReservationRetention(stores *Stores, notifier flowreservation.Notifier, logger *slog.Logger) *flowreservation.Retention {
-	r := &flowreservation.Retention{
-		FRQ:        stores.FlowReservationRequests,
-		FRP:        stores.FlowReservationResponses,
-		Lifecycles: stores.FlowReservationResponseLifecycles,
-		Ledger:     stores.CommitmentLedger,
-		Fleets:     commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers},
-		Grace:      stores.FlowReservationRetentionGrace,
-		Notifier:   notifier,
-		Log:        logger,
-	}
-	if !store.IsAbsent(stores.FlowReservationAnswers) {
-		r.Answers = stores.FlowReservationAnswers
-	}
+	r := flowreservation.NewRetention(
+		stores.FlowReservationRequests, stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles,
+		stores.FlowReservationAnswers, stores.CommitmentLedger,
+		commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}, notifier)
+	r.Grace = stores.FlowReservationRetentionGrace
+	r.Log = logger
 	return r
 }
 

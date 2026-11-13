@@ -115,10 +115,16 @@ func HandleSingletonGetPut[T store.Copier[T]](
 				}
 			}
 
-			if !parentPresent(w, r, o.parent) {
-				if err := scopedStore.Delete(r.Context(), parentKey, SingletonKey); err != nil && !errors.Is(err, store.ErrNotFound) {
-					srverr.Internal(w, r, err)
+			if err := parentCheck(r, o.parent); err != nil {
+				// The record is removed even when the check itself failed: an
+				// unknown parent is treated as gone so no orphan can survive, and
+				// the client retries on the 500. The response is decided after
+				// the Delete, because a failed Delete must answer 500, not 404.
+				if derr := scopedStore.Delete(r.Context(), parentKey, SingletonKey); derr != nil && !errors.Is(derr, store.ErrNotFound) {
+					srverr.Internal(w, r, derr)
+					return
 				}
+				answerParentErr(w, r, err)
 				return
 			}
 
@@ -130,20 +136,32 @@ func HandleSingletonGetPut[T store.Copier[T]](
 	}
 }
 
-// parentPresent answers 404 or 500 and returns false unless exists reports the
-// parent; a nil exists means the route has no parent to require.
-func parentPresent(w http.ResponseWriter, r *http.Request, exists func(r *http.Request) error) bool {
+// parentCheck reports whether the parent exists without writing a response; a
+// nil exists means the route has no parent to require.
+func parentCheck(r *http.Request, exists func(r *http.Request) error) error {
 	if exists == nil {
+		return nil
+	}
+	return exists(r)
+}
+
+// parentPresent answers 404 or 500 and returns false unless exists reports the
+// parent.
+func parentPresent(w http.ResponseWriter, r *http.Request, exists func(r *http.Request) error) bool {
+	err := parentCheck(r, exists)
+	if err == nil {
 		return true
 	}
-	err := exists(r)
-	switch {
-	case err == nil:
-		return true
-	case errors.Is(err, store.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
-	default:
-		srverr.Internal(w, r, err)
-	}
+	answerParentErr(w, r, err)
 	return false
+}
+
+// answerParentErr writes the 404 for an absent parent and a logged 500 for any
+// other failed check.
+func answerParentErr(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	srverr.Internal(w, r, err)
 }

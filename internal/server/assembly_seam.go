@@ -203,6 +203,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		Responses:                s.Responses,
 
 		FlowReservationResponseLifecycles: s.FlowReservationResponseLifecycles,
+		FlowReservationAnswers:            s.FlowReservationAnswers,
 		CommitmentLedger:                  s.CommitmentLedger,
 		FlowReservationQueue:              s.FlowReservationQueue,
 		DERControlIssuer:                  s.DERControlIssuer,

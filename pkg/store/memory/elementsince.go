@@ -63,8 +63,8 @@ func NewElementSinceStore[T store.Copier[T]](inner store.ScopedStore[T], fingerp
 		clock:       clock,
 		since:       make(map[elementKey]map[string]elementSeen),
 	}
-	_, parent := inner.(parentCascader)
-	_, prefix := inner.(prefixCascader)
+	_, parent := inner.(store.ParentCascader)
+	_, prefix := inner.(store.PrefixCascader)
 	switch {
 	case parent && prefix:
 		return sinceBoth[T]{b}
@@ -148,7 +148,7 @@ func (s *ElementSinceStore[T]) Delete(ctx context.Context, parentID, id string) 
 func (s *ElementSinceStore[T]) deleteParent(ctx context.Context, parentID string) (uint32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n, err := s.ScopedStore.(parentCascader).DeleteParent(ctx, parentID)
+	n, err := s.ScopedStore.(store.ParentCascader).DeleteParent(ctx, parentID)
 	s.reconcile(ctx, func(k elementKey) bool { return k.parentID == parentID })
 	return n, err
 }
@@ -156,7 +156,7 @@ func (s *ElementSinceStore[T]) deleteParent(ctx context.Context, parentID string
 func (s *ElementSinceStore[T]) deletePrefix(ctx context.Context, prefix string) (uint32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n, err := s.ScopedStore.(prefixCascader).DeleteParentsWithPrefix(ctx, prefix)
+	n, err := s.ScopedStore.(store.PrefixCascader).DeleteParentsWithPrefix(ctx, prefix)
 	s.reconcile(ctx, func(k elementKey) bool { return strings.HasPrefix(k.parentID, prefix) })
 	return n, err
 }

@@ -88,3 +88,47 @@ func TestResponseStore_NotesByValueAndOnlyOnSuccess(t *testing.T) {
 		}
 	})
 }
+
+func TestResponseStore_DeleteNotesTheRemovedResponse(t *testing.T) {
+	t.Parallel()
+	const up = "0123456789ABCDEF0123456789ABCDEF"
+	status := uint8(3)
+
+	t.Run("notes the facts of the one removed", func(t *testing.T) {
+		t.Parallel()
+		inner := memory.NewScopedStore[sep2.Response]()
+		s := NewResponseStore(inner, fixedIdentity(lfdiA, true))
+		if err := inner.Create(context.Background(), "1", "r", sep2.Response{Subject: up, Status: &status, EndDeviceLFDI: lfdiB}); err != nil {
+			t.Fatal(err)
+		}
+		ctx, note := WithNote(context.Background())
+		if err := s.Delete(ctx, "1", "r"); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]any{"subject": up, "rspStatus": 3, "target": lfdiB}
+		got := note.Fields()
+		if len(got) != len(want) {
+			t.Errorf("fields = %v, want %v", got, want)
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("field %s = %v, want %v", k, got[k], v)
+			}
+		}
+		if _, err := inner.Get(context.Background(), "1", "r"); err == nil {
+			t.Error("Response still stored after Delete")
+		}
+	})
+
+	t.Run("a missing id notes nothing and returns the inner error", func(t *testing.T) {
+		t.Parallel()
+		s := NewResponseStore(memory.NewScopedStore[sep2.Response](), fixedIdentity(lfdiA, true))
+		ctx, note := WithNote(context.Background())
+		if err := s.Delete(ctx, "1", "nope"); err == nil {
+			t.Fatal("want the inner not-found error")
+		}
+		if got := note.Fields(); len(got) != 0 {
+			t.Errorf("fields after failed Delete = %v, want none", got)
+		}
+	})
+}

@@ -37,6 +37,26 @@ func (s *ResponseStore) Create(ctx context.Context, parentID, id string, rsp sep
 	if err := s.ScopedStore.Create(ctx, parentID, id, rsp); err != nil {
 		return err
 	}
+	s.note(ctx, rsp)
+	return nil
+}
+
+// Delete removes the Response, then notes the facts of the one removed, so
+// the DELETE's request line says which event and status it took away. A
+// Response that cannot be read first or removed notes nothing.
+func (s *ResponseStore) Delete(ctx context.Context, parentID, id string) error {
+	rsp, getErr := s.ScopedStore.Get(ctx, parentID, id)
+	if err := s.ScopedStore.Delete(ctx, parentID, id); err != nil {
+		return err
+	}
+	if getErr == nil {
+		s.note(ctx, rsp)
+	}
+	return nil
+}
+
+// note hands rsp's facts to the request's Note.
+func (s *ResponseStore) note(ctx context.Context, rsp sep2.Response) {
 	note := NoteFrom(ctx)
 	if rsp.Subject != "" {
 		if m, ok := mrid.Canonical(rsp.Subject); ok {
@@ -54,5 +74,4 @@ func (s *ResponseStore) Create(ctx context.Context, parentID, id string, rsp sep
 			_ = note.Set("target", named)
 		}
 	}
-	return nil
 }

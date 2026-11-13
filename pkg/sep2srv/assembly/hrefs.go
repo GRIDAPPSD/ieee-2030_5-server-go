@@ -250,6 +250,7 @@ func MintableHrefs() []MintableHref {
 		{"/msg/{}/acttm", http.MethodGet, "handlers/messaging.ActiveLinkProgramStore ActiveTextMessageListLink", "the program's active text message list, advertised on every MessagingProgram"},
 		{"/msg/{}/tm/{}", http.MethodGet, "handlers/messaging.HandlePostTextMessage", "the Location header returned by POST /msg/{}/tm"},
 		{"/rsps/{}/rsp/{}", http.MethodGet, "handlers/response.MemberHref", "the Location header returned by POST /rsps/{}/rsp, and the Response's own self href"},
+		{"/rsps/{}/rsp/{}", http.MethodDelete, "handlers/response.MemberHref", "the same Location header, used to remove the Response; DELETE on the Response is mode O (sep_wadl.xml:562)"},
 
 		// The Response function set. The POST entry is not a follow of a
 		// Location header like the block above: it is the follow of an EVENT's

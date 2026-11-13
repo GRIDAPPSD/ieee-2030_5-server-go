@@ -152,3 +152,58 @@ func TestPostResponseRefusalLogLine(t *testing.T) {
 		}
 	}
 }
+
+// deleteResponse stores one Response naming lfdi and DELETEs it through
+// HandleDeleteResponse with authorize.
+func deleteResponse(t *testing.T, authorize flow_reservation.ResponseSenderAuthorizer, lfdi string) (*httptest.ResponseRecorder, *memory.ScopedStore[sep2.Response]) {
+	t.Helper()
+	rspStore := memory.NewScopedStore[sep2.Response]()
+	if err := rspStore.Create(context.Background(), "1", "r", sep2.Response{EndDeviceLFDI: lfdi}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /rsps/{rspsId}/rsp/{rspId}", flow_reservation.HandleDeleteResponse(rspStore, authorize))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/rsps/1/rsp/r", nil))
+	return w, rspStore
+}
+
+// The authorizer is asked about the STORED LFDI, in canonical form. A refusal,
+// a failed check and a missing authorizer each leave the Response in place,
+// and a Response naming no device is never offered to the authorizer.
+func TestDeleteResponseAuthorizerOutcomes(t *testing.T) {
+	failing := func(*http.Request, string) (bool, string, error) {
+		return false, senderLFDI, errors.New("management store unavailable")
+	}
+	cases := []struct {
+		name       string
+		useOwn     bool
+		authorize  flow_reservation.ResponseSenderAuthorizer
+		stored     string
+		wantStatus int
+		wantAsked  string
+		wantKept   int
+	}{
+		{"admitted caller deletes", true, nil, strings.ToLower(senderLFDI), http.StatusNoContent, senderLFDI, 0},
+		{"authorizer refuses", true, nil, foreignLFDI, http.StatusForbidden, foreignLFDI, 1},
+		{"authorizer error", false, failing, senderLFDI, http.StatusInternalServerError, "", 1},
+		{"nil authorizer", false, nil, senderLFDI, http.StatusForbidden, "", 1},
+		{"unnamed device is never offered", true, nil, "", http.StatusForbidden, "", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var asked string
+			authorize := tc.authorize
+			if tc.useOwn {
+				authorize = ownOnly(&asked)
+			}
+			w, rspStore := deleteResponse(t, authorize, tc.stored)
+			if w.Code != tc.wantStatus || asked != tc.wantAsked {
+				t.Fatalf("status %d asked %q, want %d and %q", w.Code, asked, tc.wantStatus, tc.wantAsked)
+			}
+			if got := storedResponses(t, rspStore); len(got) != tc.wantKept {
+				t.Errorf("stored %d Responses, want %d", len(got), tc.wantKept)
+			}
+		})
+	}
+}

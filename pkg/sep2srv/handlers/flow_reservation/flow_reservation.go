@@ -476,6 +476,62 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 	}
 }
 
+// HandleDeleteResponse returns a handler for DELETE /rsps/{rspsId}/rsp/{rspId}
+// (WADL mode O).
+//
+// A Response is removed only when authorize admits the caller for the device
+// the stored Response names, the same check POST applies: the poster, or its
+// current manager. The decision reads the STORED endDeviceLFDI, never anything
+// the request carries. A Response that names no device has no owner to check
+// against, so it is refused rather than left deletable by any caller; a nil
+// authorize refuses every delete. A refusal is 403, a missing id is 404, and
+// a check that cannot complete is 500; nothing is removed in any of them.
+func HandleDeleteResponse(rspStore store.ScopedStore[sep2.Response], authorize ResponseSenderAuthorizer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			encoding.MethodNotAllowed(w, "DELETE")
+			return
+		}
+
+		rspsID, rspID := r.PathValue("rspsId"), r.PathValue("rspId")
+		rsp, err := rspStore.Get(r.Context(), rspsID, rspID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+
+		allowed, sender := false, ""
+		if lfdi, ok := sep2lfdi.Canonical(rsp.EndDeviceLFDI); ok && authorize != nil {
+			allowed, sender, err = authorize(r, lfdi)
+			if err != nil {
+				srverr.Internal(w, r, err)
+				return
+			}
+		}
+		if !allowed {
+			// sender is a certificate identity; the path is quoted because it
+			// is decoded request text.
+			log.Printf("rsps: refused deleting a Response from sender %s: neither the sender nor a manager of the device it names (%s %q)", sender, r.Method, r.URL.Path)
+			http.Error(w, "the Response does not name the sender or a device it manages", http.StatusForbidden)
+			return
+		}
+
+		if err := rspStore.Delete(r.Context(), rspsID, rspID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // ResponseSenderAuthorizer reports whether the sender of r may post a
 // Response naming endDeviceLFDI (canonical uppercase): the sender's own
 // device, or one it manages. sender is the sender's LFDI for the refusal

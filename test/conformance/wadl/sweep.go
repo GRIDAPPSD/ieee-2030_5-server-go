@@ -699,6 +699,11 @@ const sepNS = "urn:ieee:std:2030.5:ns"
 // so every child seed addresses the discovered device and not a guessed id.
 const devToken = "{dev}"
 
+// lfdiToken in a seed body stands for the LFDI of that same EndDevice, read
+// from the stores the target serves, for a body that must name the posting
+// device (a Response is deletable only by the device it names).
+const lfdiToken = "{devLFDI}"
+
 type seed struct {
 	method  string
 	path    string
@@ -818,10 +823,12 @@ func seedSet() []seed {
 				`</FlowReservationRequest>`,
 		},
 		{
-			// The server answers Response POSTs from any device, and one stored
-			// Response serves every Response type the WADL lists at this path.
+			// The Response names the posting device, so that device may delete
+			// it, and one stored Response serves every Response type the WADL
+			// lists at this path.
 			method: http.MethodPost, path: "/rsps/1/rsp", element: "Response",
 			body: `<Response xmlns="` + sepNS + `"><createdDateTime>1785700000</createdDateTime>` +
+				`<endDeviceLFDI>` + lfdiToken + `</endDeviceLFDI>` +
 				`<status>1</status><subject>0123456789ABCDEF0123456789ABCDEF</subject></Response>`,
 		},
 		{
@@ -911,13 +918,20 @@ func (t *Target) phaseSeed(rows *[]Row, ri *routeIndex) []string {
 		path := s.path
 		var r response
 		var directErr error
-		unresolved := strings.Contains(path, devToken) && dev == ""
+		lfdi := ""
+		if strings.Contains(s.body, lfdiToken) && dev != "" && t.Stores != nil {
+			if d, err := t.Stores.EndDevices.Get(context.Background(), dev); err == nil {
+				lfdi = d.LFDI
+			}
+		}
+		unresolved := (strings.Contains(path, devToken) && dev == "") ||
+			(strings.Contains(s.body, lfdiToken) && lfdi == "")
 		path = strings.ReplaceAll(path, devToken, dev)
-		body := strings.ReplaceAll(s.body, devToken, dev)
+		body := strings.ReplaceAll(strings.ReplaceAll(s.body, devToken, dev), lfdiToken, lfdi)
 
 		switch {
 		case unresolved:
-			directErr = errors.New("the EndDevice seed produced no device id")
+			directErr = errors.New("the EndDevice seed produced no device id or LFDI")
 		case s.direct != nil && t.Stores == nil:
 			directErr = errors.New("the target carries no stores to seed")
 		case s.direct != nil:

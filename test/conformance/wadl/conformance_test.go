@@ -477,9 +477,6 @@ var expectedGaps = map[string]expectedGap{
 		Optional:               1,
 		RestrictedNotForbidden: 1,
 	},
-	"Response": {
-		Optional: 1,
-	},
 	"ServiceSupplier": {
 		Mandatory:  2,
 		Deprecated: 1,

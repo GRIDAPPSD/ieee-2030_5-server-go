@@ -128,6 +128,8 @@ import (
 //
 // DELETE on the DeviceStatus and PUT on the LogEvent instance are ADDED
 // (#1264, first slice).
+//
+// DELETE on the Response is ADDED (#1264, third slice).
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/dstat",
@@ -135,6 +137,7 @@ var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}/rg",
 	"DELETE /edev/{id}/sub/{subId}",
 	"DELETE /mup/{id}",
+	"DELETE /rsps/{rspsId}/rsp/{rspId}",
 	"GET /dc",
 	"GET /dcap",
 	"GET /edev",

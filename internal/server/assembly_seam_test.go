@@ -139,6 +139,7 @@ var canonicalProtocolRoutes = []string{
 	"DELETE /mup/{id}",
 	"DELETE /rsps/{rspsId}/rsp/{rspId}",
 	"GET /dc",
+	"GET /dc/{dcId}",
 	"GET /dcap",
 	"GET /edev",
 	"GET /edev/{id}",

@@ -1308,6 +1308,9 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /dc", corelisthandler.SortedListHandler[sep2.DERCurve, sep2.DERCurveList](
 		store.Ordered(derCurves, coreder.CompareDERCurve), store.SortByListOrdering, coreder.BuildDERCurveList, 900,
 	))
+	// The href a DERControl's curve link carries (dercurve.Href). Same /dc
+	// family as the list, so the same read-only, DER-anchored access rule.
+	mux.HandleFunc("GET /dc/{dcId}", curveHandler(derCurves))
 }
 
 // scopedListHandler creates a list handler scoped by the path value named

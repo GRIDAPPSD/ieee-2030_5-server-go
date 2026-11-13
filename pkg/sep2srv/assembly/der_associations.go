@@ -61,7 +61,15 @@ func programCurveListHandler(curves store.ResourceStore[sep2.DERCurve], programs
 // programCurveHandler serves GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dc/{dcId}:
 // the stored curve under its program-scoped href, the one the list gives it.
 func programCurveHandler(curves store.ResourceStore[sep2.DERCurve], programs store.ScopedStore[sep2.DERProgram], warn *unscopedProgramWarnings) http.HandlerFunc {
-	return requireParent(programExists(programs, warn), func(w http.ResponseWriter, r *http.Request) {
+	return requireParent(programExists(programs, warn), curveHandler(curves))
+}
+
+// curveHandler serves the stored curve named by the {dcId} path value, with
+// its href set to the path requested. It owns the curve read for both the
+// program-scoped route and GET /dc/{dcId}, the href a DERControl's curve
+// link carries.
+func curveHandler(curves store.ResourceStore[sep2.DERCurve]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		curve, err := curves.Get(r.Context(), r.PathValue("dcId"))
 		if err != nil {
 			writeLookupFailure(w, r, err)
@@ -69,7 +77,7 @@ func programCurveHandler(curves store.ResourceStore[sep2.DERCurve], programs sto
 		}
 		curve.Href = r.URL.Path
 		encoding.WriteXML(w, http.StatusOK, &curve)
-	})
+	}
 }
 
 // associatedProgramListHandler serves GET /edev/{id}/der/{derId}/derp: every

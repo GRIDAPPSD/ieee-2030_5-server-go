@@ -34,10 +34,12 @@ const (
 var ErrSchemaNotFound = errors.New("IEEE 2030.5 schema (sep.xsd) not available: set " + EnvSchemaPath + " to a copy")
 
 // LinkSchema is what the crawl needs from sep.xsd: which Link fields some type
-// declares, and which types extend which.
+// declares, and which types extend which. children keeps each type's own element
+// declarations in schema order, which ValidateBody walks.
 type LinkSchema struct {
-	fields map[string]bool
-	bases  map[string]string
+	fields   map[string]bool
+	bases    map[string]string
+	children map[string][]childDecl
 }
 
 // ParseLinkSchema reads Link fields and type extensions out of sep.xsd bytes.
@@ -47,7 +49,7 @@ type LinkSchema struct {
 // exists only as a global element, no type carries it, and no crawl can reach
 // the resource through it.
 func ParseLinkSchema(xsd []byte) (*LinkSchema, error) {
-	s := &LinkSchema{fields: map[string]bool{}, bases: map[string]string{}}
+	s := &LinkSchema{fields: map[string]bool{}, bases: map[string]string{}, children: map[string][]childDecl{}}
 	dec := xml.NewDecoder(bytes.NewReader(xsd))
 	var typeName string
 	for {
@@ -69,6 +71,14 @@ func ParseLinkSchema(xsd []byte) (*LinkSchema, error) {
 					s.bases[typeName] = stripNS(attrValue(t.Attr, "base"))
 				}
 			case "element":
+				if typeName != "" && name != "" {
+					s.children[typeName] = append(s.children[typeName], childDecl{
+						name:     name,
+						typ:      stripNS(attrValue(t.Attr, "type")),
+						optional: attrValue(t.Attr, "minOccurs") == "0",
+						max:      maxOccurs(attrValue(t.Attr, "maxOccurs")),
+					})
+				}
 				if typeName != "" && strings.HasSuffix(name, "Link") {
 					s.fields[name] = true
 				}

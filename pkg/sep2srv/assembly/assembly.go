@@ -1223,7 +1223,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// to a 405 carrying an Allow header derived from itemMethods, which section
 	// 4.3 c) 4) requires and an unmounted path could not produce: it would 404.
 	derInstance := scopedResourceHandler[sep2.DER](
-		stores.DERs, "id", "derId", itemMethods{PutUpdateOnly: true}, coreder.StampDERInstance(derLinks),
+		stores.DERs, "id", "derId", itemMethods{PutUpdateOnly: true, LogUnseededScope: true}, coreder.StampDERInstance(derLinks),
 	)
 	mux.HandleFunc("GET /edev/{id}/der/{derId}", derInstance)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}", derInstance)
@@ -1464,6 +1464,12 @@ type itemMethods struct {
 	// pick the key. It takes the place of Put, not in addition to it.
 	PutUpdateOnly bool
 
+	// LogUnseededScope makes an update-only PUT that answers 404 log when its
+	// whole scope is empty. Set it only where the scope is filled by a seed, so
+	// an empty one means the seed failed; a scope filled by POST is empty
+	// normally and would log on every stray PUT.
+	LogUnseededScope bool
+
 	// Delete mounts DELETE on the resource, removing the record the path
 	// names. It is a WRITE, and this helper carries no ownership binding of its
 	// own: it constrains WHERE a record may be reached from, not WHO may reach
@@ -1597,7 +1603,9 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 				// One Update, no Create: a DELETE that wins the race is a 404,
 				// and the client's id never becomes a new key.
 				if err := scopedStore.Update(r.Context(), parentKey, id, resource); err != nil {
-					logUnseededScope(r, scopedStore, parentKey, err)
+					if methods.LogUnseededScope {
+						logUnseededScope(r, scopedStore, parentKey, err)
+					}
 					writeLookupFailure(w, r, err)
 					return
 				}
@@ -1715,8 +1723,13 @@ func logUnseededScope[T store.Copier[T]](r *http.Request, scopedStore store.Scop
 	if !errors.Is(err, store.ErrNotFound) {
 		return
 	}
-	res, lerr := scopedStore.List(r.Context(), parentKey, store.ListOptions{Unbounded: true})
-	if lerr != nil || len(res.Items) > 0 {
+	// One item is enough to tell an empty scope from a populated one.
+	res, lerr := scopedStore.List(r.Context(), parentKey, store.ListOptions{Limit: 1})
+	if lerr != nil {
+		log.Printf("assembly: PUT %s answered 404: checking whether scope %s is seeded failed: %v", logsafe.Str(r.URL.Path), logsafe.Str(parentKey), logsafe.Err(lerr))
+		return
+	}
+	if len(res.Items) > 0 {
 		return
 	}
 	log.Printf("assembly: PUT %s answered 404: scope %s holds no resource, so it was never seeded", logsafe.Str(r.URL.Path), logsafe.Str(parentKey))

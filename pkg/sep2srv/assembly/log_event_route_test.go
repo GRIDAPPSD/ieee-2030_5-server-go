@@ -1,12 +1,15 @@
 package assembly_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -966,5 +969,32 @@ func TestLogEvent_PutRacingDeleteIs404Never500(t *testing.T) {
 	id := strings.TrimPrefix(loc, "/edev/d1/lel/")
 	if _, err := inner.Get(t.Context(), "d1", id); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("event after the raced PUT: err = %v, want ErrNotFound (nothing recreated)", err)
+	}
+}
+
+// A LogEvent scope is empty until the first POST, so a PUT to an id in an empty
+// scope is an ordinary 404 and must not log the DER-only "never seeded" line.
+// Not parallel: it captures the process-wide log output.
+func TestLogEventInstance_PUTToAnEmptyScopeLogsNothing(t *testing.T) {
+	srv, _ := lelServer(t)
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/edev/d1/lel/nosuch", strings.NewReader(`<LogEvent xmlns="urn:ieee:std:2030.5:ns"/>`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("PUT status = %d, want 404", resp.StatusCode)
+	}
+	if out := buf.String(); strings.Contains(out, "never seeded") {
+		t.Errorf("log = %q, an empty LogEvent scope is normal and must log nothing", out)
 	}
 }

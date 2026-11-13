@@ -60,6 +60,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
@@ -1205,17 +1206,18 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		store.OrderedScoped(stores.DERs, coreder.CompareDER), "id", store.SortByListOrdering, coreder.DERListBuilder(derLinks), derstatus.DefaultPollRateSeconds,
 	))
 
-	// The DER instance itself. Every DERList member carries this
-	// href as its own, and before this route existed following it produced a 404
-	// from the server that had just advertised it. HEAD comes free: a ServeMux
-	// pattern registered for GET matches HEAD as well.
+	// The DER instance itself. Every DERList member carries this href as its
+	// own, and before this route existed following it produced a 404 from the
+	// server that had just advertised it. HEAD comes free: a ServeMux pattern
+	// registered for GET matches HEAD as well.
 	//
 	// PUT is mode O in the WADL (sep_wadl.xml:4116) but on the certified path:
 	// SunSpec CTP CORE-014 and CORE-016 walk DERList through to the DER and PUT
 	// to these resources. It replaces a DER that exists and never creates one,
-	// so a client cannot choose the key or the stamped href. GET and PUT share ONE handler value so the two verbs
-	// cannot drift into different scope derivations, the same reason the four
-	// sub-resources above are registered as pairs against one handler.
+	// so a client cannot choose the key or the stamped href. GET and PUT share
+	// ONE handler value so the two verbs cannot drift into different scope
+	// derivations, the same reason the four sub-resources above are registered
+	// as pairs against one handler.
 	//
 	// DELETE (mode O, not yet implemented) and POST (mode E) fall through
 	// to a 405 carrying an Allow header derived from itemMethods, which section
@@ -1592,6 +1594,7 @@ func scopedResourceHandlerWith[T store.Copier[T]](
 				// One Update, no Create: a DELETE that wins the race is a 404,
 				// and the client's id never becomes a new key.
 				if err := scopedStore.Update(r.Context(), parentKey, id, resource); err != nil {
+					logUnseededScope(r, scopedStore, parentKey, err)
 					writeLookupFailure(w, r, err)
 					return
 				}
@@ -1699,6 +1702,21 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 		flatReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(flatReadingTypes))
+}
+
+// logUnseededScope names the case where an update-only PUT answered 404 because
+// its whole scope is empty, not just the one id: nothing creates the record
+// any more, so a failed boot-time or registration seed would otherwise show as
+// one line at seed time and a bare 404 per request after it.
+func logUnseededScope[T store.Copier[T]](r *http.Request, scopedStore store.ScopedStore[T], parentKey string, err error) {
+	if !errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	res, lerr := scopedStore.List(r.Context(), parentKey, store.ListOptions{Unbounded: true})
+	if lerr != nil || len(res.Items) > 0 {
+		return
+	}
+	log.Printf("assembly: PUT %s answered 404: scope %s holds no resource, so it was never seeded", logsafe.Str(r.URL.Path), logsafe.Str(parentKey))
 }
 
 // writeLookupFailure answers a failed store read: store.ErrNotFound is the

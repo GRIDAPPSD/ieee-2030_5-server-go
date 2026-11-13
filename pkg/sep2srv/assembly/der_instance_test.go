@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -343,6 +345,46 @@ func TestDERInstance_PUTStoresTheServersOwnHrefAndDropsUnservedLinks(t *testing.
 	assertDERLinks(t, got, path)
 }
 
+// TestDERInstance_PUTWritesTheStoredDER reads the store directly, because a GET
+// re-stamps links at serve time and would hide a PUT that never wrote. The DER
+// is seeded bare, so every field asserted below can only come from the PUT.
+func TestDERInstance_PUTWritesTheStoredDER(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := derInstanceServer(t)
+	seedBareDER(t, stores, "7", "3")
+	path := derHref("7", "3")
+
+	putBody := `<DER xmlns="urn:ieee:std:2030.5:ns" href="/edev/99/der/99">` +
+		`<AssociatedDERProgramListLink href="/edev/99/der/99/derp"/>` +
+		`</DER>`
+	req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(putBody))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/sep+xml")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("PUT status = %d, want 204", resp.StatusCode)
+	}
+
+	stored, err := stores.DERs.Get(context.Background(), "7", "3")
+	if err != nil {
+		t.Fatalf("read stored DER: %v", err)
+	}
+	if stored.Href != path {
+		t.Errorf("stored Href = %q, want %q", stored.Href, path)
+	}
+	if stored.AssociatedDERProgramListLink == nil || stored.AssociatedDERProgramListLink.Href != path+"/derp" {
+		t.Errorf("stored AssociatedDERProgramListLink = %+v, want the derived %s", stored.AssociatedDERProgramListLink, path+"/derp")
+	}
+	assertDERLinks(t, stored, path)
+}
+
 // TestDERInstance_PUTIsUpdateOnlyAndNeverCreates: a PUT to a derId with no
 // stored DER answers 404 and stores nothing. The id in the path is the client's
 // choice, so an upsert let it pick the key and the stamped href; the encoded
@@ -380,6 +422,47 @@ func TestDERInstance_PUTIsUpdateOnlyAndNeverCreates(t *testing.T) {
 	}
 	if len(res.Items) != 1 || res.Items[0].Href != derHref("7", "3") {
 		t.Errorf("device 7 holds %d DERs %+v after the refused PUTs, want only the seeded /edev/7/der/3", len(res.Items), res.Items)
+	}
+}
+
+// TestDERInstance_PUTToAnUnseededDeviceLogsThatItWasNeverSeeded: a device whose
+// DER seed failed answers every PUT with 404, and the log line must say the
+// scope is empty rather than leave a bare 404. Not parallel: it captures the
+// process-wide log output.
+func TestDERInstance_PUTToAnUnseededDeviceLogsThatItWasNeverSeeded(t *testing.T) {
+	srv, stores := derInstanceServer(t)
+	seedBareDER(t, stores, "7", "1")
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	put := func(path string) int {
+		req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(`<DER xmlns="urn:ieee:std:2030.5:ns"/>`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := put(derHref("deviceA", "1")); got != http.StatusNotFound {
+		t.Fatalf("PUT to an unseeded device status = %d, want 404", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "never seeded") || !strings.Contains(out, derHref("deviceA", "1")) {
+		t.Errorf("log = %q, want a line naming the path and that its scope was never seeded", out)
+	}
+
+	buf.Reset()
+	if got := put(derHref("7", "2")); got != http.StatusNotFound {
+		t.Fatalf("PUT to a missing id on a seeded device status = %d, want 404", got)
+	}
+	if out := buf.String(); strings.Contains(out, "never seeded") {
+		t.Errorf("log = %q, a seeded device's missing id must not claim the device was never seeded", out)
 	}
 }
 

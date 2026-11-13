@@ -228,6 +228,19 @@ func (f *FreqDroopType) UnmarshalJSON(data []byte) error {
 // the simple-typed children in want, in order, each once, in start's
 // namespace, with no other text. set receives each child's text.
 func decodeChildren(d *xml.Decoder, start xml.StartElement, typeName string, want []string, set func(name, text string) error) error {
+	return decodeChildSequence(d, start, typeName, want, true, set)
+}
+
+// decodeOptionalChildren is decodeChildren for a sequence whose children are
+// all minOccurs 0: any subset of want may appear, in want's order, each at
+// most once. Every other rule is decodeChildren's.
+func decodeOptionalChildren(d *xml.Decoder, start xml.StartElement, typeName string, want []string, set func(name, text string) error) error {
+	return decodeChildSequence(d, start, typeName, want, false, set)
+}
+
+// decodeChildSequence is the one decode loop behind both. When required is
+// false a child may skip past entries of want but never go back to one.
+func decodeChildSequence(d *xml.Decoder, start xml.StartElement, typeName string, want []string, required bool, set func(name, text string) error) error {
 	next := 0
 	for {
 		tok, err := d.Token()
@@ -236,7 +249,13 @@ func decodeChildren(d *xml.Decoder, start xml.StartElement, typeName string, wan
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if next >= len(want) || t.Name.Local != want[next] {
+			idx := next
+			if !required {
+				for idx < len(want) && want[idx] != t.Name.Local {
+					idx++
+				}
+			}
+			if idx >= len(want) || t.Name.Local != want[idx] {
 				return fmt.Errorf("sep2: %s: unexpected element <%s>", typeName, t.Name.Local)
 			}
 			if t.Name.Space != start.Name.Space {
@@ -249,13 +268,13 @@ func decodeChildren(d *xml.Decoder, start xml.StartElement, typeName string, wan
 			if err := set(t.Name.Local, text); err != nil {
 				return fmt.Errorf("sep2: %s.%s: %w", typeName, t.Name.Local, err)
 			}
-			next++
+			next = idx + 1
 		case xml.CharData:
 			if len(bytes.TrimSpace(t)) > 0 {
 				return errUnexpectedText(typeName, bytes.TrimSpace(t), "")
 			}
 		case xml.EndElement:
-			if next < len(want) {
+			if required && next < len(want) {
 				return fmt.Errorf("sep2: %s: missing element <%s>", typeName, want[next])
 			}
 			return nil

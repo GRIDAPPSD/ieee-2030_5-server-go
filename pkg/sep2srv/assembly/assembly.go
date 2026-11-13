@@ -2007,8 +2007,14 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 				inner, coreflowrsv.BuildResponseList, 900,
 			)(w, r)
 		})
-		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(devicelog.NewResponseStore(responses, identity), responseSenderAuthorizer(identity, stores.EndDeviceManagers)))
+		// POST and DELETE share one decorated store and one authorizer: the
+		// device log records what a device posted or removed, and a Response
+		// is deleted only by whom it could have been posted for.
+		loggedResponses := devicelog.NewResponseStore(responses, identity)
+		authorizeResponse := responseSenderAuthorizer(identity, stores.EndDeviceManagers)
+		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(loggedResponses, authorizeResponse))
 		mux.HandleFunc("GET /rsps/{rspsId}/rsp/{rspId}", coreresponse.HandleResponse(responses))
+		mux.HandleFunc("DELETE /rsps/{rspsId}/rsp/{rspId}", coreflowrsv.HandleDeleteResponse(loggedResponses, authorizeResponse))
 	}
 }
 

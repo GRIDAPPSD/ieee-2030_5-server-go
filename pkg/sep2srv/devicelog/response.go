@@ -2,8 +2,11 @@ package devicelog
 
 import (
 	"context"
+	"errors"
+	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/mrid"
@@ -37,6 +40,31 @@ func (s *ResponseStore) Create(ctx context.Context, parentID, id string, rsp sep
 	if err := s.ScopedStore.Create(ctx, parentID, id, rsp); err != nil {
 		return err
 	}
+	s.note(ctx, rsp)
+	return nil
+}
+
+// Delete removes the Response, then notes the facts of the one removed, so
+// the DELETE's request line says which event and status it took away. A
+// Response that cannot be read first or removed notes nothing. An unreadable
+// Response is still deleted, since the caller's authority was already decided
+// on its own read; the failure is logged so the bare log line is explained.
+func (s *ResponseStore) Delete(ctx context.Context, parentID, id string) error {
+	rsp, getErr := s.ScopedStore.Get(ctx, parentID, id)
+	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+		log.Printf("device log: reading Response %s/%s before its delete failed, so the DELETE line carries no facts: %s", logsafe.Quote(parentID), logsafe.Quote(id), logsafe.Err(getErr))
+	}
+	if err := s.ScopedStore.Delete(ctx, parentID, id); err != nil {
+		return err
+	}
+	if getErr == nil {
+		s.note(ctx, rsp)
+	}
+	return nil
+}
+
+// note hands rsp's facts to the request's Note.
+func (s *ResponseStore) note(ctx context.Context, rsp sep2.Response) {
 	note := NoteFrom(ctx)
 	if rsp.Subject != "" {
 		if m, ok := mrid.Canonical(rsp.Subject); ok {
@@ -54,5 +82,4 @@ func (s *ResponseStore) Create(ctx context.Context, parentID, id string, rsp sep
 			_ = note.Set("target", named)
 		}
 	}
-	return nil
 }

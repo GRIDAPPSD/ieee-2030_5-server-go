@@ -472,9 +472,6 @@ var expectedGaps = map[string]expectedGap{
 	"ReadingType": {
 		Mandatory: 0,
 	},
-	"Response": {
-		Optional: 1,
-	},
 	"ServiceSupplier": {
 		Mandatory:  2,
 		Deprecated: 1,

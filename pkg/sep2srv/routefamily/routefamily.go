@@ -53,10 +53,12 @@ func (w Wired) Serves(prefix string) bool {
 }
 
 var (
-	read      = []string{http.MethodGet, http.MethodHead}
-	post      = []string{http.MethodPost}
-	readPost  = []string{http.MethodGet, http.MethodHead, http.MethodPost}
-	readWrite = []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete}
+	read     = []string{http.MethodGet, http.MethodHead}
+	post     = []string{http.MethodPost}
+	readPost = []string{http.MethodGet, http.MethodHead, http.MethodPost}
+	// readPostDelete is /rsps: a Response is posted and, as mode O, deleted.
+	readPostDelete = []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete}
+	readWrite      = []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete}
 )
 
 // All returns the families. A path no family names is refused (Refuse).
@@ -72,7 +74,7 @@ func All() []Family {
 		{Prefix: "/upt", Subtree: true, Methods: readWrite, Anchor: AnchorUsagePoints},
 		{Prefix: "/rt", Subtree: true, Methods: read, Anchor: AnchorUsagePoints},
 		{Prefix: "/msg", Subtree: true, Methods: readPost, Anchor: AnchorMessagingPrograms},
-		{Prefix: "/rsps", Subtree: true, Methods: readPost, Anchor: AnchorResponseSets},
+		{Prefix: "/rsps", Subtree: true, Methods: readPostDelete, Anchor: AnchorResponseSets},
 		{Prefix: "/ntfy", Methods: post},
 	}
 }

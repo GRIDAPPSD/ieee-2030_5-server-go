@@ -29,7 +29,7 @@ var goldenFamilies = map[string]struct {
 	"/upt":  {"GET,HEAD,POST,PUT,DELETE", false},
 	"/rt":   {"GET,HEAD", false},
 	"/msg":  {"GET,HEAD,POST", false},
-	"/rsps": {"GET,HEAD,POST", false},
+	"/rsps": {"GET,HEAD,POST,DELETE", false},
 	"/ntfy": {"POST", false},
 }
 

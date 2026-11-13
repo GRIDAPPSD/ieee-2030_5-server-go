@@ -126,24 +126,74 @@ func (t TextResponse) Copy() TextResponse {
 	return c
 }
 
+// DrResponseDRLC is the demand response part of a DrResponse, in sep.xsd
+// sequence order (sep.xsd:477-491). It reuses the EndDeviceControl value
+// types; a nil field is absent.
+type DrResponseDRLC struct {
+	ApplianceLoadReduction *ApplianceLoadReduction `xml:"ApplianceLoadReduction,omitempty"`
+	AppliedTargetReduction *AppliedTargetReduction `xml:"AppliedTargetReduction,omitempty"`
+	DutyCycle              *DutyCycle              `xml:"DutyCycle,omitempty"`
+	Offset                 *Offset                 `xml:"Offset,omitempty"`
+	OverrideDuration       *OverrideDuration       `xml:"overrideDuration,omitempty"`
+	SetPoint               *SetPoint               `xml:"SetPoint,omitempty"`
+}
+
+// Copy returns an independent copy. It is the one clone sequence for the
+// DRLC value fields; EndDeviceControl.Copy reaches it through drlcValues.
+func (d DrResponseDRLC) Copy() DrResponseDRLC {
+	c := d
+	c.ApplianceLoadReduction = clonePtr(d.ApplianceLoadReduction)
+	c.AppliedTargetReduction = clonePtr(d.AppliedTargetReduction)
+	c.DutyCycle = clonePtr(d.DutyCycle)
+	c.Offset = cloneCopyPtr(d.Offset)
+	c.OverrideDuration = clonePtr(d.OverrideDuration)
+	c.SetPoint = cloneCopyPtr(d.SetPoint)
+	return c
+}
+
+// DrResponse is a response to a demand response load control
+// (EndDeviceControl) message (sep.xsd:473-493).
+type DrResponse struct {
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DrResponse"`
+	Response
+	DrResponseDRLC
+}
+
+// Copy returns an independent copy.
+func (d DrResponse) Copy() DrResponse {
+	c := d
+	c.Response = d.Response.Copy()
+	c.DrResponseDRLC = d.DrResponseDRLC.Copy()
+	return c
+}
+
+// DecodedResponse is what DecodeResponse returns: the base Response every
+// subtype shares, plus the DRLC part when the root element was DrResponse.
+// DRLC is nil for every other subtype.
+type DecodedResponse struct {
+	Response
+	DRLC *DrResponseDRLC
+}
+
 // ResponseRootElements are the root element local names DecodeResponse
 // accepts, in the order the error message lists them.
 //
 // The set is taken from the WADL, which puts six resources at one sample
 // path, /rsps/{id1}/rsp/{id2}: Response, PriceResponse, TextResponse,
-// DERControlResponse, FlowReservationResponseResponse and DrResponse. Five of
-// them appear here; DrResponse is refused deliberately, see DecodeResponse.
+// DERControlResponse, FlowReservationResponseResponse and DrResponse. All six
+// appear here.
 var ResponseRootElements = []string{
 	"Response",
 	"DERControlResponse",
 	"FlowReservationResponseResponse",
 	"PriceResponse",
 	"TextResponse",
+	"DrResponse",
 }
 
 // DecodeResponse decodes a POSTed Response document, accepting any of the
 // Response subtype root elements the WADL declares for the ResponseList POST,
-// and returns the base Response the server stores.
+// and returns the base Response plus, for a DrResponse, its DRLC part.
 //
 // # Why this is not one xml.Unmarshal
 //
@@ -170,67 +220,62 @@ var ResponseRootElements = []string{
 // data would serialize differently depending only on which root element the
 // client POSTed.
 //
-// Elements a subtype adds beyond Response are NOT preserved, because the
-// server's response store holds the base type. In the 2018 canonical schema
-// this loses nothing for the four subtypes accepted here: all four are bare
-// extensions. It does drop DERControlResponse.modesResponded, which the 2023
-// edition adds. That is a known, bounded loss and it is why DrResponse (which
-// the XSD gives six children of its own, sep.xsd:477-491) is refused rather
-// than quietly flattened.
-func DecodeResponse(data []byte) (Response, error) {
+// Elements a subtype adds beyond Response are NOT preserved, except the six
+// DRLC children of a DrResponse, returned in DecodedResponse.DRLC so the
+// server can store them. In the 2018 canonical schema the other subtypes are
+// bare extensions; the 2023 DERControlResponse.modesResponded is dropped.
+func DecodeResponse(data []byte) (DecodedResponse, error) {
 	root, err := rootElementName(data)
 	if err != nil {
-		return Response{}, err
+		return DecodedResponse{}, err
 	}
 
-	var out Response
+	var out DecodedResponse
 	switch root.Local {
 	case "Response":
 		var v Response
 		if err := xml.Unmarshal(data, &v); err != nil {
-			return Response{}, fmt.Errorf("sep2: decoding Response: %w", err)
+			return DecodedResponse{}, fmt.Errorf("sep2: decoding Response: %w", err)
 		}
-		out = v
+		out.Response = v
 	case "DERControlResponse":
 		var v DERControlResponse
 		if err := xml.Unmarshal(data, &v); err != nil {
-			return Response{}, fmt.Errorf("sep2: decoding DERControlResponse: %w", err)
+			return DecodedResponse{}, fmt.Errorf("sep2: decoding DERControlResponse: %w", err)
 		}
-		out = v.Response
+		out.Response = v.Response
 	case "FlowReservationResponseResponse":
 		var v FlowReservationResponseResponse
 		if err := xml.Unmarshal(data, &v); err != nil {
-			return Response{}, fmt.Errorf("sep2: decoding FlowReservationResponseResponse: %w", err)
+			return DecodedResponse{}, fmt.Errorf("sep2: decoding FlowReservationResponseResponse: %w", err)
 		}
-		out = v.Response
+		out.Response = v.Response
 	case "PriceResponse":
 		var v PriceResponse
 		if err := xml.Unmarshal(data, &v); err != nil {
-			return Response{}, fmt.Errorf("sep2: decoding PriceResponse: %w", err)
+			return DecodedResponse{}, fmt.Errorf("sep2: decoding PriceResponse: %w", err)
 		}
-		out = v.Response
+		out.Response = v.Response
 	case "TextResponse":
 		var v TextResponse
 		if err := xml.Unmarshal(data, &v); err != nil {
-			return Response{}, fmt.Errorf("sep2: decoding TextResponse: %w", err)
+			return DecodedResponse{}, fmt.Errorf("sep2: decoding TextResponse: %w", err)
 		}
-		out = v.Response
+		out.Response = v.Response
 	case "DrResponse":
-		// Refused rather than flattened. DrResponse extends Response with six
-		// DRLC-specific children and this package models none of them, so
-		// decoding one into the base would return 201 over data the client
-		// sent and the server silently discarded. Nothing is owed a
-		// DrResponse today: no EndDeviceControl route is served for one to
-		// answer. Model the DRLC children before accepting it.
-		return Response{}, fmt.Errorf(
-			"sep2: DrResponse is a declared Response subtype but its DRLC-specific elements are not modelled, so accepting it would discard them")
+		var v DrResponse
+		if err := xml.Unmarshal(data, &v); err != nil {
+			return DecodedResponse{}, fmt.Errorf("sep2: decoding DrResponse: %w", err)
+		}
+		out.Response = v.Response
+		out.DRLC = &v.DrResponseDRLC
 	default:
-		return Response{}, fmt.Errorf(
+		return DecodedResponse{}, fmt.Errorf(
 			"sep2: root element %q is not a Response subtype this server accepts (accepted: %s)",
 			root.Local, strings.Join(ResponseRootElements, ", "))
 	}
 
-	out.XMLName = xml.Name{}
+	out.Response.XMLName = xml.Name{}
 	return out, nil
 }
 

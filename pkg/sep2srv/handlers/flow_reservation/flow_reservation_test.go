@@ -523,3 +523,45 @@ func TestHandlePostResponse_ParallelPostsGetDistinctIDs(t *testing.T) {
 		return httptest.NewRequest(http.MethodPost, "/rsps/set1/rsp", bytes.NewReader(body))
 	})
 }
+
+// TestHandlePostResponse_DrResponseRefusedNotDropped pins that a DrResponse
+// carrying demand response values is refused with the same fixed 400 as
+// before core decoded it, and that nothing is stored, until the store keeps
+// those values (#1260).
+func TestHandlePostResponse_DrResponseRefusedNotDropped(t *testing.T) {
+	t.Parallel()
+	rspStore := memory.NewScopedStore[sep2.Response]()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /rsps/{rspsId}/rsp", flow_reservation.HandlePostResponse(rspStore, nil))
+
+	const body = `<DrResponse xmlns="urn:ieee:std:2030.5:ns">` +
+		`<createdDateTime>1700000000</createdDateTime>` +
+		`<status>1</status>` +
+		`<subject>0123456789ABCDEF0123456789ABCDEF</subject>` +
+		`<DutyCycle><normalValue>50</normalValue></DutyCycle>` +
+		`<overrideDuration>600</overrideDuration>` +
+		`</DrResponse>`
+
+	req := httptest.NewRequest(http.MethodPost, "/rsps/set1/rsp", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "invalid XML" {
+		t.Errorf("body = %q, want the fixed message", got)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want none for a refused body", loc)
+	}
+
+	stored, err := rspStore.List(context.Background(), "set1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stored responses: %v", err)
+	}
+	if len(stored.Items) != 0 {
+		t.Errorf("stored %d responses, want 0: the DRLC values would be silently dropped", len(stored.Items))
+	}
+}

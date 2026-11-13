@@ -10,6 +10,10 @@ import "sync"
 // and a program write on one could interleave with an assignment on the other
 // and leave a device with a missing or duplicated template copy. The zero
 // value is ready to use.
+//
+// It exposes Lock and Unlock rather than Serialize(fn) because handlers hold
+// the lock across early returns and error paths, and callers pair Unlock
+// with defer.
 type Owner struct {
 	mu sync.Mutex
 }

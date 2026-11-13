@@ -101,6 +101,7 @@ func TestNewRefusesUnsafeConfig(t *testing.T) {
 		{"empty hosts", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{} }, sep2adminplane.ErrNoAllowedHosts},
 		{"blank hosts", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{"", "  "} }, sep2adminplane.ErrBlankAllowedHost},
 		{"nil stores", func(c *sep2adminplane.Config) { c.Stores = nil }, sep2adminplane.ErrNoStores},
+		{"nil DER write owner", func(c *sep2adminplane.Config) { c.Stores.DERWrites = nil }, sep2adminplane.ErrNoDERWrites},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

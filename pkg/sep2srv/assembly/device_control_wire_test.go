@@ -10,6 +10,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -39,7 +40,7 @@ func TestDeviceControl_IsReadOnTheWireByThatDevicesPoll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsaH := &handler.AdminFSAHandler{
+	fsaH := &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{},
 		AdminFSAs:  memory.NewAdminFSAStore(),
 		DeviceFSAs: stores.FSAs,
 		EndDevices: stores.EndDevices,

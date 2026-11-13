@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -29,6 +30,7 @@ func deviceProgramStores(t *testing.T) *Stores {
 		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
 		FSAs:               memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:          memory.NewAdminFSAStore(),
+		DERWrites:          &derwrite.Owner{},
 		ProgramOrigins:     origins,
 	}
 	ctx := context.Background()

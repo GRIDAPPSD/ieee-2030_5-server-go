@@ -12,6 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -31,6 +32,7 @@ func fsaWriteStores(t *testing.T) *server.Stores {
 		FSAs:        memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		DERPrograms: memory.NewDERProgramStore(),
 		AdminFSAs:   memory.NewAdminFSAStore(),
+		DERWrites:   &derwrite.Owner{},
 	}
 	ctx := context.Background()
 	for id, href := range map[string]string{"p1": fsaProgramHref, "p2": fsaProgram2Href} {

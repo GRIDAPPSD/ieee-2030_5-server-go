@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -30,7 +31,7 @@ func TestDeviceProgramCreate_IsServedUnderItsOwnFSAOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &handler.AdminFSAHandler{
+	h := &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{},
 		AdminFSAs:  memory.NewAdminFSAStore(),
 		DeviceFSAs: stores.FSAs,
 		EndDevices: stores.EndDevices,

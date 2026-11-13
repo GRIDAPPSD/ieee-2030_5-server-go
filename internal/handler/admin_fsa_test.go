@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -56,7 +57,7 @@ func (s *stubEndDevices) List(_ context.Context, _ store.ListOptions) (store.Lis
 
 func newAdminFSAHandler(t *testing.T) *handler.AdminFSAHandler {
 	t.Helper()
-	return &handler.AdminFSAHandler{
+	return &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{},
 		AdminFSAs:   memory.NewAdminFSAStore(),
 		DeviceFSAs:  memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		EndDevices:  &stubEndDevices{devs: map[string]sep2.EndDevice{}},

@@ -83,11 +83,11 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 	return h
 }
 
-// derWrites is the process's DER write owner. A Stores built without one
-// gets one stored on it, so every handler built from it shares a lock.
+// derWrites is the process's DER write owner. Boot builds it once; a nil one
+// panics here, at construction, rather than hand each handler a private lock.
 func derWrites(stores *Stores) *derwrite.Owner {
 	if stores.DERWrites == nil {
-		stores.DERWrites = &derwrite.Owner{}
+		panic("adminplane: Stores.DERWrites is nil; boot must build the process's one derwrite.Owner")
 	}
 	return stores.DERWrites
 }

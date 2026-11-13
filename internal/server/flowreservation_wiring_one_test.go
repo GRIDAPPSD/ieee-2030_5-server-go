@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -113,4 +114,31 @@ func TestAssembly_UsesTheQueueTheStoresCarry(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("no response stored within 3s: the route submitted to a queue other than the one the stores carry")
+}
+
+// The process has one DER write owner: the stores hold it, the admin handler
+// locks it, and the assembly and the admin plane's view of the assembly
+// receive the same pointer.
+func TestNewRunStores_OneDERWriteOwnerReachesEveryConsumer(t *testing.T) {
+	s, _, err := newRunStores(&config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DERWrites == nil {
+		t.Fatal("DERWrites = nil after newRunStores")
+	}
+	if got := newAdminFSAHandler(s).DERWrites; got != s.DERWrites {
+		t.Errorf("admin handler owner = %p, want the stores' %p", got, s.DERWrites)
+	}
+	core := NewCoreStores(s)
+	if core.DERWrites != s.DERWrites {
+		t.Errorf("assembly owner = %p, want the stores' %p", core.DERWrites, s.DERWrites)
+	}
+	back, err := adminplane.StoresFromAssembly(core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.DERWrites != s.DERWrites {
+		t.Errorf("admin plane owner from the assembly = %p, want the stores' %p", back.DERWrites, s.DERWrites)
+	}
 }

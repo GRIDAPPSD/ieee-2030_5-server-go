@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
@@ -88,20 +87,17 @@ type AdminFSAHandler struct {
 	// DERWrites owns the lock that serializes every program write with
 	// assignments, so a device assigned while a template is created gets
 	// exactly one copy of it. Production wiring sets the process's one owner;
-	// nil makes the handler use a private one, which only tests rely on.
+	// a nil owner is a wiring bug, so a write panics rather than lock a
+	// private copy that excludes nothing.
 	DERWrites *derwrite.Owner
-
-	ownWrites     sync.Once
-	privateWrites *derwrite.Owner
 }
 
 // writes is the owner whose lock every program write takes.
 func (h *AdminFSAHandler) writes() *derwrite.Owner {
-	if h.DERWrites != nil {
-		return h.DERWrites
+	if h.DERWrites == nil {
+		panic("handler: AdminFSAHandler.DERWrites is nil; wiring must set the process's one derwrite.Owner")
 	}
-	h.ownWrites.Do(func() { h.privateWrites = &derwrite.Owner{} })
-	return h.privateWrites
+	return h.DERWrites
 }
 
 // DeviceFSAWriter mirrors the slice of *memory.ScopedStore[FSA] surface

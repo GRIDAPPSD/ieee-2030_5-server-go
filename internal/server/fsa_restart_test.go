@@ -13,6 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -32,7 +33,7 @@ func bootFSA(t *testing.T, cfg *config.Config) *Stores {
 
 func adminCall(t *testing.T, s *Stores, method, path, body string) {
 	t.Helper()
-	h := &handler.AdminFSAHandler{AdminFSAs: s.AdminFSAs, DeviceFSAs: s.FSAs}
+	h := &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{}, AdminFSAs: s.AdminFSAs, DeviceFSAs: s.FSAs}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/fsas", h.HandleCreateAdminFSA())
 	mux.HandleFunc("POST /api/devices/{id}/fsa-assignment", h.HandleAssignDeviceFSA())

@@ -405,6 +405,9 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	if dst == nil {
 		t.Fatal("NewCoreStores returned nil for a non-nil source")
 	}
+	if dst.DERWrites != src.DERWrites {
+		t.Errorf("assembly.Stores.DERWrites = %p, want the source's %p", dst.DERWrites, src.DERWrites)
+	}
 
 	dstVal := reflect.ValueOf(dst).Elem()
 	dstType := dstVal.Type()

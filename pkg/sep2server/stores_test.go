@@ -40,7 +40,7 @@ func TestNewStoresPopulatesEveryField(t *testing.T) {
 			// at all, rather than one carrying an invented PIN.
 			continue
 		}
-		if name == "FlowReservationQueue" || name == "DERControlIssuer" || name == "DERWrites" {
+		if name == "FlowReservationQueue" || name == "DERControlIssuer" {
 			continue
 		}
 		field := val.Field(i)

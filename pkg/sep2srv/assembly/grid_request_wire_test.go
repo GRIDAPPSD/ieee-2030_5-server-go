@@ -16,6 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -84,7 +85,7 @@ func newGridWire(t *testing.T) *gridWire {
 		t.Fatal(err)
 	}
 	admin := memory.NewAdminFSAStore()
-	fsaH := &handler.AdminFSAHandler{AdminFSAs: admin, DeviceFSAs: stores.FSAs, EndDevices: stores.EndDevices, Copies: &copies,
+	fsaH := &handler.AdminFSAHandler{DERWrites: &derwrite.Owner{}, AdminFSAs: admin, DeviceFSAs: stores.FSAs, EndDevices: stores.EndDevices, Copies: &copies,
 		PEN: &pen, Retirer: issuer, Managers: managers, FleetDevices: stores.EndDevices}
 	ctlH := &handler.AdminDERControlHandler{Issuer: issuer, Controls: controls, Lifecycles: lifecycles,
 		Programs: stores.DERPrograms, EndDevices: stores.EndDevices, Ledger: stores.CommitmentLedger, FSAControls: admin,

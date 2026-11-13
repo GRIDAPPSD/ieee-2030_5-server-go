@@ -131,9 +131,12 @@ func (h *AdminGridRequestHandler) HandleList() http.HandlerFunc {
 		ctx, ch, fh := r.Context(), h.Controls.Controls, h.Controls.FSAs
 		// The fleets are read under the lock readFleets asks for; the controls
 		// are read after it, so a long view never holds up a write.
-		fh.writes().Lock()
-		fleets, _, _, err := h.readFleets(ctx)
-		fh.writes().Unlock()
+		fleets, err := func() ([]gridFleet, error) {
+			fh.writes().Lock()
+			defer fh.writes().Unlock()
+			f, _, _, err := h.readFleets(ctx)
+			return f, err
+		}()
 		if err != nil {
 			ch.internal(w, r, "grid fleets")
 			return

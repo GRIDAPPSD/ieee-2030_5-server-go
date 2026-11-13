@@ -38,6 +38,11 @@ func meteringWriteServerWith(t *testing.T, edit func(*assembly.Stores)) (do func
 	t.Helper()
 	fleet := newManagementFleet(t)
 	seedHierarchy(t, fleet.stores)
+	// The fleet seeds a UsagePoint for the managed device; the list
+	// assertions here expect only u1 and u2.
+	if err := fleet.stores.UsagePoints.Delete(context.Background(), victimID); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{"u1", "u2"} {
 		upt := sep2.UsagePoint{}
 		upt.Href = "/upt/" + id

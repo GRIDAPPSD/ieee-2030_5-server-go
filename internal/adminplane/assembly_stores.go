@@ -80,6 +80,7 @@ func StoresFromAssembly(s *assembly.Stores) (*Stores, error) {
 		ResponseSets:                      concrete[*memory.Store[sep2.ResponseSet]](s.ResponseSets),
 		Responses:                         s.Responses,
 		FlowReservationResponseLifecycles: s.FlowReservationResponseLifecycles,
+		FlowReservationAnswers:            s.FlowReservationAnswers,
 		CommitmentLedger:                  s.CommitmentLedger,
 		FlowReservationQueue:              s.FlowReservationQueue,
 		DERControlIssuer:                  s.DERControlIssuer,

@@ -4,6 +4,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -32,6 +33,7 @@ func NewStores() *assembly.Stores {
 	// The response store removes its lifecycle records with it, so an EndDevice
 	// delete leaves no cancel mark behind (#761).
 	responseLifecycles := memory.NewScopedStore[dercontrol.LifecycleRecord]()
+	responseAnswers := memory.NewScopedStore[flowreservation.AnswerRecord]()
 	s := &assembly.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
@@ -64,11 +66,12 @@ func NewStores() *assembly.Stores {
 		MessagingPrograms:        memory.NewStore[sep2.MessagingProgram](),
 		TextMessages:             memory.NewScopedStore[sep2.TextMessage](),
 		FlowReservationRequests:  memory.NewScopedStore[sep2.FlowReservationRequest](),
-		FlowReservationResponses: memory.WithDependents(memory.NewScopedStore[sep2.FlowReservationResponse](), responseLifecycles),
+		FlowReservationResponses: memory.WithDependents(memory.WithDependents(memory.NewScopedStore[sep2.FlowReservationResponse](), responseLifecycles), responseAnswers),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
 		FlowReservationResponseLifecycles: responseLifecycles,
+		FlowReservationAnswers:            responseAnswers,
 	}
 	s.CommitmentLedger = sources.NewLedger(
 		s.EndDevices, s.EndDeviceManagers,

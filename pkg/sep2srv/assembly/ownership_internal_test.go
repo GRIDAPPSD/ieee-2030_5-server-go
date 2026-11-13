@@ -15,6 +15,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -139,6 +140,7 @@ func fullStores() *Stores {
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
 		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+		FlowReservationAnswers:            memory.NewScopedStore[flowreservation.AnswerRecord](),
 	}
 	s.CommitmentLedger = sources.NewLedger(
 		s.EndDevices, s.EndDeviceManagers,
@@ -232,6 +234,7 @@ func TestDelegable(t *testing.T) {
 		"PUT /edev/{id}/ps":                           false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
 		"POST /edev/{id}/frq":                         false, // refused: flow reservation appears in no aggregator text
 		"PUT /edev/{id}/frq/{frqId}":                  false, // refused: a client's own withdrawal, not an aggregator act (#667)
+		"DELETE /edev/{id}/frq/{frqId}":               false, // refused: flow reservation appears in no aggregator text
 		// A write pattern nobody has registered yet: proves the default is
 		// denied, not merely that today's five entries are granted.
 		"PUT /edev/{id}/notyetregistered": false,
@@ -309,12 +312,13 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/ps": true,
 	"PUT /edev/{id}/ps": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
 
-	"GET /edev/{id}/frq":         true,
-	"GET /edev/{id}/frq/{frqId}": true,
-	"POST /edev/{id}/frq":        false, // flow reservation appears in no aggregator text
-	"PUT /edev/{id}/frq/{frqId}": false, // a client's own withdrawal (#667); an aggregator may not place a bid, so it may not cancel one
-	"GET /edev/{id}/frp":         true,
-	"GET /edev/{id}/frp/{frpId}": true,
+	"GET /edev/{id}/frq":            true,
+	"GET /edev/{id}/frq/{frqId}":    true,
+	"POST /edev/{id}/frq":           false, // flow reservation appears in no aggregator text
+	"PUT /edev/{id}/frq/{frqId}":    false, // a client's own withdrawal (#667); an aggregator may not place a bid, so it may not cancel one
+	"DELETE /edev/{id}/frq/{frqId}": false, // flow reservation appears in no aggregator text
+	"GET /edev/{id}/frp":            true,
+	"GET /edev/{id}/frp/{frpId}":    true,
 }
 
 // TestManagerVerdictForEveryGatedPattern is issue 510's acceptance

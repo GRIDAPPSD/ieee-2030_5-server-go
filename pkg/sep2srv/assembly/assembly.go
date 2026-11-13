@@ -278,6 +278,11 @@ type Stores struct {
 	// is served as stored.
 	FlowReservationResponseLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 
+	// FlowReservationAnswers holds who answered and who cancelled each
+	// response, keyed as the response. Optional: a DELETE of a request
+	// removes an answer record only when this is set.
+	FlowReservationAnswers store.ScopedStore[flowreservation.AnswerRecord]
+
 	// CommitmentLedger is the process's one commitment ledger (#714),
 	// built over the same stores. The flow reservation queue checks every
 	// grant against it. A nil ledger refuses every check
@@ -1707,6 +1712,41 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthP
 		flatReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(flatReadingTypes))
+
+	registerMeteringWrites(mux, stores, meterReadings, readingSets, readings, readingTypes, readingScope)
+}
+
+// registerMeteringWrites mounts the Optional PUTs and DELETEs on records that
+// exist. Each is a manager-only write (manager_only.go), so none checks the
+// caller. A PUT replaces a stored record and never creates one, so the client
+// does not choose a key.
+func registerMeteringWrites(
+	mux routeRegistrar,
+	stores *Stores,
+	meterReadings store.ScopedStore[sep2.MeterReading],
+	readingSets store.ScopedStore[sep2.ReadingSet],
+	readings store.ScopedStore[sep2.Reading],
+	readingTypes store.ScopedStore[sep2.ReadingType],
+	readingScope scopeFunc,
+) {
+	tree := coremetering.UsagePointTree{
+		UsagePoints: stores.UsagePoints, MeterReadings: meterReadings,
+		ReadingSets: readingSets, Readings: readings, ReadingTypes: readingTypes,
+	}
+	mux.HandleFunc("DELETE /upt/{uptId}", coremetering.HandleDeleteUsagePoint(tree))
+	mux.HandleFunc("DELETE /upt/{uptId}/mr/{mrId}", coremetering.HandleDeleteMeterReading(tree))
+	mux.HandleFunc("DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}", coremetering.HandleDeleteReadingSet(tree))
+
+	// The href is the address the PUT named, never the client's own.
+	mux.HandleFunc("PUT /upt/{uptId}/mr/{mrId}/rt", scopedResourceHandler(readingTypes, "uptId", "mrId",
+		itemMethods{PutUpdateOnly: true},
+		func(r *http.Request, rt *sep2.ReadingType) { rt.Href = r.URL.Path }))
+	readingItem := itemMethods{PutUpdateOnly: true, Delete: true}
+	readingStamp := func(r *http.Request, rd *sep2.Reading) { rd.Href = r.URL.Path }
+	mux.HandleFunc("PUT /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+		scopedResourceHandlerWith(readingScope, readings, "rId", readingItem, readingStamp))
+	mux.HandleFunc("DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+		scopedResourceHandlerWith(readingScope, readings, "rId", readingItem, readingStamp))
 }
 
 // writeLookupFailure answers a failed store read: store.ErrNotFound is the
@@ -1912,11 +1952,24 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// from the registered method set.
 		//
 		// PUT on the request is the client's withdrawal (#667, mode M at
-		// sep_wadl.xml:3963): it changes only RequestStatus. POST and DELETE
-		// answer 405 from the registered method set.
+		// sep_wadl.xml:3963): it changes only RequestStatus. POST answers 405
+		// from the registered method set.
 		frqInstance := scopedResourceHandler[sep2.FlowReservationRequest](
 			stores.FlowReservationRequests, "id", "frqId", itemMethods{}, nil)
 		mux.HandleFunc("GET /edev/{id}/frq/{frqId}", frqInstance)
+		// DELETE (mode O) removes a request whose responses have all ended,
+		// with them and their lifecycle and answer records, through the
+		// retention sweep's own delete. The answer records go with them when
+		// Stores.FlowReservationAnswers is set; the responses store's cascade
+		// covers only a whole-device removal, not one request. Deprecated DELETE on the
+		// response (mode D) stays 405: deleting a response alone would orphan
+		// its request, which recovery would then answer again.
+		mux.HandleFunc("DELETE /edev/{id}/frq/{frqId}", coreflowrsv.HandleDeleteFlowReservationRequest(
+			flowreservation.NewRetention(
+				stores.FlowReservationRequests, flowReservationResponses, stores.FlowReservationResponseLifecycles,
+				stores.FlowReservationAnswers, stores.CommitmentLedger,
+				commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}, notifier),
+			time.Now))
 		mux.HandleFunc("PUT /edev/{id}/frq/{frqId}", coreflowrsv.HandlePutFlowReservationRequest(
 			stores.FlowReservationRequests,
 			flowreservation.NewCanceller(

@@ -128,14 +128,20 @@ import (
 // total is the length of this list, asserted by TestProtocolRouteSurface.
 //
 // DELETE on the DeviceStatus and PUT on the LogEvent instance are ADDED
-// (#1264, first slice).
+// (#1264, first slice). DELETE on the FlowReservationRequest instance is
+// ADDED (#1264, second slice).
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/dstat",
+	"DELETE /edev/{id}/frq/{frqId}",
 	"DELETE /edev/{id}/lel/{lelId}",
 	"DELETE /edev/{id}/rg",
 	"DELETE /edev/{id}/sub/{subId}",
 	"DELETE /mup/{id}",
+	"DELETE /upt/{uptId}",
+	"DELETE /upt/{uptId}/mr/{mrId}",
+	"DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}",
+	"DELETE /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
 	"GET /dc",
 	"GET /dc/{dcId}",
 	"GET /dcap",
@@ -224,6 +230,8 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/rg",
 	"PUT /edev/{id}/sub/{subId}",
 	"PUT /mup/{id}",
+	"PUT /upt/{uptId}/mr/{mrId}/rs/{rsId}/r/{rId}",
+	"PUT /upt/{uptId}/mr/{mrId}/rt",
 }
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
@@ -378,6 +386,7 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	// re-set it here anyway so this test does not silently depend on that
 	// default and stays a self-contained proof that the copy works.
 	src.EndDeviceManagers = memory.NewEndDeviceManagementStore()
+	src.FlowReservationAnswers = memory.NewScopedStore[flowreservation.AnswerRecord]()
 	// Set on this src alone: a queue in the shared fixture would replace the
 	// per-router deadline every other test in the package relies on.
 	src.FlowReservationQueue = flowreservation.NewQueue(

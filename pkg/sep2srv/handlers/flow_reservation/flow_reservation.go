@@ -321,6 +321,8 @@ func HandleDeleteFlowReservationRequest(remover Remover, now func() time.Time) h
 	}
 }
 
+var errDrResponseNotStored = errors.New("a DrResponse is refused until its demand response values are stored")
+
 var errRequestFieldChanged = errors.New("a PUT may change only RequestStatus")
 
 // changedField names the first client-owned field of body that differs from
@@ -430,7 +432,8 @@ func HandlePutFlowReservationRequest(
 // <DERControlResponse> with 400, because Response.XMLName is pinned. The
 // pin stays: DecodeResponse dispatches on the root element and decodes the
 // declared subtype, so the accepted set is exactly the subtypes the WADL
-// names.
+// names. A DrResponse is refused with 400 until its demand response values
+// are stored.
 //
 // A Response that names an endDeviceLFDI is stored only when authorize says
 // the sender may speak for that device: IEEE 2030.5-2018 6.11.2 grants access
@@ -455,11 +458,17 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 			return
 		}
 
-		rsp, err := sep2.DecodeResponse(body)
+		decoded, err := sep2.DecodeResponse(body)
 		if err != nil {
 			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
+		if decoded.DRLC != nil {
+			// The store holds the base Response, so accepting would drop the DRLC values.
+			srverr.BadRequestMessage(w, r, "invalid XML", errDrResponseNotStored)
+			return
+		}
+		rsp := decoded.Response
 
 		if rsp.EndDeviceLFDI == "" {
 			if responseRoot(body) == "DERControlResponse" {

@@ -181,6 +181,7 @@ func MintableHrefs() []MintableHref {
 		{"/mup", http.MethodGet, "handlers/dcap.HandleDeviceCapability MirrorUsagePointListLink", "metering clients POST mirrors here"},
 		{"/upt", http.MethodGet, "handlers/dcap.HandleDeviceCapability UsagePointListLink", "server-side metering"},
 		{"/dc", http.MethodGet, "routefamily.All", "global DERCurve list, not linked from /dcap"},
+		{"/dc/{}", http.MethodGet, "assembly.curveHandler", "the curve href a DERControl's curve link carries, and the member href of the global curve list"},
 		{"/msg", http.MethodGet, "handlers/dcap.HandleDeviceCapability MessagingProgramListLink", "messaging programs"},
 		{"/rsps", http.MethodGet, "handlers/dcap.HandleDeviceCapability ResponseSetListLink", "response sets"},
 		{"/rt", http.MethodGet, "routefamily.All", "ReadingType list, mounted on the top-level mux"},

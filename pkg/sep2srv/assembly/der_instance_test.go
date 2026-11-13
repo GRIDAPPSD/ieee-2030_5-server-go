@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -343,21 +345,24 @@ func TestDERInstance_PUTStoresTheServersOwnHrefAndDropsUnservedLinks(t *testing.
 	assertDERLinks(t, got, path)
 }
 
-// TestDERInstance_PUTCreatesAtTheIDThePathNames asserts PUT upserts without
-// inventing an id: the resource lands at the derId in the request path and
-// nowhere else.
-func TestDERInstance_PUTCreatesAtTheIDThePathNames(t *testing.T) {
+// TestDERInstance_PUTWritesTheStoredDER reads the store directly, because a GET
+// re-stamps links at serve time and would hide a PUT that never wrote. The DER
+// is seeded bare, so every field asserted below can only come from the PUT.
+func TestDERInstance_PUTWritesTheStoredDER(t *testing.T) {
 	t.Parallel()
 
 	srv, stores := derInstanceServer(t)
-	seedDER(t, stores, "7", "3")
+	seedBareDER(t, stores, "7", "3")
+	path := derHref("7", "3")
 
-	path := derHref("7", "8")
-	req, err := http.NewRequest(http.MethodPut, srv.URL+path,
-		strings.NewReader(`<DER xmlns="urn:ieee:std:2030.5:ns"/>`))
+	putBody := `<DER xmlns="urn:ieee:std:2030.5:ns" href="/edev/99/der/99">` +
+		`<AssociatedDERProgramListLink href="/edev/99/der/99/derp"/>` +
+		`</DER>`
+	req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(putBody))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
+	req.Header.Set("Content-Type", "application/sep+xml")
 	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT: %v", err)
@@ -367,21 +372,97 @@ func TestDERInstance_PUTCreatesAtTheIDThePathNames(t *testing.T) {
 		t.Fatalf("PUT status = %d, want 204", resp.StatusCode)
 	}
 
-	stored, err := stores.DERs.Get(context.Background(), "7", "8")
+	stored, err := stores.DERs.Get(context.Background(), "7", "3")
 	if err != nil {
-		t.Fatalf("the PUT did not store a DER at derId 8: %v", err)
+		t.Fatalf("read stored DER: %v", err)
 	}
 	if stored.Href != path {
 		t.Errorf("stored Href = %q, want %q", stored.Href, path)
 	}
-	if stored.DERCapabilityLink == nil || stored.DERCapabilityLink.Href != path+"/dercap" {
-		t.Errorf("stored DERCapabilityLink = %+v, want href %q", stored.DERCapabilityLink, path+"/dercap")
+	if stored.AssociatedDERProgramListLink == nil || stored.AssociatedDERProgramListLink.Href != path+"/derp" {
+		t.Errorf("stored AssociatedDERProgramListLink = %+v, want the derived %s", stored.AssociatedDERProgramListLink, path+"/derp")
 	}
-	// The DER that was already there is untouched.
-	if other, err := stores.DERs.Get(context.Background(), "7", "3"); err != nil {
-		t.Errorf("the pre-existing DER 3 disappeared: %v", err)
-	} else if other.Href != derHref("7", "3") {
-		t.Errorf("DER 3 Href = %q, want %q", other.Href, derHref("7", "3"))
+	assertDERLinks(t, stored, path)
+}
+
+// TestDERInstance_PUTIsUpdateOnlyAndNeverCreates: a PUT to a derId with no
+// stored DER answers 404 and stores nothing. The id in the path is the client's
+// choice, so an upsert let it pick the key and the stamped href; the encoded
+// traversal below once stored the href /edev/7/der/../../d9/dstat.
+func TestDERInstance_PUTIsUpdateOnlyAndNeverCreates(t *testing.T) {
+	t.Parallel()
+
+	srv, stores := derInstanceServer(t)
+	seedDER(t, stores, "7", "3")
+
+	for _, path := range []string{
+		derHref("7", "8"),
+		derHref("7", "..%2F..%2Fd9%2Fdstat"),
+		derHref("7", "%2E%2E"),
+		derHref("7", "3%2Fx"),
+	} {
+		req, err := http.NewRequest(http.MethodPut, srv.URL+path,
+			strings.NewReader(`<DER xmlns="urn:ieee:std:2030.5:ns"/>`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("PUT %s status = %d, want 404 and no DER created", path, resp.StatusCode)
+		}
+	}
+
+	res, err := stores.DERs.List(context.Background(), "7", store.ListOptions{Unbounded: true})
+	if err != nil {
+		t.Fatalf("list DERs of 7: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Href != derHref("7", "3") {
+		t.Errorf("device 7 holds %d DERs %+v after the refused PUTs, want only the seeded /edev/7/der/3", len(res.Items), res.Items)
+	}
+}
+
+// TestDERInstance_PUTToAnUnseededDeviceLogsThatItWasNeverSeeded: a device whose
+// DER seed failed answers every PUT with 404, and the log line must say the
+// scope is empty rather than leave a bare 404. Not parallel: it captures the
+// process-wide log output.
+func TestDERInstance_PUTToAnUnseededDeviceLogsThatItWasNeverSeeded(t *testing.T) {
+	srv, stores := derInstanceServer(t)
+	seedBareDER(t, stores, "7", "1")
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	put := func(path string) int {
+		req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(`<DER xmlns="urn:ieee:std:2030.5:ns"/>`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := put(derHref("deviceA", "1")); got != http.StatusNotFound {
+		t.Fatalf("PUT to an unseeded device status = %d, want 404", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "never seeded") || !strings.Contains(out, derHref("deviceA", "1")) {
+		t.Errorf("log = %q, want a line naming the path and that its scope was never seeded", out)
+	}
+
+	buf.Reset()
+	if got := put(derHref("7", "2")); got != http.StatusNotFound {
+		t.Fatalf("PUT to a missing id on a seeded device status = %d, want 404", got)
+	}
+	if out := buf.String(); strings.Contains(out, "never seeded") {
+		t.Errorf("log = %q, a seeded device's missing id must not claim the device was never seeded", out)
 	}
 }
 

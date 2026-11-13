@@ -36,6 +36,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -389,6 +390,7 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	src.DERControlIssuer = issuer
+	src.DERWrites = &derwrite.Owner{}
 	dst := server.NewCoreStores(src)
 
 	if dst == nil {

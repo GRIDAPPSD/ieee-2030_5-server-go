@@ -83,6 +83,7 @@ func StoresFromAssembly(s *assembly.Stores) (*Stores, error) {
 		CommitmentLedger:                  s.CommitmentLedger,
 		FlowReservationQueue:              s.FlowReservationQueue,
 		DERControlIssuer:                  s.DERControlIssuer,
+		DERWrites:                         s.DERWrites,
 	}
 	return out, nil
 }

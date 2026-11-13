@@ -8,6 +8,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/content"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -166,6 +167,11 @@ type Stores struct {
 	// by the admin DER control handler and the grant cancel writers. Nil makes
 	// each of them build its own.
 	DERControlIssuer *dercontrol.Issuer
+
+	// DERWrites is the process's one DER write owner, whose lock every admin
+	// program write takes. Run sets it beside the issuer; the admin wiring
+	// builds one when it is nil, as the tests' Stores are.
+	DERWrites *derwrite.Owner
 
 	// Sep2Edition is the config-declared IEEE 2030.5 edition (env
 	// SEP2_EDITION, internal/config.Config.EffectiveSEP2Edition), threaded

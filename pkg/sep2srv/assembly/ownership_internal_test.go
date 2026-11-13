@@ -493,6 +493,7 @@ func TestFullStoresWiresEveryStoresField(t *testing.T) {
 		"Edition2023":          "the 2018 edition is the default; true only when the server runs as 2023",
 		"FlowReservationQueue": "nil makes the assembly build a queue of its own",
 		"DERControlIssuer":     "nil makes the assembly build an issuer from the stores",
+		"DERWrites":            "nil leaves the protocol write routes unmounted; no route uses it yet",
 	}
 	v := reflect.ValueOf(fullStores()).Elem()
 	seen := map[string]bool{}

@@ -10,8 +10,8 @@ import (
 
 // NewStores builds a fully populated, pure in-memory store set.
 //
-// Every field is non-nil except the optional FlowReservationQueue and
-// DERControlIssuer, which the assembly builds itself when nil. That matters:
+// Every field is non-nil except the optional FlowReservationQueue,
+// DERControlIssuer and DERWrites, which the assembly builds itself when nil. That matters:
 // core treats a nil store field as "skip those routes", so a partially
 // populated set does not fail loudly, it serves a quietly smaller protocol
 // surface. A consumer that wants persistence or pre-seeded contents builds its

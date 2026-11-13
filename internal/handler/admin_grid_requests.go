@@ -225,8 +225,8 @@ func (h *AdminGridRequestHandler) HandleCreate() http.HandlerFunc {
 
 		// Held from reading the fleets to the last write, so no assignment
 		// and no other batch lands in between.
-		fh.programMu.Lock()
-		defer fh.programMu.Unlock()
+		fh.writes().Lock()
+		defer fh.writes().Unlock()
 		ctx := r.Context()
 		fleets, unavailable, skipped, err := h.readFleets(ctx)
 		if err != nil {
@@ -393,7 +393,7 @@ func shareRequest(row gridRow, target sep2.ActivePower, description string) derc
 // at least one device with one, sorted by LFDI, with each one's weight, and
 // the devices of those fleets that cannot be assigned or hold no copy. It
 // writes nothing. skipped says why each other aggregator takes no share.
-// The caller holds programMu.
+// The caller holds the DER write lock.
 func (h *AdminGridRequestHandler) readFleets(ctx context.Context) ([]gridFleet, []GridAggregatorRefusal, []string, error) {
 	fh := h.Controls.FSAs
 	aggregators := slices.Clone(h.Aggregators.Managers(ctx))
@@ -484,7 +484,7 @@ func (h *AdminGridRequestHandler) readAssigned(ctx context.Context, f *gridFleet
 
 // reconcileFleets makes each fleet FSA, and its assignment, match the
 // fleets as read, returning every device that could not be assigned or
-// unassigned. The caller holds programMu.
+// unassigned. The caller holds the DER write lock.
 func (h *AdminGridRequestHandler) reconcileFleets(r *http.Request, fleets []gridFleet) ([]GridAggregatorRefusal, error) {
 	fh := h.Controls.FSAs
 	var refused []GridAggregatorRefusal

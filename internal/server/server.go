@@ -27,6 +27,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/content"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
@@ -370,6 +371,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		return nil, nil, fmt.Errorf("DER control issuer: %w", err)
 	}
 	stores.DERControlIssuer = issuer
+	stores.DERWrites = &derwrite.Owner{}
 
 	deadline, err := cfg.EffectiveFlowReservationDeadline()
 	if err != nil {

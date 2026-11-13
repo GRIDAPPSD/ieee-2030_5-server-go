@@ -85,8 +85,8 @@ func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		old, ok := h.lookupTemplate(w, r, fsaID, id)
 		if !ok || !checkMRID(w, e, old.MRID) {
@@ -185,8 +185,8 @@ func (h *AdminFSAHandler) HandleDeleteProgramTemplate() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		t, ok := h.lookupTemplate(w, r, fsaID, id)
 		if !ok {
@@ -293,8 +293,8 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		prog, fsaID, ok := h.lookupDeviceProgram(w, r, deviceID, id, "edit")
 		if !ok || !checkMRID(w, e, prog.MRID) {
@@ -378,8 +378,8 @@ func (h *AdminFSAHandler) HandleDeleteDeviceProgram() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		prog, fsaID, ok := h.lookupDeviceProgram(w, r, deviceID, id, "delete")
 		if !ok {

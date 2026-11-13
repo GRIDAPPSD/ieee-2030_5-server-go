@@ -59,7 +59,7 @@ func (h *AdminFSAHandler) copyRefusedFault(r *http.Request, err error) *membersh
 
 // assignLocked assigns deviceID to fsaID, copies every template of the FSA to
 // the device and replicates the FSA's live controls to it. The caller holds
-// programMu and has confirmed the device and the FSA exist. A nil result means
+// the DER write lock and has confirmed the device and the FSA exist. A nil result means
 // the device is assigned and its lists are notified; a fault means every write
 // was undone, or the answer says which stayed.
 func (h *AdminFSAHandler) assignLocked(r *http.Request, deviceID, fsaID string, fsa sep2.FunctionSetAssignments, onExisting fsaprogram.OnExisting) *membershipFault {
@@ -163,7 +163,7 @@ func (h *AdminFSAHandler) replicateControls(r *http.Request, deviceID, fsaID str
 }
 
 // unassignLocked removes deviceID's template copies and its assignment to
-// fsaID. The caller holds programMu. A nil result means the device is
+// fsaID. The caller holds the DER write lock. A nil result means the device is
 // unassigned and its lists are notified.
 func (h *AdminFSAHandler) unassignLocked(r *http.Request, deviceID, fsaID string) *membershipFault {
 	ctx := r.Context()

@@ -59,6 +59,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
@@ -298,6 +299,11 @@ type Stores struct {
 	// it; nil builds one from the stores (NewDERControlIssuer), as an
 	// embedder with no admin API expects.
 	DERControlIssuer *dercontrol.Issuer
+
+	// DERWrites is the one owner of device DER program writes, shared with
+	// the admin API so both planes take one lock. Nil leaves the protocol
+	// write routes unmounted.
+	DERWrites *derwrite.Owner
 
 	// Edition2023 is true when the server runs as IEEE 2030.5-2023. It makes
 	// the served DERControl and FlowReservationResponse EventStatus carry

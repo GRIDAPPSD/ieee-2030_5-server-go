@@ -131,9 +131,9 @@ func (h *AdminGridRequestHandler) HandleList() http.HandlerFunc {
 		ctx, ch, fh := r.Context(), h.Controls.Controls, h.Controls.FSAs
 		// The fleets are read under the lock readFleets asks for; the controls
 		// are read after it, so a long view never holds up a write.
-		fh.programMu.Lock()
+		fh.writes().Lock()
 		fleets, _, _, err := h.readFleets(ctx)
-		fh.programMu.Unlock()
+		fh.writes().Unlock()
 		if err != nil {
 			ch.internal(w, r, "grid fleets")
 			return
@@ -490,8 +490,8 @@ func (h *AdminGridRequestHandler) cancel(oneRow bool) http.HandlerFunc {
 
 		// Held so no device is assigned, and handed a live replica, while
 		// the copies are being cancelled.
-		fh.programMu.Lock()
-		defer fh.programMu.Unlock()
+		fh.writes().Lock()
+		defer fh.writes().Unlock()
 		ctx := r.Context()
 		var shares []gridControl
 		for _, gc := range h.gridControls(ctx) {

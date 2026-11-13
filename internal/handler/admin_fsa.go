@@ -15,6 +15,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
@@ -84,9 +85,23 @@ type AdminFSAHandler struct {
 	Managers     store.EndDeviceManagementReader
 	FleetDevices FleetDeviceLookup
 
-	// programMu serializes every program write with assignments, so a device
-	// assigned while a template is created gets exactly one copy of it.
-	programMu sync.Mutex
+	// DERWrites owns the lock that serializes every program write with
+	// assignments, so a device assigned while a template is created gets
+	// exactly one copy of it. Production wiring sets the process's one owner;
+	// nil makes the handler use a private one, which only tests rely on.
+	DERWrites *derwrite.Owner
+
+	ownWrites     sync.Once
+	privateWrites *derwrite.Owner
+}
+
+// writes is the owner whose lock every program write takes.
+func (h *AdminFSAHandler) writes() *derwrite.Owner {
+	if h.DERWrites != nil {
+		return h.DERWrites
+	}
+	h.ownWrites.Do(func() { h.privateWrites = &derwrite.Owner{} })
+	return h.privateWrites
 }
 
 // DeviceFSAWriter mirrors the slice of *memory.ScopedStore[FSA] surface
@@ -378,8 +393,8 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		if fault := h.assignLocked(r, deviceID, fsaID, fsa, fsaprogram.RefuseIfAssigned); fault != nil {
 			fault.answer(w)
@@ -411,8 +426,8 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
+		h.writes().Lock()
+		defer h.writes().Unlock()
 
 		if fault := h.unassignLocked(r, deviceID, fsaID); fault != nil {
 			fault.answer(w)

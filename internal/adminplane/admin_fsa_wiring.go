@@ -9,6 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derwrite"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -73,12 +74,22 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		PEN:         stores.PEN,
 		Retirer:     programRetirer(stores),
 		Curves:      curveReader(stores),
+		DERWrites:   derWrites(stores),
 	}
 	if !store.IsAbsent(stores.EndDeviceManagers) && stores.EndDevices != nil {
 		h.Managers = stores.EndDeviceManagers
 		h.FleetDevices = stores.EndDevices
 	}
 	return h
+}
+
+// derWrites is the process's DER write owner. A Stores built without one
+// gets one stored on it, so every handler built from it shares a lock.
+func derWrites(stores *Stores) *derwrite.Owner {
+	if stores.DERWrites == nil {
+		stores.DERWrites = &derwrite.Owner{}
+	}
+	return stores.DERWrites
 }
 
 // programRetirer is the process's DER control issuer, so a program delete

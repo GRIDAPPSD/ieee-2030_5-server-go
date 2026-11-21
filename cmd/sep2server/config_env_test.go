@@ -623,3 +623,18 @@ func TestConfigFromEnvPowerHistoryHours(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigFromEnvTLSKeyLogFile(t *testing.T) {
+	t.Setenv("SEP2_TLS_KEY_LOG_FILE", "~/sep2.keys")
+
+	cfg, err := configFromEnv(
+		&certDirResolver{resolved: true, dir: "/test/certdir"},
+	)
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+
+	if cfg.KeyLogFile == "" {
+		t.Fatal("KeyLogFile is empty, want configured TLS key log path")
+	}
+}

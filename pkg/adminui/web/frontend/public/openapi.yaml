@@ -1,0 +1,2735 @@
+openapi: 3.1.0
+info:
+  title: IEEE 2030.5 Server Admin API
+  version: 0.1.0
+  description: |
+    OpenAPI draft generated from server implementation.
+
+    Route source note:
+    - `internal/adminplane/admin_routes.go` does not exist in this repository.
+    - Routes were derived from `internal/adminplane/admin_router.go` (authoritative in current tree).
+
+    Modeling policy:
+    - Behavior is documented only where it is explicit in handlers/middleware.
+    - Unknown or dynamic contracts are marked as unresolved.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+  - mtls: []
+  - ticketQuery: []
+tags:
+  - name: auth
+  - name: certs
+  - name: devices
+  - name: fsa
+  - name: der
+  - name: derms
+  - name: logs
+  - name: content
+  - name: panels
+  - name: traffic
+paths:
+  /login:
+    get:
+      tags: [auth]
+      summary: Render login page
+      description: HTML login form.
+      security: []
+      responses:
+        '200':
+          description: Login page HTML
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Submit admin key for browser session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                key:
+                  type: string
+              required: [key]
+      responses:
+        '303':
+          description: Login accepted; redirects to '/'
+        '200':
+          description: Invalid submission re-renders login form
+          content:
+            text/html:
+              schema:
+                type: string
+        '503':
+          description: Browser login unavailable
+        '500':
+          description: Session issuance failed
+
+  /auth/ticket:
+    post:
+      tags: [auth]
+      summary: Exchange existing admin auth for short-lived ticket
+      description: |
+        Requires authenticated request and non-ticket admission path.
+        Refused when current admission itself is by query ticket.
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket:
+                    type: string
+                required: [ticket]
+        '401':
+          $ref: '#/components/responses/AuthRequired'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/certs/ca:
+    get:
+      tags: [certs]
+      summary: Download serving CA certificate
+      description: Sensitive route; real credential required.
+      responses:
+        '200':
+          description: CA certificate PEM
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertResponse'
+        '503':
+          $ref: '#/components/responses/ErrorJson'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/certs/server:
+    post:
+      tags: [certs]
+      summary: Mint server certificate
+      description: Sensitive route; real credential required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateServerCertRequest'
+      responses:
+        '201':
+          description: Server cert and private key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertResponse'
+        '400':
+          $ref: '#/components/responses/ErrorJson'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '503':
+          $ref: '#/components/responses/ErrorJson'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/certs/device:
+    post:
+      tags: [certs]
+      summary: Mint device certificate
+      description: Sensitive route; real credential required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeviceCertRequest'
+      responses:
+        '201':
+          description: Device cert, private key, SFDI/LFDI
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateDeviceCertResponse'
+        '400':
+          $ref: '#/components/responses/ErrorJson'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '503':
+          $ref: '#/components/responses/ErrorJson'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/certs/device-types:
+    get:
+      tags: [certs]
+      summary: List supported cert device type vocabulary
+      description: Sensitive route; real credential required.
+      responses:
+        '200':
+          description: Device type catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deviceTypes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeviceTypeInfo'
+                required: [deviceTypes]
+
+  /api/certs/info:
+    post:
+      tags: [certs]
+      summary: Parse uploaded PEM certificate metadata
+      description: Sensitive route; real credential required.
+      requestBody:
+        required: true
+        content:
+          application/x-pem-file:
+            schema:
+              type: string
+              description: PEM certificate bytes
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                cert:
+                  type: string
+              required: [cert]
+      responses:
+        '200':
+          description: Parsed certificate identity material
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertInfoResponse'
+        '400':
+          $ref: '#/components/responses/ErrorJson'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+
+  /api/devices/by-lfdi/{lfdi}:
+    get:
+      tags: [devices]
+      summary: Lookup end device by LFDI
+      parameters:
+        - in: path
+          name: lfdi
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Fa-f0-9]{40}$'
+      responses:
+        '200':
+          description: Lookup result; found=false if missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLookupResponse'
+        '400':
+          $ref: '#/components/responses/ErrorJson'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/devices:
+    post:
+      tags: [devices]
+      summary: Create EndDevice + Registration (+ optional profile)
+      description: The only authed write route exempt from real-credential enforcement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddDeviceRequest'
+      responses:
+        '201':
+          description: Device created
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddDeviceResponse'
+        '400':
+          $ref: '#/components/responses/ErrorJson'
+        '409':
+          $ref: '#/components/responses/ErrorJson'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '503':
+          $ref: '#/components/responses/ErrorJson'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/device-profiles:
+    get:
+      tags: [devices]
+      summary: List device profiles
+      responses:
+        '200':
+          description: Profile list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceProfileListResponse'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/device-profiles/{lfdi}:
+    put:
+      tags: [devices]
+      summary: Upsert one device profile
+      parameters:
+        - in: path
+          name: lfdi
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Fa-f0-9]{40}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceProfileBody'
+      responses:
+        '200':
+          description: Stored profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceProfile'
+        '400':
+          $ref: '#/components/responses/ErrorJson'
+        '409':
+          $ref: '#/components/responses/ErrorJson'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/ErrorJson'
+
+  /api/content/{family}/{id}:
+    post:
+      tags: [content]
+      summary: Create operator content resource
+      parameters: &contentParams
+        - in: path
+          name: family
+          required: true
+          schema: { type: string }
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/sep+xml:
+            schema: { type: string }
+          application/xml:
+            schema: { type: string }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentResult' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '413': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    put:
+      tags: [content]
+      summary: Replace operator content resource
+      parameters: *contentParams
+      requestBody:
+        required: true
+        content:
+          application/sep+xml:
+            schema: { type: string }
+          application/xml:
+            schema: { type: string }
+      responses:
+        '200':
+          description: Replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentResult' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '413': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [content]
+      summary: Delete operator content resource
+      parameters: *contentParams
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas:
+    get:
+      tags: [fsa]
+      summary: List admin FSAs
+      responses:
+        '200':
+          description: FSA list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fsas:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FSAResponse'
+                required: [fsas]
+    post:
+      tags: [fsa]
+      summary: Create admin FSA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FSACreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FSAResponse'
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas/{id}:
+    get:
+      tags: [fsa]
+      summary: Get one admin FSA
+      parameters:
+        - &fsaIdParam
+          in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: FSA details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FSAResponse'
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [fsa]
+      summary: Delete admin FSA
+      parameters: *fsaIdParam
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas/{id}/programs:
+    post:
+      tags: [fsa]
+      summary: Attach DERProgram href to FSA
+      parameters:
+        - *fsaIdParam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                programHref: { type: string }
+              required: [programHref]
+      responses:
+        '201': { description: Attached }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [fsa]
+      summary: Detach DERProgram href from FSA
+      parameters:
+        - *fsaIdParam
+        - in: query
+          name: href
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Detached }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas/{id}/der-programs:
+    get:
+      tags: [fsa]
+      summary: List FSA program templates
+      parameters:
+        - *fsaIdParam
+      responses:
+        '200':
+          description: Templates list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProgramTemplateView'
+                required: [templates]
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    post:
+      tags: [fsa]
+      summary: Create FSA program template
+      parameters: *fsaIdParam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramTemplateBody'
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramTemplateView'
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas/{id}/der-programs/{derpId}:
+    put:
+      tags: [fsa]
+      summary: Update FSA program template
+      parameters:
+        - *fsaIdParam
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProgramTemplateBody' }
+      responses:
+        '200':
+          description: Updated template view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgramTemplateView' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [fsa]
+      summary: Delete FSA program template
+      parameters:
+        - *fsaIdParam
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/devices/{id}/fsa-assignment:
+    post:
+      tags: [fsa]
+      summary: Assign device to FSA
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fsaHref: { type: string }
+              required: [fsaHref]
+      responses:
+        '200': { description: Assigned }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [fsa]
+      summary: Unassign device from FSA
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: fsaHref
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Unassigned }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/devices/{id}/fsas/{fsaId}/der-programs:
+    post:
+      tags: [fsa]
+      summary: Create device program under device FSA
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: fsaId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProgramTemplateBody' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceProgramView' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/devices/{id}/der-programs/{derpId}:
+    put:
+      tags: [fsa]
+      summary: Update device program
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProgramTemplateBody' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceProgramView' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [fsa]
+      summary: Delete device program
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/topology:
+    get:
+      tags: [fsa]
+      summary: Get topology tree
+      responses:
+        '200':
+          description: Topology root
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TopologyNode' }
+
+  /api/der-programs:
+    get:
+      tags: [der]
+      summary: List all DER programs on server
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: start
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Program page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgramListReply' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/management-pairs:
+    get:
+      tags: [devices]
+      summary: Query management pair mappings
+      parameters:
+        - in: query
+          name: manager
+          schema: { type: string }
+        - in: query
+          name: managed
+          schema: { type: string }
+      responses:
+        '200':
+          description: Query-specific JSON shape
+          content:
+            application/json:
+              schema:
+                description: |
+                  Response shape depends on query mode (`manager` or `managed`).
+                  Contract is explicit in `internal/handler/admin_management.go`.
+                type: object
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    post:
+      tags: [devices]
+      summary: Create management pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagementPairRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagementPairCreated' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    delete:
+      tags: [devices]
+      summary: Remove management pair by managed LFDI
+      parameters:
+        - in: query
+          name: managed
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Removed }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/management-pairs/rekey:
+    post:
+      tags: [devices]
+      summary: Rekey management pair side
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagementRekeyRequest' }
+      responses:
+        '200':
+          description: Rekeyed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/device-logs/{lfdi}:
+    get:
+      tags: [logs]
+      summary: Read device log page
+      parameters:
+        - in: path
+          name: lfdi
+          required: true
+          schema: { type: string, pattern: '^[A-Fa-f0-9]{40}$' }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+        - in: query
+          name: before
+          schema: { type: string }
+        - in: query
+          name: after
+          schema: { type: string }
+        - in: query
+          name: kind
+          schema: { type: string, description: comma-list }
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [own, managed]
+      responses:
+        '200':
+          description: Log page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceLogResponse' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/device-logs/{lfdi}/download:
+    get:
+      tags: [logs]
+      summary: Download raw NDJSON log for device
+      parameters:
+        - in: path
+          name: lfdi
+          required: true
+          schema: { type: string, pattern: '^[A-Fa-f0-9]{40}$' }
+      responses:
+        '200':
+          description: NDJSON attachment
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/derms/fleets:
+    get:
+      tags: [derms]
+      summary: List fleet rollups by aggregator
+      responses:
+        '200':
+          description: Fleet list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Fleet'
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/derms/power:
+    get:
+      tags: [derms]
+      summary: Fleet/all-device power chart
+      parameters:
+        - in: query
+          name: window
+          required: true
+          schema:
+            type: integer
+            enum: [900, 3600, 21600, 86400]
+        - in: query
+          name: aggregatorLFDI
+          schema: { type: string }
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [all]
+      responses:
+        '200':
+          description: Power response
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PowerResponse' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/derms/devices/{edevId}/ders:
+    get:
+      tags: [derms]
+      summary: Read per-DER status/capability/settings/availability
+      parameters:
+        - in: path
+          name: edevId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: DER read view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DERReadReply' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/derms/control-events:
+    get:
+      tags: [derms]
+      summary: Timeline control events
+      parameters:
+        - in: query
+          name: window
+          required: true
+          schema:
+            type: integer
+            enum: [900, 3600, 21600, 86400]
+        - in: query
+          name: scope
+          schema:
+            type: string
+            description: all or canonical aggregator LFDI
+      responses:
+        '200':
+          description: Control events in window
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlEventsResponse' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/derms/flow-reservations:
+    get:
+      tags: [derms]
+      summary: List flow reservations for aggregator fleet
+      parameters:
+        - in: query
+          name: aggregatorLFDI
+          required: true
+          schema: { type: string, pattern: '^[A-Fa-f0-9]{40}$' }
+        - in: query
+          name: state
+          schema:
+            type: string
+            description: Repeatable and/or comma-delimited state filters.
+      responses:
+        '200':
+          description: Request list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowReservationList' }
+        '400': { $ref: '#/components/responses/ErrorJsonFR' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/derms/flow-reservations/{edevId}/{frqId}:
+    get:
+      tags: [derms]
+      summary: Get one flow reservation
+      parameters:
+        - in: path
+          name: edevId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: frqId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Request view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowReservationView' }
+        '404': { $ref: '#/components/responses/ErrorJsonFR' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/derms/flow-reservations/{edevId}/{frqId}/answer:
+    post:
+      tags: [derms]
+      summary: Answer pending flow reservation
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: edevId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: frqId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowReservationWriteBody' }
+      responses:
+        '201':
+          description: Updated request view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowReservationView' }
+        '400': { $ref: '#/components/responses/ErrorJsonFR' }
+        '404': { $ref: '#/components/responses/ErrorJsonFR' }
+        '409': { $ref: '#/components/responses/ErrorJsonFR' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+        '503': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/derms/flow-reservations/{edevId}/{frqId}/revise:
+    post:
+      tags: [derms]
+      summary: Revise live grant
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: edevId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: frqId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowReservationWriteBody' }
+      responses:
+        '201':
+          description: Updated request view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowReservationView' }
+        '400': { $ref: '#/components/responses/ErrorJsonFR' }
+        '404': { $ref: '#/components/responses/ErrorJsonFR' }
+        '409': { $ref: '#/components/responses/ErrorJsonFR' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+        '503': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/derms/flow-reservations/{edevId}/{frqId}/cancel:
+    post:
+      tags: [derms]
+      summary: Cancel live grant chain
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: edevId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: frqId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowReservationCancelBody' }
+      responses:
+        '200':
+          description: Updated request view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowReservationView' }
+        '400': { $ref: '#/components/responses/ErrorJsonFR' }
+        '404': { $ref: '#/components/responses/ErrorJsonFR' }
+        '409': { $ref: '#/components/responses/ErrorJsonFR' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+        '503': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/derms/grants:
+    get:
+      tags: [derms]
+      summary: List live executable grants for aggregator
+      parameters:
+        - in: query
+          name: aggregatorLFDI
+          required: true
+          schema: { type: string, pattern: '^[A-Fa-f0-9]{40}$' }
+        - in: query
+          name: live
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      responses:
+        '200':
+          description: Grants
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlowReservationGrantList' }
+        '400': { $ref: '#/components/responses/ErrorJsonFR' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/derms/commitments:
+    get:
+      tags: [derms]
+      summary: Read fleet commitments
+      parameters:
+        - in: query
+          name: aggregatorLFDI
+          required: true
+          schema: { type: string, pattern: '^[A-Fa-f0-9]{40}$' }
+      responses:
+        '200':
+          description: Commitments view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitmentsView' }
+        '404': { $ref: '#/components/responses/ErrorJsonFR' }
+        '500': { $ref: '#/components/responses/ErrorJsonFR' }
+
+  /api/der/controls:
+    get:
+      tags: [der]
+      summary: List controls for one device
+      parameters:
+        - in: query
+          name: device
+          required: true
+          schema: { type: string }
+        - in: query
+          name: derProgramHref
+          schema: { type: string }
+      responses:
+        '200':
+          description: Control list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DERControlList' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    post:
+      tags: [der]
+      summary: Create DER control
+      description: Real credential required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DERControlCreateBody' }
+      responses:
+        '201':
+          description: Created control
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DERControlCreated' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409':
+          description: Commitment/issuer conflict
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/DERControlConflict'
+                  - $ref: '#/components/schemas/ProgramRefusal'
+        '413': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/der/controls/{mrid}/cancel:
+    post:
+      tags: [der]
+      summary: Cancel DER control by mRID
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: mrid
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Cancelled control view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DERControlView' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgramRefusal' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/der/control-functions:
+    get:
+      tags: [der]
+      summary: Get control function catalog
+      responses:
+        '200':
+          description: Function catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functions:
+                    type: object
+                    additionalProperties: true
+                required: [functions]
+
+  /api/der/curves:
+    get:
+      tags: [der]
+      summary: List stored DER curves
+      responses:
+        '200':
+          description: Curve list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  curves:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CurveInfo'
+                required: [curves]
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/devices/{id}/controls:
+    post:
+      tags: [der]
+      summary: Send scheduled/default control to one device
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceControlBody' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceControlCreated' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/ProgramRefusal'
+                  - $ref: '#/components/schemas/DERControlConflict'
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/devices/{id}/der-programs:
+    get:
+      tags: [der]
+      summary: List DER programs under one device
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Device DER program list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DERProgramListView' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/devices/{id}/default-control:
+    get:
+      tags: [der]
+      summary: Get current device default control
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Default control view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgramDefaultControlView' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas/{id}/der-programs/{derpId}/controls:
+    get:
+      tags: [der]
+      summary: List controls on FSA template
+      parameters:
+        - *fsaIdParam
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Control list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FSAControlList' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    post:
+      tags: [der]
+      summary: Create control on FSA template
+      description: Real credential required.
+      parameters:
+        - *fsaIdParam
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FSAControlBody' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FSAControlCreated' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel:
+    post:
+      tags: [der]
+      summary: Cancel control on FSA template
+      description: Real credential required.
+      parameters:
+        - *fsaIdParam
+        - in: path
+          name: derpId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: controlId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FSAControlView' }
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/derms/grid-requests:
+    get:
+      tags: [derms]
+      summary: List DERMS grid request batches
+      responses:
+        '200':
+          description: Grid request batches
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridRequestList' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+    post:
+      tags: [derms]
+      summary: Create DERMS grid request batch
+      description: Real credential required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GridRequestBody' }
+      responses:
+        '201':
+          description: Batch created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridRequestCreated' }
+        '409':
+          description: Fleet/availability conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridRequestRefused' }
+        '422':
+          description: Validation failure for one or more rows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridRequestRefused' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500':
+          description: Incomplete undo or internal failure
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/GridRequestIncomplete'
+                  - $ref: '#/components/schemas/ErrorResponse'
+
+  /api/derms/grid-requests/{batch}/cancel:
+    post:
+      tags: [derms]
+      summary: Cancel all non-ended shares in batch
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: batch
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Cancel result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridCancelled' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500':
+          description: Partial cancel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridCancelled' }
+
+  /api/derms/grid-requests/{batch}/rows/{row}/cancel:
+    post:
+      tags: [derms]
+      summary: Cancel one row in batch
+      description: Real credential required.
+      parameters:
+        - in: path
+          name: batch
+          required: true
+          schema: { type: string }
+        - in: path
+          name: row
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Cancel result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridCancelled' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '409': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '500':
+          description: Partial cancel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GridCancelled' }
+
+  /api/ui/panels:
+    get:
+      tags: [panels]
+      summary: List extension panels
+      responses:
+        '200':
+          description: Panel list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PanelEntry' }
+
+  /api/ui/panels/{id}:
+    get:
+      tags: [panels]
+      summary: Read one panel descriptor
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: sel
+          schema:
+            type: array
+            items: { type: string }
+            style: form
+            explode: true
+      responses:
+        '200':
+          description: Panel descriptor JSON (embedder-defined)
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Unresolved; descriptor schema is from embedder panel definitions.
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+        '504': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/ui/panels/{id}/choices:
+    get:
+      tags: [panels]
+      summary: Get panel picker choices
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Choices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  max: { type: integer }
+                  choices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChoiceEntry'
+                required: [max, choices]
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '504': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/ui/panels/{id}/stream:
+    get:
+      tags: [panels]
+      summary: Panel SSE stream
+      description: |
+        SSE stream (`text/event-stream`).
+        Query requires one `param` key; `Last-Event-ID` supported.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: param
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Last-Event-ID
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+      responses:
+        '200':
+          description: Streaming events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '401': { $ref: '#/components/responses/AuthRequired' }
+        '403': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+        '504': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/ui/panels/{id}/actions:
+    get:
+      tags: [panels]
+      summary: List panel actions and dynamic field choices
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Action definitions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items: { $ref: '#/components/schemas/ActionEntry' }
+                required: [actions]
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '429': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+        '504': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/ui/panels/{id}/actions/{action}:
+    post:
+      tags: [panels]
+      summary: Execute panel action
+      description: Dynamic body schema defined by panel action field definitions.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: action
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Unresolved dynamic schema.
+      responses:
+        '200':
+          description: Action success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+                required: [ok, message]
+        '400': { $ref: '#/components/responses/ErrorJson' }
+        '401': { $ref: '#/components/responses/AuthRequired' }
+        '403': { $ref: '#/components/responses/ErrorJson' }
+        '404': { $ref: '#/components/responses/ErrorJson' }
+        '415': { $ref: '#/components/responses/UnsupportedContentType' }
+        '422': { $ref: '#/components/responses/ErrorJson' }
+        '429': { $ref: '#/components/responses/ErrorJson' }
+        '500': { $ref: '#/components/responses/ErrorJson' }
+        '503': { $ref: '#/components/responses/ErrorJson' }
+        '504': { $ref: '#/components/responses/ErrorJson' }
+
+  /api/traffic/clients:
+    get:
+      tags: [traffic]
+      summary: List captured clients
+      description: Only mounted when traffic capture handler is enabled.
+      responses:
+        '200':
+          description: Client summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clients:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrafficClient'
+                required: [clients]
+  /api/traffic/exchanges:
+    get:
+      tags: [traffic]
+      summary: List exchange summaries for one client
+      parameters:
+        - in: query
+          name: client
+          required: true
+          schema: { type: string }
+        - in: query
+          name: after
+          schema: { type: integer, minimum: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Exchange summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exchanges:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrafficExchangeSummary'
+                required: [exchanges]
+        '400': { description: Invalid query parameter(s) }
+  /api/traffic/exchanges/{id}:
+    get:
+      tags: [traffic]
+      summary: Get one exchange summary
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrafficExchangeSummary' }
+        '400': { description: Invalid id }
+        '404': { description: Not found }
+        '410': { description: Indexed entry evicted }
+  /api/traffic/exchanges/{id}/request:
+    get:
+      tags: [traffic]
+      summary: Download captured request bytes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Captured bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { description: Invalid id }
+        '404': { description: Not found }
+        '410': { description: Indexed entry evicted }
+  /api/traffic/exchanges/{id}/response:
+    get:
+      tags: [traffic]
+      summary: Download captured response bytes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Captured bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { description: Invalid id }
+        '404': { description: Not found }
+        '410': { description: Indexed entry evicted }
+  /api/traffic/stream:
+    get:
+      tags: [traffic]
+      summary: SSE stream of exchange summaries
+      parameters:
+        - in: query
+          name: after
+          schema: { type: string }
+        - in: header
+          name: Last-Event-ID
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400': { description: Invalid resume cursor }
+  /api/traffic/stats:
+    get:
+      tags: [traffic]
+      summary: Get capture statistics
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrafficStats' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Authorization header bearer token equals configured admin key.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: admin_ticket
+      description: Admin browser session cookie.
+    mtls:
+      type: mutualTLS
+      description: Client certificate with admin policy OID.
+    ticketQuery:
+      type: apiKey
+      in: query
+      name: ticket
+      description: One-time short-lived ticket. Not accepted for sensitive routes.
+
+  responses:
+    ErrorJson:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorJsonFR:
+      description: Flow-reservation-style error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FlowReservationRefusal'
+    UnsupportedContentType:
+      description: Unsupported Content-Type for route
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UnsupportedContentTypeBody'
+    AuthRequired:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    UnsupportedContentTypeBody:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            accepted:
+              type: array
+              items: { type: string }
+
+    # ===== IEEE 2030.5 core-derived shared schemas =====
+    IEEEDateTimeInterval:
+      type: object
+      description: Derived from `sep2.DateTimeInterval`.
+      properties:
+        duration: { type: integer, minimum: 0 }
+        start: { type: integer }
+      required: [duration, start]
+    IEEEActivePower:
+      type: object
+      description: Derived from `sep2.ActivePower`.
+      properties:
+        multiplier: { type: integer, minimum: -128, maximum: 127 }
+        value: { type: integer, minimum: -32768, maximum: 32767 }
+      required: [multiplier, value]
+    IEEESignedRealEnergy:
+      type: object
+      description: Derived from `sep2.SignedRealEnergy`.
+      properties:
+        multiplier: { type: integer, minimum: -128, maximum: 127 }
+        value: { type: integer }
+      required: [multiplier, value]
+    IEEEEventStatus:
+      type: object
+      description: Derived from `sep2.EventStatus`.
+      properties:
+        currentStatus: { type: integer }
+        dateTime: { type: integer }
+        potentiallySuperseded: { type: boolean }
+        potentiallySupersededTime: { type: integer }
+        reason: { type: string }
+      required: [currentStatus, dateTime, potentiallySuperseded]
+    IEEEDERProgram:
+      type: object
+      description: Derived from `sep2.DERProgram`.
+      properties:
+        href: { type: string }
+        mRID: { type: string }
+        description: { type: string }
+        version: { type: integer, minimum: 0, maximum: 65535 }
+        primacy: { type: integer, minimum: 0, maximum: 255 }
+        dERControlListLink:
+          type: object
+          properties: { href: { type: string } }
+      additionalProperties: true
+    IEEEDERControlBase:
+      type: object
+      description: |
+        Derived from `sep2.DERControlBase`.
+        Only selected fields are expanded here; remaining modeled fields are unresolved in this draft.
+      properties:
+        opModConnect: { type: boolean }
+        opModEnergize: { type: boolean }
+        opModTargetW: { $ref: '#/components/schemas/IEEEActivePower' }
+      additionalProperties: true
+
+    CertResponse:
+      type: object
+      properties:
+        certPEM: { type: string }
+        keyPEM: { type: string }
+      required: [certPEM]
+
+    CreateServerCertRequest:
+      type: object
+      properties:
+        hosts:
+          type: array
+          items: { type: string }
+        commonName: { type: string }
+        validYears: { type: integer }
+      required: [hosts]
+
+    CreateDeviceCertRequest:
+      type: object
+      properties:
+        deviceType: { type: integer }
+        hwSerialNum: { type: string }
+        hwType: { type: string }
+        isTestCert: { type: boolean }
+      required: [hwSerialNum]
+
+    CreateDeviceCertResponse:
+      type: object
+      properties:
+        certPEM: { type: string }
+        keyPEM: { type: string }
+        sfdi: { type: string }
+        lfdi: { type: string }
+      required: [certPEM, keyPEM, sfdi, lfdi]
+
+    DeviceTypeInfo:
+      type: object
+      properties:
+        value: { type: integer }
+        name: { type: string }
+        label: { type: string }
+      required: [value, name, label]
+
+    CertInfoResponse:
+      type: object
+      properties:
+        lfdi: { type: string }
+        sfdi: { type: string }
+        subject: { type: string }
+        hardwareModuleName: { type: string }
+        fingerprint: { type: string }
+      required: [lfdi, sfdi, subject, fingerprint]
+
+    DashboardDevice:
+      type: object
+      properties:
+        sfdi: { type: string }
+        lfdi: { type: string }
+        href: { type: string }
+        enabled: { type: boolean }
+      required: [sfdi, lfdi, href, enabled]
+
+    DeviceLookupResponse:
+      type: object
+      properties:
+        found: { type: boolean }
+        device: { $ref: '#/components/schemas/DashboardDevice' }
+      required: [found]
+
+    AddDeviceRequest:
+      type: object
+      properties:
+        sfdi: { type: string }
+        lfdi: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        pin: { type: integer, minimum: 0 }
+        enabled: { type: boolean }
+      required: [sfdi, lfdi, pin, enabled]
+
+    AddDeviceResponse:
+      type: object
+      properties:
+        href: { type: string }
+        sfdi: { type: string }
+        lfdi: { type: string }
+      required: [href, sfdi, lfdi]
+
+    DeviceProfile:
+      type: object
+      properties:
+        lfdi: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [aggregator, device] }
+      required: [lfdi, name, kind]
+
+    DeviceProfileBody:
+      type: object
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: ['', aggregator, device] }
+
+    DeviceProfileListResponse:
+      type: object
+      properties:
+        profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceProfile'
+      required: [profiles]
+
+    ContentResult:
+      type: object
+      properties:
+        family: { type: string }
+        id: { type: string }
+      required: [family, id]
+
+    FSACreateRequest:
+      type: object
+      properties:
+        description: { type: string }
+        primacy: { type: integer }
+        mRID: { type: string }
+      required: [description]
+
+    FSAResponse:
+      type: object
+      properties:
+        href: { type: string }
+        mRID: { type: string }
+        description: { type: string }
+        primacy: { type: integer }
+        programs:
+          type: array
+          items: { type: string }
+        devices:
+          type: array
+          items: { type: string }
+        deviceOnly: { type: string }
+      required: [href, mRID, description, primacy]
+
+    ProgramDefaultControlView:
+      type: object
+      properties:
+        mRID: { type: string }
+        type: { type: string }
+        derControlBase: { type: object, additionalProperties: true }
+        functions: { type: object, additionalProperties: true }
+      required: [mRID, type, derControlBase, functions]
+
+    ProgramTemplateBody:
+      type: object
+      description: |
+        Body used by program template/device program create and update.
+        `defaultControl` can be object or null; detailed field-level function schema
+        comes from DER control catalog and is partially unresolved in this draft.
+      properties:
+        description: { type: string }
+        primacy: { type: integer }
+        mRID: { type: string }
+        defaultControl:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: true
+
+    ProgramTemplateView:
+      type: object
+      properties:
+        id: { type: string }
+        mRID: { type: string }
+        description: { type: string }
+        primacy: { type: integer }
+        version: { type: integer }
+        defaultControl: { $ref: '#/components/schemas/ProgramDefaultControlView' }
+        copies:
+          type: array
+          items: { type: string }
+      required: [id, mRID, description, primacy, version, copies]
+
+    DeviceProgramView:
+      type: object
+      properties:
+        id: { type: string }
+        href: { type: string }
+        mRID: { type: string }
+        description: { type: string }
+        primacy: { type: integer }
+        version: { type: integer }
+        defaultControl: { $ref: '#/components/schemas/ProgramDefaultControlView' }
+      required: [id, href, mRID, description, primacy, version]
+
+    ProgramListItem:
+      type: object
+      properties:
+        device: { type: string }
+        fsa: { type: string }
+        id: { type: string }
+        href: { type: string }
+        mRID: { type: string }
+        description: { type: string }
+        primacy: { type: integer }
+        version: { type: integer }
+        origin: { type: string }
+        templateId: { type: string }
+        onRestart: { type: string }
+      required: [device, fsa, id, href, mRID, description, primacy, version, origin, onRestart]
+
+    ProgramListReply:
+      type: object
+      properties:
+        persists: { type: boolean }
+        total: { type: integer }
+        start: { type: integer }
+        limit: { type: integer }
+        programs:
+          type: array
+          items: { $ref: '#/components/schemas/ProgramListItem' }
+      required: [persists, total, start, limit, programs]
+
+    ManagementPairRequest:
+      type: object
+      properties:
+        managerLFDI: { type: string }
+        managedLFDI: { type: string }
+      required: [managerLFDI, managedLFDI]
+
+    PairMemberHealth:
+      type: object
+      properties:
+        lfdi: { type: string }
+        hasRecord: { type: boolean }
+        lastSeen: { type: string, nullable: true }
+      required: [lfdi, lastSeen]
+
+    ManagementPairCreated:
+      type: object
+      properties:
+        managerLFDI: { type: string }
+        managedLFDI: { type: string }
+        managed: { $ref: '#/components/schemas/PairMemberHealth' }
+        warning: { type: string }
+      required: [managerLFDI, managedLFDI, managed]
+
+    ManagementRekeyRequest:
+      type: object
+      properties:
+        role: { type: string, enum: [manager, managed] }
+        from: { type: string }
+        to: { type: string }
+      required: [role, from, to]
+
+    DeviceLogLine:
+      type: object
+      description: Unresolved exact shape from `devicelog.Line`.
+      additionalProperties: true
+
+    DeviceLogResponse:
+      type: object
+      properties:
+        lfdi: { type: string }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/DeviceLogLine' }
+        nextBefore: { type: string, nullable: true }
+        nextAfter: { type: string, nullable: true }
+        rotatedRead: { type: boolean }
+        dropped: { type: integer }
+      required: [lfdi, entries, rotatedRead, dropped]
+
+    FleetMeasurement:
+      type: object
+      properties:
+        value: { type: number }
+        readingTime: { type: integer }
+        qualityFlags: { type: integer }
+        directionUnknown: { type: boolean }
+      required: [value, readingTime]
+
+    FleetDeviceMeasurements:
+      type: object
+      properties:
+        p: { $ref: '#/components/schemas/FleetMeasurement' }
+        q: { $ref: '#/components/schemas/FleetMeasurement' }
+        v: { $ref: '#/components/schemas/FleetMeasurement' }
+        f: { $ref: '#/components/schemas/FleetMeasurement' }
+
+    FleetDeviceStatus:
+      type: object
+      properties:
+        connected: { type: boolean }
+        operationalMode: { type: integer }
+        alarmStatus: { type: integer }
+        stateOfCharge: { type: integer }
+        readingTime: { type: integer }
+
+    FleetDeviceAvailability:
+      type: object
+      properties:
+        statWAvail: { type: number }
+        statVarAvail: { type: number }
+        readingTime: { type: integer }
+
+    FleetDevice:
+      type: object
+      properties:
+        lfdi: { type: string }
+        edevId: { type: string }
+        href: { type: string }
+        status: { $ref: '#/components/schemas/FleetDeviceStatus' }
+        availability: { $ref: '#/components/schemas/FleetDeviceAvailability' }
+        measurements: { $ref: '#/components/schemas/FleetDeviceMeasurements' }
+      required: [lfdi, measurements]
+
+    FleetSum:
+      type: object
+      properties:
+        sum: { type: number }
+        unreported: { type: integer }
+        stale: { type: integer }
+        directionUnknown: { type: boolean }
+      required: [sum, unreported, stale, directionUnknown]
+
+    FleetRollup:
+      type: object
+      properties:
+        deviceCount: { type: integer }
+        connected: { type: integer }
+        alarmed: { type: integer }
+        stale: { type: integer }
+        p: { $ref: '#/components/schemas/FleetSum' }
+        q: { $ref: '#/components/schemas/FleetSum' }
+        statWAvail: { $ref: '#/components/schemas/FleetSum' }
+        statVarAvail: { $ref: '#/components/schemas/FleetSum' }
+      required: [deviceCount, connected, alarmed, stale, p, q, statWAvail, statVarAvail]
+
+    Fleet:
+      type: object
+      properties:
+        aggregatorLFDI: { type: string }
+        devices:
+          type: array
+          items: { $ref: '#/components/schemas/FleetDevice' }
+        rollup: { $ref: '#/components/schemas/FleetRollup' }
+      required: [aggregatorLFDI, devices, rollup]
+
+    PowerDevice:
+      type: object
+      additionalProperties: true
+
+    AggregatorEnergy:
+      type: object
+      additionalProperties: true
+
+    PowerResponse:
+      type: object
+      description: Chart payload produced by admin power route.
+      properties:
+        scope: { type: string }
+        aggregatorLFDI: { type: string }
+        aggregators:
+          type: array
+          items: { type: string }
+        windowStart: { type: integer }
+        windowEnd: { type: integer }
+        bucketSeconds: { type: integer }
+        chart:
+          description: Raw chart JSON payload
+        energyChart:
+          description: Raw chart JSON payload
+        devices:
+          type: array
+          items: { $ref: '#/components/schemas/PowerDevice' }
+        notReporting:
+          type: array
+          items: { type: string }
+        totalGapBuckets: { type: integer }
+        readingsExpired: { type: boolean }
+        latestW: { type: number }
+        latestAt: { type: integer }
+        latestMissing:
+          type: array
+          items: { type: string }
+        aggregatorEnergy:
+          type: array
+          items: { $ref: '#/components/schemas/AggregatorEnergy' }
+      required: [scope, aggregators, windowStart, windowEnd, bucketSeconds, chart, energyChart, devices, notReporting, totalGapBuckets, readingsExpired, latestMissing, aggregatorEnergy]
+
+    DERReadReply:
+      type: object
+      description: Output of GET /api/derms/devices/{edevId}/ders
+      additionalProperties: true
+
+    ControlEvent:
+      type: object
+      properties:
+        group: { type: string }
+        groupKind: { type: string }
+        scope: { type: string }
+        fsaID: { type: string }
+        deviceIDs:
+          type: array
+          items: { type: string }
+        mrid: { type: string }
+        origin: { type: string }
+        direction: { type: string, nullable: true }
+        targetW: { type: number, nullable: true }
+        modes:
+          type: array
+          items: { type: string }
+        status: { type: string }
+        start: { type: integer }
+        end: { type: integer }
+      required: [group, groupKind, scope, deviceIDs, mrid, origin, modes, status, start, end]
+
+    ControlEventsResponse:
+      type: object
+      properties:
+        windowStart: { type: integer }
+        windowEnd: { type: integer }
+        ahead: { type: integer }
+        aheadEnd: { type: integer }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/ControlEvent' }
+      required: [windowStart, windowEnd, ahead, aheadEnd, events]
+
+    FlowReservationRefusal:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+        mRID: { type: string }
+        frqId: { type: string }
+        cancelled:
+          type: array
+          items: { type: string }
+        unresolved:
+          type: array
+          items: { type: string }
+      required: [error, code]
+
+    FlowReservationWriteBody:
+      type: object
+      properties:
+        decision: { type: string, enum: [grant, deny] }
+        interval: { $ref: '#/components/schemas/IEEEDateTimeInterval' }
+        energy:
+          type: object
+          properties:
+            value: { type: integer, minimum: 0 }
+            multiplier: { type: integer, minimum: -9, maximum: 9 }
+        power:
+          type: object
+          properties:
+            value: { type: integer, minimum: 0 }
+            multiplier: { type: integer, minimum: -9, maximum: 9 }
+        reason: { type: string }
+      required: [decision]
+
+    FlowReservationCancelBody:
+      type: object
+      properties:
+        reason: { type: string }
+
+    FlowReservationExecutionView:
+      type: object
+      additionalProperties: true
+
+    FlowReservationResponseView:
+      type: object
+      additionalProperties: true
+
+    FlowReservationView:
+      type: object
+      additionalProperties: true
+
+    FlowReservationList:
+      type: object
+      properties:
+        aggregatorLFDI: { type: string }
+        now: { type: integer }
+        deadlineSeconds: { type: integer }
+        persisted: { type: boolean }
+        requests:
+          type: array
+          items: { $ref: '#/components/schemas/FlowReservationView' }
+      required: [aggregatorLFDI, now, deadlineSeconds, persisted, requests]
+
+    FlowReservationGrantList:
+      type: object
+      additionalProperties: true
+
+    CommittedGrantView:
+      type: object
+      additionalProperties: true
+
+    CommittedControlView:
+      type: object
+      additionalProperties: true
+
+    CommitmentsView:
+      type: object
+      properties:
+        aggregatorLFDI: { type: string }
+        now: { type: integer }
+        grants:
+          type: array
+          items: { $ref: '#/components/schemas/CommittedGrantView' }
+        plainControls:
+          type: array
+          items: { $ref: '#/components/schemas/CommittedControlView' }
+      required: [aggregatorLFDI, now, grants, plainControls]
+
+    DERControlCreateBody:
+      type: object
+      description: |
+        Body for POST /api/der/controls.
+        Full per-function value schema is catalog-driven and only partly expanded in this draft.
+      properties:
+        derProgramHref: { type: string }
+        type: { type: string }
+        functions:
+          type: object
+          additionalProperties: true
+        startTime: { type: integer }
+        durationSeconds: { type: integer }
+        description: { type: string }
+        executesGrant: { type: string }
+      required: [derProgramHref, durationSeconds]
+
+    DERControlConflict:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+        mRID: { type: string }
+      required: [error, code, mRID]
+
+    DERControlView:
+      type: object
+      properties:
+        mRID: { type: string }
+        href: { type: string }
+        derProgramHref: { type: string }
+        derControlListHref: { type: string }
+        type: { type: string }
+        description: { type: string }
+        derControlBase: { $ref: '#/components/schemas/IEEEDERControlBase' }
+        functions:
+          type: object
+          additionalProperties: true
+        creationTime: { type: integer }
+        interval: { $ref: '#/components/schemas/IEEEDateTimeInterval' }
+        ended: { type: boolean }
+        eventStatus:
+          type: object
+          properties:
+            currentStatus: { type: integer }
+            status: { type: string }
+            dateTime: { type: integer }
+          required: [currentStatus, status, dateTime]
+        executesGrant: { type: string }
+        origin: { type: string }
+        direction: { type: string, nullable: true }
+      required: [mRID, href, derProgramHref, derControlListHref, type, description, derControlBase, functions, creationTime, ended, origin]
+
+    DERControlCreated:
+      allOf:
+        - $ref: '#/components/schemas/DERControlView'
+        - type: object
+          properties:
+            supersedes:
+              type: array
+              items: { type: string }
+            notificationAttempted: { type: boolean }
+            persisted: { type: boolean }
+          required: [supersedes, notificationAttempted, persisted]
+
+    DERControlList:
+      type: object
+      properties:
+        device: { type: string }
+        controls:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required: [device, controls]
+
+    DeviceControlBody:
+      allOf:
+        - $ref: '#/components/schemas/DERControlCreateBody'
+        - type: object
+          properties:
+            kind:
+              type: string
+              enum: [scheduled, default]
+          required: [kind]
+
+    DeviceControlCreated:
+      type: object
+      additionalProperties: true
+
+    DERProgramListView:
+      type: object
+      properties:
+        device: { type: string }
+        programs:
+          type: array
+          items:
+            type: object
+            properties:
+              href: { type: string }
+              mRID: { type: string }
+              description: { type: string }
+              primacy: { type: integer }
+              derControlListHref: { type: string }
+      required: [device, programs]
+
+    FSAControlBody:
+      type: object
+      description: FSA control create body; similar to DER control create without `derProgramHref`.
+      properties:
+        type: { type: string }
+        functions:
+          type: object
+          additionalProperties: true
+        startTime: { type: integer }
+        durationSeconds: { type: integer }
+        description: { type: string }
+      required: [durationSeconds]
+
+    FSAControlView:
+      type: object
+      additionalProperties: true
+
+    FSAControlCreated:
+      allOf:
+        - $ref: '#/components/schemas/FSAControlView'
+        - type: object
+          properties:
+            notificationAttempted: { type: boolean }
+            persisted: { type: boolean }
+          required: [notificationAttempted, persisted]
+
+    FSAControlList:
+      type: object
+      properties:
+        fsa: { type: string }
+        program: { type: string }
+        controls:
+          type: array
+          items: { $ref: '#/components/schemas/FSAControlView' }
+      required: [fsa, program, controls]
+
+    GridRequestBody:
+      type: object
+      properties:
+        rows:
+          type: array
+          minItems: 1
+          maxItems: 24
+          items:
+            type: object
+            properties:
+              direction: { type: string, enum: [discharge, charge] }
+              x: { type: integer }
+              y: { type: integer }
+              start: { type: integer }
+              followsPrevious: { type: boolean }
+              durationSeconds: { type: integer }
+            required: [direction, x, y, durationSeconds]
+      required: [rows]
+
+    GridRequestRefused:
+      type: object
+      additionalProperties: true
+
+    GridRequestCreated:
+      type: object
+      additionalProperties: true
+
+    GridRequestIncomplete:
+      type: object
+      additionalProperties: true
+
+    GridCancelled:
+      type: object
+      additionalProperties: true
+
+    ProgramRefusal:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+        controls:
+          type: array
+          items: { type: string }
+      required: [error, code]
+
+    TopologyFSA:
+      type: object
+      properties:
+        id: { type: string }
+        mRID: { type: string }
+        description: { type: string }
+        programs:
+          type: array
+          items: { type: string }
+      required: [id, mRID, description]
+
+    TopologyNode:
+      type: object
+      properties:
+        kind: { type: string }
+        id: { type: string }
+        label: { type: string }
+        sfdi: { type: string }
+        lfdi: { type: string }
+        enabled: { type: boolean }
+        fsas:
+          type: array
+          items: { $ref: '#/components/schemas/TopologyFSA' }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/TopologyNode' }
+      required: [kind, id, label]
+
+    PanelEntry:
+      type: object
+      additionalProperties: true
+
+    ChoiceEntry:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+      required: [id, label]
+
+    ActionEntry:
+      type: object
+      additionalProperties: true
+
+    CurveInfo:
+      type: object
+      properties:
+        id: { type: string }
+        curveType: { type: integer }
+        description: { type: string }
+      required: [id, curveType, description]
+
+    TrafficClient:
+      type: object
+      properties:
+        key: { type: string }
+        firstSeen: { type: string }
+        lastSeen: { type: string }
+        exchangeCount: { type: integer }
+      required: [key, firstSeen, lastSeen, exchangeCount]
+
+    TrafficExchangeSummary:
+      type: object
+      additionalProperties: true
+
+    TrafficStats:
+      type: object
+      additionalProperties: true
+

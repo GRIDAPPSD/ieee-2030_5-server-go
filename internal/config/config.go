@@ -86,6 +86,7 @@ type Config struct {
 	Addr            string // listen address for IEEE 2030.5 protocol (e.g., ":443")
 	CertFile        string // server cert PEM path
 	KeyFile         string // server key PEM path
+	KeyLogFile      string
 	CAFile          string // CA cert PEM path (legacy single-CA setting; also the shared default below)
 	BootFixtureFile string // optional YAML topology fixture loaded at startup; empty = no fixture
 
